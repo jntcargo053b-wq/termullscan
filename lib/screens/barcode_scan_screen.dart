@@ -579,8 +579,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   Future<bool> _saveToGallery(String filePath, ScanEntry entry) async {
     try {
       await SaverGallery.saveFile(
-        file: filePath,
-        name: filePath.split('/').last,
+        filePath: filePath,
+        fileName: filePath.split('/').last,
         androidRelativePath: 'Pictures/TERMULScan',
         skipIfExists: false,
       );
