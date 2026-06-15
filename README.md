@@ -1,0 +1,2 @@
+# termullscan
+scan gudang 
