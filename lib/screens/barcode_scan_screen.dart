@@ -4,7 +4,7 @@ import 'dart:isolate';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:image_gallery_saver/image_gallery_saver.dart';
+import 'package:gal/gal.dart';
 import 'package:intl/intl.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:gap/gap.dart';
@@ -575,18 +575,12 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     return result;
   }
 
-  /// ✅ FUNGSI SAVE TO GALLERY - menggunakan image_gallery_saver
+  /// ✅ FUNGSI SAVE TO GALLERY - menggunakan gal
   Future<bool> _saveToGallery(String filePath, ScanEntry entry) async {
     try {
-      final result = await ImageGallerySaver.saveFile(filePath);
-      
-      if (result != null && result['isSuccess'] == true) {
-        debugPrint('✅ Berhasil menyimpan ke galeri: $filePath');
-        return true;
-      } else {
-        debugPrint('⚠️ Gagal menyimpan ke galeri: $filePath');
-        return false;
-      }
+      await Gal.putImage(filePath, album: 'TERMULScan');
+      debugPrint('✅ Berhasil menyimpan ke galeri: $filePath');
+      return true;
     } catch (e) {
       debugPrint('❌ Error _saveToGallery: $e');
       return false;
