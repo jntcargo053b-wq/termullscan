@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 class LocationService {
@@ -16,12 +17,19 @@ class LocationService {
 
   Future<({double? lat, double? lng})> getCoordinatesOnly() async {
     try {
-      final result = await _channel.invokeMethod<Map>('getLocation');
+      final result = await _channel.invokeMethod<Map>('getLocation').timeout(const Duration(seconds: 6));
       if (result == null) return (lat: null, lng: null);
       final lat = (result['lat'] as num?)?.toDouble();
       final lng = (result['lng'] as num?)?.toDouble();
       return (lat: lat, lng: lng);
+    } on MissingPluginException catch (e) {
+      debugPrint('Location plugin not ready: $e');
+      return (lat: null, lng: null);
+    } on TimeoutException catch (e) {
+      debugPrint('Location timeout: $e');
+      return (lat: null, lng: null);
     } catch (e) {
+      debugPrint('Location error: $e');
       return (lat: null, lng: null);
     }
   }

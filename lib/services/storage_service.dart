@@ -163,14 +163,15 @@ class StorageService {
         ? name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
         : 'photo';
     final dest = '${photoDir.path}/${cleanName}_$id.jpg';
-    await File(tempPath).rename(dest).catchError((_) async {
+    try {
+      await File(tempPath).rename(dest);
+    } on FileSystemException {
       // rename lintas partisi tidak bisa → fallback copy+delete
       await File(tempPath).copy(dest);
       try {
         await File(tempPath).delete();
       } catch (_) {}
-      return File(dest);
-    });
+    }
     return dest;
   }
 

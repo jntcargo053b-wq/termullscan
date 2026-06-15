@@ -70,6 +70,9 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       final savedPathFuture = _storage.savePhoto(xfile.path);
 
       final savedPath = await savedPathFuture;
+      if (savedPath.isEmpty) {
+        throw Exception('Path foto tidak valid');
+      }
       final coords = await coordsFuture;
 
       final entry = ScanEntry(
@@ -127,7 +130,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
       if (mounted) _showSuccess(entry);
     } catch (e) {
-      setState(() => _isSaving = false);
       _showError('Gagal ambil foto: $e');
     }
   }
@@ -155,6 +157,9 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       final savedPathFuture = _storage.savePhoto(xfile.path);
 
       final savedPath = await savedPathFuture;
+      if (savedPath.isEmpty) {
+        throw Exception('Path foto tidak valid');
+      }
       final coords = await coordsFuture;
 
       final entry = ScanEntry(
@@ -190,8 +195,9 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
       if (mounted) _showSuccess(entry);
     } catch (e) {
-      setState(() => _isSaving = false);
       _showError('Gagal memilih foto: $e');
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
