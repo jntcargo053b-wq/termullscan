@@ -578,10 +578,12 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   /// ✅ FUNGSI SAVE TO GALLERY - menggunakan saver_gallery
   Future<bool> _saveToGallery(String filePath, ScanEntry entry) async {
     try {
+      // Coba API baru dulu (saver_gallery >= 3.0.6 terbaru)
+      // filePath, fileName, albumPath adalah parameter versi terbaru
       await SaverGallery.saveFile(
-        file: filePath,
-        androidRelativePath: 'Pictures/TERMULScan',
-        name: filePath.split('/').last,
+        filePath: filePath,
+        fileName: filePath.split('/').last,
+        albumPath: 'TERMULScan',
         skipIfExists: false,
       );
       debugPrint('✅ Berhasil menyimpan ke galeri: $filePath');
