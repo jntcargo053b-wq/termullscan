@@ -1,9 +1,31 @@
-// SDK version global — dibaca oleh app/build.gradle dan subproject plugin
+// ─── SDK versions (dipakai oleh :app/build.gradle) ───────────────────────────
 ext {
     compileSdkVersion = 35
-    minSdkVersion = 21
-    targetSdkVersion = 35
+    minSdkVersion     = 21
+    targetSdkVersion  = 35
 }
+
+// ─── WORKAROUND geolocator_android bug ───────────────────────────────────────
+// Semua versi geolocator_android mengakses `flutter.compileSdkVersion` di build.gradle
+// baris 29. Dengan Flutter new Gradle Plugin (declarative pluginManagement di settings.gradle),
+// extension `flutter` hanya diinjeksi ke project :app — bukan ke library subprojects.
+// Workaround: inject map `flutter` sebagai ExtraProperty ke setiap non-app subproject
+// via beforeEvaluate hook, sebelum Gradle mulai mengevaluasi build.gradle plugin tersebut.
+def flutterFakeExt = [
+    compileSdkVersion: 35,
+    minSdkVersion    : 21,
+    targetSdkVersion : 35,
+    ndkVersion       : "27.0.12077973",
+]
+
+subprojects { sub ->
+    if (sub.name != "app") {
+        sub.beforeEvaluate {
+            sub.ext.set("flutter", flutterFakeExt)
+        }
+    }
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 allprojects {
     repositories {
@@ -17,7 +39,11 @@ subprojects {
     project.buildDir = "${rootProject.buildDir}/${project.name}"
 }
 subprojects {
-    project.evaluationDependsOn(":app")
+    // Pastikan :app dievaluasi lebih dulu sebelum subproject lain,
+    // kecuali :app itu sendiri (hindari circular dependency).
+    if (project.name != "app") {
+        project.evaluationDependsOn(":app")
+    }
 }
 
 tasks.register("clean", Delete) {
