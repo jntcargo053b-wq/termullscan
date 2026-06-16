@@ -10,7 +10,7 @@ buildscript {
     }
 }
 
-// Ekstensi global agar plugin (seperti geolocator_android) bisa membaca nilai
+// Ekstensi global untuk SDK version (dibaca oleh plugin seperti geolocator_android)
 ext {
     compileSdkVersion = 34
     minSdkVersion = 21
