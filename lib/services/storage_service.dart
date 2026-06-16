@@ -129,8 +129,8 @@ class StorageService {
       } else {
         buf.writeln('    File     : ${e.value.split('/').last}');
       }
-      buf.writeln('    GPS      : ${e.coordinatesString}');
-      if (e.locationName != null) buf.writeln('    Lokasi   : ${e.locationName}');
+      buf.writeln('          : ${e.coordinatesString}');
+      if (e.locationName != null) buf.writeln('       : ${e.locationName}');
       if (e.note != null && e.note!.isNotEmpty) buf.writeln('    Catatan  : ${e.note}');
       buf.writeln(thin);
     }

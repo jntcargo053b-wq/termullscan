@@ -18,7 +18,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final _storage = StorageService();
-  final _loc = LocationService();
+  final _loc = Service();
 
   int _totalScans = 0;
   int _barcodeCount = 0;
@@ -32,17 +32,17 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _loadStats();
-    _initPermissionsAndLocation();
+    _initPermissionsAnd();
   }
 
-  Future<void> _initPermissionsAndLocation() async {
+  Future<void> _initPermissionsAnd() async {
     await Permission.camera.request();
-    final loc = await _loc.getLocation();
+    final loc = await _loc.get();
     if (mounted) {
       setState(() {
         _locationLabel = loc.address ?? (loc.lat != null
             ? '${loc.lat!.toStringAsFixed(4)}, ${loc.lng!.toStringAsFixed(4)}'
-            : 'GPS tidak tersedia');
+            : ' tidak tersedia');
         _locLoading = false;
       });
     }
@@ -96,7 +96,7 @@ class _HomeScreenState extends State<HomeScreen> {
           child: CustomScrollView(
             slivers: [
               SliverToBoxAdapter(child: _buildHeader()),
-              SliverToBoxAdapter(child: _buildLocationBar()),
+              SliverToBoxAdapter(child: _buildBar()),
               SliverToBoxAdapter(child: _buildStatsRow()),
               SliverToBoxAdapter(child: _buildScanButtons()),
               SliverToBoxAdapter(child: _buildRecentSection()),
@@ -180,7 +180,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildLocationBar() {
+  Widget _buildBar() {
     return Container(
       margin: const EdgeInsets.fromLTRB(20, 16, 20, 0),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -199,7 +199,7 @@ class _HomeScreenState extends State<HomeScreen> {
           const Gap(8),
           Expanded(
             child: Text(
-              _locLoading ? 'Mencari lokasi...' : (_locationLabel ?? 'GPS tidak tersedia'),
+              _locLoading ? 'Mencari lokasi...' : (_locationLabel ?? ' tidak tersedia'),
               style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -207,7 +207,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.refresh, size: 14, color: AppTheme.textSecondary),
-            onPressed: _initPermissionsAndLocation,
+            onPressed: _initPermissionsAnd,
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
           ),

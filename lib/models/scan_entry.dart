@@ -32,7 +32,7 @@ class ScanEntry {
       DateFormat('dd/MM HH:mm').format(timestamp);
 
   String get coordinatesString {
-    if (latitude == null || longitude == null) return 'GPS tidak tersedia';
+    if (latitude == null || longitude == null) return ' tidak tersedia';
     return '${latitude!.toStringAsFixed(5)}, ${longitude!.toStringAsFixed(5)}';
   }
 

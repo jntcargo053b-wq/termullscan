@@ -445,14 +445,14 @@ class _EntryCard extends StatelessWidget {
       final text = 'Barcode: ${entry.value}\n'
           'Format: ${entry.barcodeFormat ?? "-"}\n'
           'Waktu: ${entry.timestampFormatted}\n'
-          'GPS: ${entry.coordinatesString}';
+          ': ${entry.coordinatesString}';
       Share.share(text, subject: 'Hasil Scan WH Scanner');
     } else if (entry.isPhoto && File(entry.value).existsSync()) {
       Share.shareXFiles(
         [XFile(entry.value)],
         subject: 'Foto WH Scanner',
         text: 'Waktu: ${entry.timestampFormatted}\n'
-            'GPS: ${entry.coordinatesString}',
+            ': ${entry.coordinatesString}',
       );
     }
   }
@@ -521,11 +521,11 @@ class _DetailSheet extends StatelessWidget {
                   value: entry.value, canCopy: true),
               const Gap(10),
             ],
-            _Row(icon: Icons.location_on, label: 'Koordinat GPS',
+            _Row(icon: Icons.location_on, label: 'Koordinat ',
                 value: entry.coordinatesString),
             if (entry.locationName != null) ...[
               const Gap(10),
-              _Row(icon: Icons.place, label: 'Nama Lokasi',
+              _Row(icon: Icons.place, label: 'Nama ',
                   value: entry.locationName!),
             ],
             if (entry.note != null && entry.note!.isNotEmpty) ...[
@@ -559,7 +559,7 @@ class _DetailSheet extends StatelessWidget {
                     final text = 'Barcode: ${entry.value}\n'
                         'Format: ${entry.barcodeFormat ?? "-"}\n'
                         'Waktu: ${entry.timestampFormatted}\n'
-                        'GPS: ${entry.coordinatesString}';
+                        ': ${entry.coordinatesString}';
                     Share.share(text, subject: 'Hasil Scan WH Scanner');
                   },
                   icon: const Icon(Icons.share, size: 18),
@@ -579,7 +579,7 @@ class _DetailSheet extends StatelessWidget {
                       [XFile(entry.value)],
                       subject: 'Foto WH Scanner',
                       text: 'Waktu: ${entry.timestampFormatted}\n'
-                          'GPS: ${entry.coordinatesString}',
+                          ': ${entry.coordinatesString}',
                     );
                   },
                   icon: const Icon(Icons.share, size: 18),

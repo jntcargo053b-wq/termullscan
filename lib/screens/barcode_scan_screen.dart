@@ -85,7 +85,7 @@ Future<String?> _renderWatermark(_WatermarkTask task) async {
   final gpsStr = task.locationName ??
       (task.latitude != null
           ? '${task.latitude!.toStringAsFixed(5)}, ${task.longitude!.toStringAsFixed(5)}'
-          : 'GPS tidak tersedia');
+          : ' tidak tersedia');
   final isManual = task.barcodeFormat == 'MANUAL';
 
   final lines = <Map<String, dynamic>>[
@@ -187,7 +187,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   int _scanCount = 0;
 
   final StorageService _storage = StorageService();
-  final LocationService _loc = LocationService();
+  final Service _loc = Service();
   final ImagePicker _picker = ImagePicker();
   final WatermarkSettings _wmSettings = WatermarkSettings();
 
@@ -239,7 +239,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     try {
       HapticFeedback.mediumImpact();
 
-      // Simpan barcode DULU tanpa GPS (akan diupdate nanti)
+      // Simpan barcode DULU tanpa  (akan diupdate nanti)
       final entry = ScanEntry(
         id: _storage.generateId(),
         type: ScanType.barcode,
@@ -854,7 +854,7 @@ class _ResultSheetState extends State<_ResultSheet> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         ),
                         Gap(8),
-                        Text('Memproses foto & GPS...',
+                        Text('Memproses foto & ...',
                             style: TextStyle(color: Colors.grey, fontSize: 12)),
                       ],
                     ),
