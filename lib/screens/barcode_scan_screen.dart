@@ -10,9 +10,9 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:gap/gap.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:termulscan/models/scan_entry.dart';
-import 'package:termulscan/services/storage_service.dart';
-import 'package:termulscan/services/location_service.dart';
+import '../models/scan_entry.dart';
+import '../services/storage_service.dart';
+import '../services/location_service.dart';
 import 'watermark_settings.dart';
 import 'watermark_settings_sheet.dart';
 
@@ -233,7 +233,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     setState(() {
       _scanning = false;
       _lastCode = code;
-      _isSaving = true;
+      // Jangan set _isSaving di sini, nanti diatur di dalam _takePhotoAndShow
     });
 
     try {
@@ -391,7 +391,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     setState(() {
       _scanning = false;
       _lastCode = code;
-      _isSaving = true;
+      // Jangan set _isSaving di sini
     });
 
     try {
@@ -431,91 +431,113 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   }
 
   // ── FOTO & WATERMARK ─────────────────────────────────────────────────────
+  /// Ambil foto, proses watermark, dan tampilkan result sheet.
+  /// `_isSaving` diaktifkan hanya setelah foto berhasil diambil.
   Future<void> _takePhotoAndShow(ScanEntry entry) async {
-    // Ambil foto dari kamera (sudah dikompres)
-    final file = await _picker.pickImage(
-      source: ImageSource.camera,
-      maxWidth: 1024,
-      imageQuality: 65,
-    );
-
-    if (file == null) {
-      if (mounted) setState(() {
-        _isSaving = false;
-        _scanning = true;
-        _lastCode = null;
-      });
-      return;
-    }
-
-    if (!mounted) return;
-    setState(() => _isSaving = false);
-
-    // 1. Dapatkan koordinat CEPAT (tanpa reverse geocoding)
-    final coords = await _loc.getCoordinatesOnly();
-
-    // 2. Update entry dengan koordinat (address masih null)
-    ScanEntry updatedEntry = entry.copyWith(
-      latitude: coords.lat,
-      longitude: coords.lng,
-      locationName: null,
-    );
-    await _storage.update(updatedEntry);
-
-    // 3. Tampilkan result sheet dengan status "memproses"
-    final stateNotifier = ValueNotifier<_ResultState>(
-      _ResultState(entry: updatedEntry, photoPath: null, processing: true),
-    );
-
-    showModalBottomSheet(
-      context: context,
-      isDismissible: true,
-      isScrollControlled: true,
-      builder: (_) => _ResultSheet(
-        notifier: stateNotifier,
-        storage: _storage,
-        onSaveToGallery: _saveToGallery,
-      ),
-    ).then((_) {
+    // Ambil foto dari kamera (tanpa set _isSaving)
+    final XFile? file;
+    try {
+      file = await _picker.pickImage(
+        source: ImageSource.camera,
+        maxWidth: 1024,
+        imageQuality: 65,
+      );
+    } catch (e) {
+      debugPrint('Error opening camera: $e');
       if (mounted) {
         setState(() {
           _scanning = true;
           _lastCode = null;
         });
       }
-    });
-
-    // 4. Jalankan reverse geocoding di BACKGROUND (tanpa await)
-    if (coords.lat != null && coords.lng != null) {
-      // ignore: unawaited_futures
-      _loc.updateAddressForEntry(
-        entryId: updatedEntry.id,
-        lat: coords.lat!,
-        lng: coords.lng!,
-        onAddressReceived: (id, address) async {
-          final currentEntry = await _storage.getEntry(id);
-          if (currentEntry != null) {
-            final withAddress = currentEntry.copyWith(locationName: address);
-            await _storage.update(withAddress);
-            if (mounted) {
-              stateNotifier.value = _ResultState(
-                entry: withAddress,
-                photoPath: stateNotifier.value.photoPath,
-                processing: stateNotifier.value.processing,
-                error: stateNotifier.value.error,
-              );
-            }
-          }
-        },
-      );
+      return;
     }
 
-    // 5. Proses watermark dan simpan foto (tidak menunggu address)
+    if (file == null) {
+      // User membatalkan, lanjutkan scanning
+      if (mounted) {
+        setState(() {
+          _scanning = true;
+          _lastCode = null;
+        });
+      }
+      return;
+    }
+
+    // Setelah foto diambil, aktifkan _isSaving
+    if (mounted) setState(() => _isSaving = true);
+
     try {
-      final wmPath = await _addWatermarkInIsolate(
-        file.path,
-        updatedEntry,
+      // 1. Dapatkan koordinat CEPAT (tanpa reverse geocoding)
+      final coords = await _loc.getCoordinatesOnly();
+
+      // 2. Update entry dengan koordinat (address masih null)
+      ScanEntry updatedEntry = entry.copyWith(
+        latitude: coords.lat,
+        longitude: coords.lng,
+        locationName: null,
       );
+      await _storage.update(updatedEntry);
+
+      // 3. Tampilkan result sheet dengan status "memproses"
+      final stateNotifier = ValueNotifier<_ResultState>(
+        _ResultState(entry: updatedEntry, photoPath: null, processing: true),
+      );
+
+      showModalBottomSheet(
+        context: context,
+        isDismissible: true,
+        isScrollControlled: true,
+        builder: (_) => _ResultSheet(
+          notifier: stateNotifier,
+          storage: _storage,
+          onSaveToGallery: _saveToGallery,
+        ),
+      ).then((_) {
+        if (mounted) {
+          setState(() {
+            _scanning = true;
+            _lastCode = null;
+            // _isSaving sudah direset di finally
+          });
+        }
+      });
+
+      // 4. Jalankan reverse geocoding di BACKGROUND (tanpa await)
+      if (coords.lat != null && coords.lng != null) {
+        // ignore: unawaited_futures
+        _loc.updateAddressForEntry(
+          entryId: updatedEntry.id,
+          lat: coords.lat!,
+          lng: coords.lng!,
+          onAddressReceived: (id, address) async {
+            final currentEntry = await _storage.getEntry(id);
+            if (currentEntry != null) {
+              final withAddress = currentEntry.copyWith(locationName: address);
+              await _storage.update(withAddress);
+              if (mounted) {
+                stateNotifier.value = _ResultState(
+                  entry: withAddress,
+                  photoPath: stateNotifier.value.photoPath,
+                  processing: stateNotifier.value.processing,
+                  error: stateNotifier.value.error,
+                );
+              }
+            }
+          },
+        );
+      }
+
+      // 5. Proses watermark dan simpan foto (tidak menunggu address)
+      String wmPath;
+      try {
+        wmPath = await _addWatermarkInIsolate(file.path, updatedEntry);
+      } catch (e) {
+        debugPrint('Watermark error: $e');
+        // Jika watermark gagal, gunakan foto asli sebagai fallback
+        wmPath = file.path;
+      }
+
       final savedPhotoPath = await _storage.savePhoto(wmPath, name: entry.value);
 
       // Buat entri foto
@@ -537,13 +559,18 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         processing: false,
       );
     } catch (e) {
-      debugPrint('Error watermark/save: $e');
-      stateNotifier.value = _ResultState(
-        entry: updatedEntry,
-        photoPath: null,
-        processing: false,
-        error: true,
-      );
+      debugPrint('Error in _takePhotoAndShow: $e');
+      // Tampilkan error di sheet jika masih terbuka
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.red,
+            content: Text('Gagal memproses: $e'),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
@@ -915,6 +942,13 @@ class _ResultSheetState extends State<_ResultSheet> {
                               if (note.isNotEmpty) {
                                 final updated = entry.copyWith(note: note);
                                 await widget.storage.update(updated);
+                                // Update notifier agar note muncul
+                                widget.notifier.value = _ResultState(
+                                  entry: updated,
+                                  photoPath: state.photoPath,
+                                  processing: state.processing,
+                                  error: state.error,
+                                );
                               }
                               setState(() {
                                 _isEditingNote = false;
