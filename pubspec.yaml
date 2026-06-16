@@ -20,8 +20,8 @@ dependencies:
   shared_preferences: ^2.2.2
   http: ^1.2.1
   saver_gallery: 3.0.10
-  geolocator: ^13.0.1   
-  
+  geolocator: ^13.0.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -42,3 +42,8 @@ flutter:
 
 dependency_overrides:
   saver_gallery: 3.0.10
+  # geolocator_android 4.6.x menggunakan flutter.compileSdkVersion yang tidak
+  # kompatibel dengan Flutter new Gradle plugin (declarative settings.gradle).
+  # Pin ke 4.7.0+ yang sudah menggunakan namespace dan tidak bergantung
+  # pada flutter extension saat evaluate library project.
+  geolocator_android: ">=4.7.0 <5.0.0"

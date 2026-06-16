@@ -1,20 +1,8 @@
-buildscript {
-    ext.kotlin_version = '2.0.21'
-    repositories {
-        google()
-        mavenCentral()
-    }
-    dependencies {
-        classpath 'com.android.tools.build:gradle:8.7.0'
-        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
-    }
-}
-
-// Ekstensi global untuk SDK version (dibaca oleh plugin seperti geolocator_android)
+// SDK version global — dibaca oleh app/build.gradle dan subproject plugin
 ext {
-    compileSdkVersion = 34
+    compileSdkVersion = 35
     minSdkVersion = 21
-    targetSdkVersion = 34
+    targetSdkVersion = 35
 }
 
 allprojects {
