@@ -6,12 +6,12 @@ plugins {
 
 android {
     namespace "com.termulscan.app"
-    compileSdk 35
+    compileSdk 34  // Gunakan 34 untuk stabilitas; jika mau 35, pastikan AGP 8.1.0+ mendukung
 
     defaultConfig {
         applicationId "com.termulscan.app"
         minSdk 21
-        targetSdk 35
+        targetSdk 34
         versionCode flutter.versionCode
         versionName flutter.versionName
     }
