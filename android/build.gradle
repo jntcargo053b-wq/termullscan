@@ -1,13 +1,20 @@
 buildscript {
-    ext.kotlin_version = '1.9.0'  // Sesuaikan jika perlu
+    ext.kotlin_version = '2.0.21'
     repositories {
         google()
         mavenCentral()
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:8.1.0'   // AGP 8.1.0 stabil
+        classpath 'com.android.tools.build:gradle:8.7.0'
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
     }
+}
+
+// Ekstensi global agar plugin (seperti geolocator_android) bisa membaca nilai
+ext {
+    compileSdkVersion = 34
+    minSdkVersion = 21
+    targetSdkVersion = 34
 }
 
 allprojects {
