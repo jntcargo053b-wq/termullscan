@@ -6,7 +6,6 @@ plugins {
 
 android {
     namespace "com.termulscan.app"
-    // Mengambil nilai dari rootProject.ext
     compileSdk rootProject.ext.compileSdkVersion
 
     defaultConfig {
