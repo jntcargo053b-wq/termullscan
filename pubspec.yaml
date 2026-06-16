@@ -23,7 +23,6 @@ dependencies:
   # geolocator 14.x menggunakan geolocator_android 5.x yang sudah
   # compatible dengan Flutter new Gradle plugin (declarative settings.gradle).
   # Versi 13.x menggunakan geolocator_android 4.6.2 yang buggy (flutter.compileSdkVersion null).
-  geolocator: ^14.0.2
 
 dev_dependencies:
   flutter_test:
