@@ -1,39 +1,83 @@
 import 'dart:async';
-import 'dart:convert';
-import 'package:flutter/services.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'dart:convert';
 
 class LocationService {
   static final _instance = LocationService._();
   factory LocationService() => _instance;
   LocationService._();
 
-  static const _channel = MethodChannel('com.termulscan.app/location');
-
+  // Cache
   static ({double? lat, double? lng, String? address})? _cachedLocation;
   static DateTime? _cacheTime;
   static const _cacheDuration = Duration(seconds: 30);
 
+  /// Cek izin lokasi
+  Future<bool> _checkPermission() async {
+    final status = await Geolocator.checkPermission();
+    if (status == LocationPermission.denied || status == LocationPermission.deniedForever) {
+      final request = await Geolocator.requestPermission();
+      return request == LocationPermission.always || request == LocationPermission.whileInUse;
+    }
+    return status == LocationPermission.always || status == LocationPermission.whileInUse;
+  }
+
+  /// Mendapatkan koordinat dengan fallback ke last known
   Future<({double? lat, double? lng})> getCoordinatesOnly() async {
     try {
-      final result = await _channel.invokeMethod<Map>('getLocation').timeout(const Duration(seconds: 6));
-      if (result == null) return (lat: null, lng: null);
-      final lat = (result['lat'] as num?)?.toDouble();
-      final lng = (result['lng'] as num?)?.toDouble();
-      return (lat: lat, lng: lng);
-    } on MissingPluginException catch (e) {
-      debugPrint('Location plugin not ready: $e');
-      return (lat: null, lng: null);
-    } on TimeoutException catch (e) {
-      debugPrint('Location timeout: $e');
+      // Cek izin
+      final hasPermission = await _checkPermission();
+      if (!hasPermission) {
+        debugPrint('Location permission denied');
+        return (lat: null, lng: null);
+      }
+
+      // Setting: akurasi tinggi, timeout 6 detik
+      const settings = LocationSettings(
+        accuracy: LocationAccuracy.high,
+        timeLimit: Duration(seconds: 6),
+      );
+
+      Position? position;
+      try {
+        position = await Geolocator.getCurrentPosition(
+          locationSettings: settings,
+        ).timeout(const Duration(seconds: 6));
+      } on TimeoutException catch (_) {
+        // Fallback ke last known position
+        position = await Geolocator.getLastKnownPosition();
+        if (position == null) rethrow;
+      }
+
+      if (position == null) {
+        // Coba sekali lagi dengan akurasi rendah
+        final lowSettings = const LocationSettings(
+          accuracy: LocationAccuracy.medium,
+          timeLimit: Duration(seconds: 4),
+        );
+        position = await Geolocator.getCurrentPosition(
+          locationSettings: lowSettings,
+        ).timeout(const Duration(seconds: 4));
+      }
+
+      if (position != null) {
+        return (lat: position.latitude, lng: position.longitude);
+      }
       return (lat: null, lng: null);
     } catch (e) {
       debugPrint('Location error: $e');
+      // Coba last known sekali lagi di luar try
+      try {
+        final last = await Geolocator.getLastKnownPosition();
+        if (last != null) return (lat: last.latitude, lng: last.longitude);
+      } catch (_) {}
       return (lat: null, lng: null);
     }
   }
 
+  /// Dapatkan lokasi lengkap (dengan address opsional)
   Future<({double? lat, double? lng, String? address})> getLocation({
     bool withAddress = true,
     bool forceRefresh = false,
@@ -64,10 +108,12 @@ class LocationService {
     return result;
   }
 
+  /// Reverse geocoding (sama seperti sebelumnya, hanya pakai geolocator tidak mengubah)
   Future<String?> reverseGeocode(double lat, double lng, {double? accuracy}) async {
     return await _reverseGeocode(lat, lng, accuracy: accuracy);
   }
 
+  /// Update address untuk entry (sama)
   Future<void> updateAddressForEntry({
     required String entryId,
     required double lat,
@@ -91,6 +137,7 @@ class LocationService {
     }
   }
 
+  /// Reverse geocode via Nominatim (sama)
   Future<String?> _reverseGeocode(double lat, double lng, {double? accuracy}) async {
     try {
       final isCoarse = accuracy != null && accuracy >= 20;
