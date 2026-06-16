@@ -88,6 +88,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     return granted;
   }
 
+  /// Ambil foto dari kamera – `_isSaving` baru aktif setelah foto diambil.
   Future<void> _takePhoto() async {
     // Pastikan izin kamera
     if (!await _ensureCameraPermission()) return;
@@ -95,20 +96,26 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     // Lokasi opsional (tidak wajib, hanya untuk menandai)
     await _ensureLocationPermission();
 
-    setState(() => _isSaving = true);
-
+    // Ambil foto (tanpa set _isSaving)
+    final XFile? xfile;
     try {
-      final XFile? xfile = await _picker.pickImage(
+      xfile = await _picker.pickImage(
         source: ImageSource.camera,
         maxWidth: 1024,
         imageQuality: 65,
         preferredCameraDevice: CameraDevice.rear,
       );
-      if (xfile == null) {
-        setState(() => _isSaving = false);
-        return;
-      }
+    } catch (e) {
+      _showError('Gagal membuka kamera');
+      return;
+    }
 
+    if (xfile == null) return; // user membatalkan
+
+    // Baru di sini kita set _isSaving = true
+    setState(() => _isSaving = true);
+
+    try {
       HapticFeedback.mediumImpact();
 
       // Ambil koordinat dengan timeout (tidak menghalangi simpan foto)
@@ -164,22 +171,29 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     }
   }
 
+  /// Pilih dari galeri – `_isSaving` baru aktif setelah gambar dipilih.
   Future<void> _pickFromGallery() async {
     await _ensureLocationPermission();
 
-    setState(() => _isSaving = true);
-
+    // Ambil gambar dari galeri (tanpa set _isSaving)
+    final XFile? xfile;
     try {
-      final XFile? xfile = await _picker.pickImage(
+      xfile = await _picker.pickImage(
         source: ImageSource.gallery,
         maxWidth: 1024,
         imageQuality: 65,
       );
-      if (xfile == null) {
-        setState(() => _isSaving = false);
-        return;
-      }
+    } catch (e) {
+      _showError('Gagal membuka galeri');
+      return;
+    }
 
+    if (xfile == null) return; // user membatalkan
+
+    // Baru di sini set _isSaving
+    setState(() => _isSaving = true);
+
+    try {
       // Ambil koordinat dengan timeout
       ({double? lat, double? lng}) coords;
       try {
