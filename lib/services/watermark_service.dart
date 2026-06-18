@@ -43,17 +43,23 @@ void _watermarkIsolate(_WatermarkTask task) async {
   }
 }
 
-/// Fungsi render watermark (berjalan di isolate terpisah).
+/// Render watermark gaya POLAROID FIELD OPS (match design spec).
 Future<String?> _renderWatermark(_WatermarkTask task) async {
   final imageBytes = await File(task.imagePath).readAsBytes();
   final codec = await ui.instantiateImageCodec(imageBytes);
   final frame = await codec.getNextFrame();
   final srcImage = frame.image;
 
-  final width = srcImage.width.toDouble();
-  final height = srcImage.height.toDouble();
+  final photoWidth = srcImage.width.toDouble();
+  final photoHeight = srcImage.height.toDouble();
 
-  // Load logo jika ada
+  // ── POLAROID LAYOUT (matching HTML design) ───────────────────────────
+  final padding = photoWidth * 0.06; // 6% white border (left/right/top)
+  final bottomStripHeight = photoHeight * 0.22; // bottom white area
+  final canvasWidth = photoWidth + (padding * 2);
+  final canvasHeight = photoHeight + padding + bottomStripHeight;
+
+  // Load logo
   ui.Image? logoImage;
   if (task.logoPath != null) {
     try {
@@ -61,7 +67,7 @@ Future<String?> _renderWatermark(_WatermarkTask task) async {
       if (await logoFile.exists()) {
         final logoBytes = await logoFile.readAsBytes();
         final logoCodec =
-            await ui.instantiateImageCodec(logoBytes, targetWidth: 160);
+            await ui.instantiateImageCodec(logoBytes, targetWidth: 120);
         final logoFrame = await logoCodec.getNextFrame();
         logoImage = logoFrame.image;
       }
@@ -69,92 +75,221 @@ Future<String?> _renderWatermark(_WatermarkTask task) async {
   }
 
   final recorder = ui.PictureRecorder();
-  final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, width, height));
-  canvas.drawImage(srcImage, Offset.zero, Paint());
+  final canvas =
+      Canvas(recorder, Rect.fromLTWH(0, 0, canvasWidth, canvasHeight));
 
-  // Teks watermark
-  final dateStr = DateFormat('dd/MM/yyyy HH:mm:ss').format(task.timestamp);
-  final gpsStr = task.locationName ??
-      (task.latitude != null
-          ? '${task.latitude!.toStringAsFixed(5)}, ${task.longitude!.toStringAsFixed(5)}'
-          : 'tidak tersedia');
-  final isManual = task.barcodeFormat == 'MANUAL';
-
-  final lines = <Map<String, dynamic>>[
-    if (task.operatorName.isNotEmpty)
-      {'text': task.operatorName, 'color': const Color(0xFFFFD700)},
-    if (isManual)
-      {'text': '[INPUT MANUAL]', 'color': const Color(0xFFFFAA00)},
-    if (task.barcodeValue != null && task.barcodeValue!.isNotEmpty)
-      {'text': task.barcodeValue!, 'color': Colors.white},
-    {'text': dateStr, 'color': const Color(0xFFCCCCCC)},
-    {'text': gpsStr, 'color': const Color(0xFFCCCCCC)},
-  ];
-
-  final fontSize = width * 0.03;
-  final padding = width * 0.04;
-  final rowHeight = fontSize * 1.65;
-  final logoSize = width * 0.1;
-  final bgHeight = (lines.length * rowHeight) + (padding * 2);
-  final finalBgHeight = logoImage != null
-      ? (bgHeight > logoSize + padding * 2 ? bgHeight : logoSize + padding * 2)
-      : bgHeight;
-
-  // Background strip
+  // ── PAPER BACKGROUND (krem polaroid #F5F5F0) ─────────────────────────
+  final paperBg = Paint()..color = const Color(0xFFF5F5F0);
   canvas.drawRect(
-    Rect.fromLTWH(0, height - finalBgHeight, width, finalBgHeight),
-    Paint()..color = const Color(0xCC000000),
+    Rect.fromLTWH(0, 0, canvasWidth, canvasHeight),
+    paperBg,
   );
 
-  // Logo kanan bawah
+  // ── DROP SHADOW ──────────────────────────────────────────────────────
+  final shadowPaint = Paint()
+    ..color = const Color(0x33000000)
+    ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 16);
+  canvas.drawRect(
+    Rect.fromLTWH(4, 6, canvasWidth - 4, canvasHeight - 4),
+    shadowPaint,
+  );
+
+  // ── PHOTO IN "VIEWFINDER" (black bg + image) ─────────────────────────
+  final photoRect = Rect.fromLTWH(padding, padding, photoWidth, photoHeight);
+
+  // Black background behind photo
+  canvas.drawRect(photoRect, Paint()..color = const Color(0xFF000000));
+
+  // Inner shadow/border effect
+  canvas.drawRect(
+    photoRect,
+    Paint()
+      ..color = const Color(0xFFE0E0E0)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5,
+  );
+
+  // Draw image with slight opacity like the HTML (opacity-80 mix-blend-screen)
+  canvas.drawImageRect(
+    srcImage,
+    Rect.fromLTWH(0, 0, photoWidth, photoHeight),
+    photoRect,
+    Paint()
+      ..filterQuality = FilterQuality.high
+      ..color = const Color(0xCCFFFFFF), // ~80% opacity
+  );
+
+  // ── SCAN LINE (optional subtle orange line) ──────────────────────────
+  final scanLinePaint = Paint()
+    ..color = const Color(0x66FFAA00)
+    ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
+  canvas.drawLine(
+    Offset(padding, padding + photoHeight * 0.3),
+    Offset(padding + photoWidth, padding + photoHeight * 0.3),
+    scanLinePaint..strokeWidth = 2,
+  );
+
+  // ── BOTTOM WHITE AREA - TEKS ─────────────────────────────────────────
+  final isManual = task.barcodeFormat == 'MANUAL';
+  final dateStr = DateFormat('MMM dd, yyyy • HH:mm:ss')
+      .format(task.timestamp)
+      .toUpperCase();
+  final gpsStr = task.locationName ??
+      (task.latitude != null
+          ? '${task.latitude!.toStringAsFixed(4)}° N, ${task.longitude!.toStringAsFixed(4)}° W'
+          : '-- • --');
+
+  final textX = padding + 4; // px kecil dari padding
+  final contentWidth = canvasWidth - (padding * 2) - 8;
+  double textY = photoHeight + padding + (bottomStripHeight * 0.08);
+
+  // Helper: draw text
+  void drawText(
+    String text, {
+    required Color color,
+    required double fontSize,
+    FontWeight fontWeight = FontWeight.normal,
+    double? letterSpacing,
+    double? extraSpacing,
+  }) {
+    final tp = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+          color: color,
+          fontSize: fontSize,
+          fontWeight: fontWeight,
+          letterSpacing: letterSpacing,
+          fontFamily: 'Geist',
+        ),
+      ),
+      textDirection: ui.TextDirection.ltr,
+    )..layout(maxWidth: contentWidth);
+    tp.paint(canvas, Offset(textX, textY));
+    textY += (fontSize * 1.55) + (extraSpacing ?? 0);
+  }
+
+  // 1. Barcode value - large bold dark
+  if (task.barcodeValue != null && task.barcodeValue!.isNotEmpty) {
+    drawText(
+      task.barcodeValue!,
+      color: const Color(0xFF2C2C2C),
+      fontSize: photoWidth * 0.045,
+      fontWeight: FontWeight.w700,
+      letterSpacing: -0.5,
+    );
+  }
+
+  // Spasi kecil
+  textY += 2;
+
+  // 2. Operator name - gold/brown
+  if (task.operatorName.isNotEmpty) {
+    drawText(
+      'OP: ${task.operatorName}',
+      color: const Color(0xFF8B6914),
+      fontSize: photoWidth * 0.032,
+      fontWeight: FontWeight.w700,
+    );
+  }
+
+  // 3. Date & Time
+  drawText(
+    dateStr,
+    color: const Color(0xFF666666),
+    fontSize: photoWidth * 0.025,
+    fontWeight: FontWeight.w500,
+  );
+
+  // 4. GPS coordinates (dengan icon text)
+  drawText(
+    gpsStr,
+    color: const Color(0xFF888888),
+    fontSize: photoWidth * 0.025,
+    fontWeight: FontWeight.w400,
+  );
+
+  // ── BADGE & LOGO (kanan bawah) ───────────────────────────────────────
+  final rightX = canvasWidth - padding - 4;
+
+  // Manual badge
+  if (isManual) {
+    const badgeW = 52.0;
+    const badgeH = 16.0;
+    final badgeRect = Rect.fromLTWH(
+      rightX - badgeW,
+      photoHeight + padding + (bottomStripHeight * 0.15),
+      badgeW,
+      badgeH,
+    );
+
+    // Badge background
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(badgeRect, const Radius.circular(3)),
+      Paint()..color = const Color(0xFFE67E22),
+    );
+
+    // Badge text "MANUAL"
+    final badgeTp = TextPainter(
+      text: const TextSpan(
+        text: 'MANUAL',
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: 8,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.5,
+        ),
+      ),
+      textDirection: ui.TextDirection.ltr,
+    )..layout();
+    badgeTp.paint(
+      canvas,
+      Offset(
+        badgeRect.center.dx - badgeTp.width / 2,
+        badgeRect.center.dy - badgeTp.height / 2,
+      ),
+    );
+  }
+
+  // Logo (kanan bawah, kecil, opacity rendah)
   if (logoImage != null) {
+    final logoSize = bottomStripHeight * 0.42;
     final logoW = logoImage.width.toDouble();
     final logoH = logoImage.height.toDouble();
     final scale = logoSize / (logoW > logoH ? logoW : logoH);
     final drawW = logoW * scale;
     final drawH = logoH * scale;
-    final logoLeft = width - padding - drawW;
-    final logoTop = height - finalBgHeight + (finalBgHeight - drawH) / 2;
+
+    final logoX = rightX - drawW;
+    final logoY = photoHeight + padding + (bottomStripHeight - drawH) / 2;
 
     canvas.drawImageRect(
       logoImage,
       Rect.fromLTWH(0, 0, logoW, logoH),
-      Rect.fromLTWH(logoLeft, logoTop, drawW, drawH),
-      Paint()..filterQuality = FilterQuality.high,
+      Rect.fromLTWH(logoX, logoY, drawW, drawH),
+      Paint()
+        ..filterQuality = FilterQuality.high
+        ..color = const Color(0x33000000), // opacity ~20% grayscale effect
     );
     logoImage.dispose();
   }
 
-  // Teks baris per baris
-  final textMaxWidth = logoImage != null
-      ? width - (padding * 2) - (logoSize + padding)
-      : width - (padding * 2);
-
-  for (int i = 0; i < lines.length; i++) {
-    final tp = TextPainter(
-      text: TextSpan(
-        text: lines[i]['text'] as String,
-        style: TextStyle(
-          color: lines[i]['color'] as Color,
-          fontSize: fontSize,
-          fontWeight: FontWeight.bold,
-          shadows: const [Shadow(blurRadius: 2, color: Colors.black)],
-        ),
-      ),
-      textDirection: ui.TextDirection.ltr,
-    )..layout(maxWidth: textMaxWidth);
-
-    tp.paint(
-      canvas,
-      Offset(
-        padding,
-        (height - finalBgHeight + padding) + (i * rowHeight),
-      ),
-    );
+  // ── GRAIN TEXTURE OVERLAY ────────────────────────────────────────────
+  // (subtle noise pattern via random dots)
+  final grainPaint = Paint()
+    ..color = const Color(0x08000000)
+    ..style = PaintingStyle.fill;
+  final rng = DateTime.now().millisecondsSinceEpoch;
+  for (int i = 0; i < 200; i++) {
+    final x = ((rng + i * 7) % canvasWidth.toInt()).toDouble();
+    final y = ((rng + i * 13) % canvasHeight.toInt()).toDouble();
+    canvas.drawCircle(Offset(x, y), 0.5, grainPaint);
   }
 
+  // ── FINALIZE ─────────────────────────────────────────────────────────
   final picture = recorder.endRecording();
-  final img = await picture.toImage(width.toInt(), height.toInt());
+  final img =
+      await picture.toImage(canvasWidth.toInt(), canvasHeight.toInt());
   srcImage.dispose();
 
   final byteData = await img.toByteData(format: ui.ImageByteFormat.png);
@@ -166,20 +301,11 @@ Future<String?> _renderWatermark(_WatermarkTask task) async {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-/// Service untuk menambahkan watermark pada foto.
-///
-/// Menggunakan isolate terpisah agar UI tidak freeze saat rendering.
 class WatermarkService {
   static final WatermarkService _instance = WatermarkService._();
   factory WatermarkService() => _instance;
   WatermarkService._();
 
-  /// Menambahkan watermark ke [imagePath] dan menyimpan hasilnya ke [outputPath].
-  ///
-  /// [barcodeFormat] digunakan untuk menandai input manual.
-  /// [locationName] jika tersedia akan digunakan sebagai pengganti koordinat mentah.
-  ///
-  /// Returns path file hasil watermark, atau `null` jika gagal.
   Future<String?> addWatermark({
     required String imagePath,
     required String outputPath,
