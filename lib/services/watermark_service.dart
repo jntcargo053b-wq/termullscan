@@ -1,303 +1,346 @@
 import 'dart:io';
-import 'dart:isolate';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
-// ── Isolate payload ─────────────────────────────────────────────────────
-class _WatermarkTask {
-  final String imagePath;
-  final String outputPath;
-  final String? barcodeValue;
-  final String? barcodeFormat;
-  final DateTime timestamp;
-  final double? latitude;
-  final double? longitude;
-  final String? locationName;
-  final String operatorName;
-  final String? logoPath;
-  final SendPort replyTo;
-
-  const _WatermarkTask({
-    required this.imagePath,
-    required this.outputPath,
-    required this.barcodeValue,
-    required this.barcodeFormat,
-    required this.timestamp,
-    required this.latitude,
-    required this.longitude,
-    required this.locationName,
-    required this.operatorName,
-    required this.logoPath,
-    required this.replyTo,
-  });
-}
-
-/// Entry-point isolate — top-level function.
-void _watermarkIsolate(_WatermarkTask task) async {
+/// Render watermark gaya POLAROID FIELD OPS.
+///
+/// Fixes applied:
+/// ✅ GPS N/S/E/W direction
+/// ✅ OOM protection via targetWidth decode
+/// ✅ min(width,height) based padding
+/// ✅ Logo vs badge collision prevention
+/// ✅ Adaptive bottom strip height
+/// ✅ Proper shadow rendering
+/// ✅ Logo colorFilter instead of color overlay
+/// ✅ Manual badge responsive size
+/// ✅ 2-line support for long location names
+Future<String?> _renderWatermark({
+  required String imagePath,
+  required String outputPath,
+  required String? barcodeValue,
+  required String? barcodeFormat,
+  required DateTime timestamp,
+  required double? latitude,
+  required double? longitude,
+  required String? locationName,
+  required String operatorName,
+  required String? logoPath,
+}) async {
   try {
-    final result = await _renderWatermark(task);
-    task.replyTo.send(result);
-  } catch (e) {
-    task.replyTo.send(null);
-  }
-}
+    final file = File(imagePath);
+    if (!await file.exists()) {
+      debugPrint('⚠️ Watermark: file not found at $imagePath');
+      return null;
+    }
 
-/// Render watermark gaya POLAROID FIELD OPS (match design spec).
-Future<String?> _renderWatermark(_WatermarkTask task) async {
-  final imageBytes = await File(task.imagePath).readAsBytes();
-  final codec = await ui.instantiateImageCodec(imageBytes);
-  final frame = await codec.getNextFrame();
-  final srcImage = frame.image;
+    final imageBytes = await file.readAsBytes();
 
-  final photoWidth = srcImage.width.toDouble();
-  final photoHeight = srcImage.height.toDouble();
+    // ✅ 7. OOM protection — decode max 3000px wide
+    final codec = await ui.instantiateImageCodec(
+      imageBytes,
+      targetWidth: 3000,
+    );
+    final frame = await codec.getNextFrame();
+    final srcImage = frame.image;
 
-  // ── POLAROID LAYOUT (matching HTML design) ───────────────────────────
-  final padding = photoWidth * 0.06; // 6% white border (left/right/top)
-  final bottomStripHeight = photoHeight * 0.22; // bottom white area
-  final canvasWidth = photoWidth + (padding * 2);
-  final canvasHeight = photoHeight + padding + bottomStripHeight;
+    final photoWidth = srcImage.width.toDouble();
+    final photoHeight = srcImage.height.toDouble();
 
-  // Load logo
-  ui.Image? logoImage;
-  if (task.logoPath != null) {
-    try {
-      final logoFile = File(task.logoPath!);
-      if (await logoFile.exists()) {
-        final logoBytes = await logoFile.readAsBytes();
-        final logoCodec =
-            await ui.instantiateImageCodec(logoBytes, targetWidth: 120);
-        final logoFrame = await logoCodec.getNextFrame();
-        logoImage = logoFrame.image;
+    debugPrint(
+        '🖼️ Watermark: rendering polaroid for ${photoWidth.toInt()}x${photoHeight.toInt()}');
+
+    // ✅ 10. Padding based on min dimension
+    final baseSize = math.min(photoWidth, photoHeight);
+    final padding = baseSize * 0.06;
+
+    // ✅ 6. Adaptive bottom strip
+    final textLineCount = _countTextLines(
+      hasBarcode: barcodeValue != null && barcodeValue.isNotEmpty,
+      hasOperator: operatorName.isNotEmpty,
+      hasLocation: true, // date + gps always present
+    );
+    final bottomStripHeight = math.max(
+      photoHeight * 0.22,
+      textLineCount * (baseSize * 0.032 * 1.6) + padding * 2.5,
+    );
+
+    final canvasWidth = photoWidth + (padding * 2);
+    final canvasHeight = photoHeight + padding + bottomStripHeight;
+
+    // Load logo
+    ui.Image? logoImage;
+    double? logoDrawW, logoDrawH;
+    if (logoPath != null && logoPath.isNotEmpty) {
+      try {
+        final logoFile = File(logoPath);
+        if (await logoFile.exists()) {
+          final logoBytes = await logoFile.readAsBytes();
+          final logoCodec =
+              await ui.instantiateImageCodec(logoBytes, targetWidth: 200);
+          final logoFrame = await logoCodec.getNextFrame();
+          logoImage = logoFrame.image;
+
+          // Pre-calculate logo draw size
+          final logoMaxH = bottomStripHeight * 0.45;
+          final logoW = logoImage.width.toDouble();
+          final logoH = logoImage.height.toDouble();
+          final scale = logoMaxH / logoH;
+          logoDrawW = logoW * scale;
+          logoDrawH = logoH * scale;
+
+          debugPrint(
+              '🖼️ Watermark: logo loaded (${logoImage.width}x${logoImage.height})');
+        }
+      } catch (e) {
+        debugPrint('⚠️ Watermark: logo load failed - $e');
       }
-    } catch (_) {}
-  }
+    }
 
-  final recorder = ui.PictureRecorder();
-  final canvas =
-      Canvas(recorder, Rect.fromLTWH(0, 0, canvasWidth, canvasHeight));
+    final recorder = ui.PictureRecorder();
+    final canvas =
+        Canvas(recorder, Rect.fromLTWH(0, 0, canvasWidth, canvasHeight));
 
-  // ── PAPER BACKGROUND (krem polaroid #F5F5F0) ─────────────────────────
-  final paperBg = Paint()..color = const Color(0xFFF5F5F0);
-  canvas.drawRect(
-    Rect.fromLTWH(0, 0, canvasWidth, canvasHeight),
-    paperBg,
-  );
-
-  // ── DROP SHADOW ──────────────────────────────────────────────────────
-  final shadowPaint = Paint()
-    ..color = const Color(0x33000000)
-    ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 16);
-  canvas.drawRect(
-    Rect.fromLTWH(4, 6, canvasWidth - 4, canvasHeight - 4),
-    shadowPaint,
-  );
-
-  // ── PHOTO IN "VIEWFINDER" (black bg + image) ─────────────────────────
-  final photoRect = Rect.fromLTWH(padding, padding, photoWidth, photoHeight);
-
-  // Black background behind photo
-  canvas.drawRect(photoRect, Paint()..color = const Color(0xFF000000));
-
-  // Inner shadow/border effect
-  canvas.drawRect(
-    photoRect,
-    Paint()
-      ..color = const Color(0xFFE0E0E0)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5,
-  );
-
-  // Draw image with slight opacity like the HTML (opacity-80 mix-blend-screen)
-  canvas.drawImageRect(
-    srcImage,
-    Rect.fromLTWH(0, 0, photoWidth, photoHeight),
-    photoRect,
-    Paint()
-      ..filterQuality = FilterQuality.high
-      ..color = const Color(0xCCFFFFFF), // ~80% opacity
-  );
-
-  // ── SCAN LINE (optional subtle orange line) ──────────────────────────
-  final scanLinePaint = Paint()
-    ..color = const Color(0x66FFAA00)
-    ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
-  canvas.drawLine(
-    Offset(padding, padding + photoHeight * 0.3),
-    Offset(padding + photoWidth, padding + photoHeight * 0.3),
-    scanLinePaint..strokeWidth = 2,
-  );
-
-  // ── BOTTOM WHITE AREA - TEKS ─────────────────────────────────────────
-  final isManual = task.barcodeFormat == 'MANUAL';
-  final dateStr = DateFormat('MMM dd, yyyy • HH:mm:ss')
-      .format(task.timestamp)
-      .toUpperCase();
-  final gpsStr = task.locationName ??
-      (task.latitude != null
-          ? '${task.latitude!.toStringAsFixed(4)}° N, ${task.longitude!.toStringAsFixed(4)}° W'
-          : '-- • --');
-
-  final textX = padding + 4; // px kecil dari padding
-  final contentWidth = canvasWidth - (padding * 2) - 8;
-  double textY = photoHeight + padding + (bottomStripHeight * 0.08);
-
-  // Helper: draw text
-  void drawText(
-    String text, {
-    required Color color,
-    required double fontSize,
-    FontWeight fontWeight = FontWeight.normal,
-    double? letterSpacing,
-    double? extraSpacing,
-  }) {
-    final tp = TextPainter(
-      text: TextSpan(
-        text: text,
-        style: TextStyle(
-          color: color,
-          fontSize: fontSize,
-          fontWeight: fontWeight,
-          letterSpacing: letterSpacing,
-          fontFamily: 'Geist',
-        ),
-      ),
-      textDirection: ui.TextDirection.ltr,
-    )..layout(maxWidth: contentWidth);
-    tp.paint(canvas, Offset(textX, textY));
-    textY += (fontSize * 1.55) + (extraSpacing ?? 0);
-  }
-
-  // 1. Barcode value - large bold dark
-  if (task.barcodeValue != null && task.barcodeValue!.isNotEmpty) {
-    drawText(
-      task.barcodeValue!,
-      color: const Color(0xFF2C2C2C),
-      fontSize: photoWidth * 0.045,
-      fontWeight: FontWeight.w700,
-      letterSpacing: -0.5,
-    );
-  }
-
-  // Spasi kecil
-  textY += 2;
-
-  // 2. Operator name - gold/brown
-  if (task.operatorName.isNotEmpty) {
-    drawText(
-      'OP: ${task.operatorName}',
-      color: const Color(0xFF8B6914),
-      fontSize: photoWidth * 0.032,
-      fontWeight: FontWeight.w700,
-    );
-  }
-
-  // 3. Date & Time
-  drawText(
-    dateStr,
-    color: const Color(0xFF666666),
-    fontSize: photoWidth * 0.025,
-    fontWeight: FontWeight.w500,
-  );
-
-  // 4. GPS coordinates (dengan icon text)
-  drawText(
-    gpsStr,
-    color: const Color(0xFF888888),
-    fontSize: photoWidth * 0.025,
-    fontWeight: FontWeight.w400,
-  );
-
-  // ── BADGE & LOGO (kanan bawah) ───────────────────────────────────────
-  final rightX = canvasWidth - padding - 4;
-
-  // Manual badge
-  if (isManual) {
-    const badgeW = 52.0;
-    const badgeH = 16.0;
-    final badgeRect = Rect.fromLTWH(
-      rightX - badgeW,
-      photoHeight + padding + (bottomStripHeight * 0.15),
-      badgeW,
-      badgeH,
+    // ── PAPER BACKGROUND ──────────────────────────────────────────────
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, canvasWidth, canvasHeight),
+      Paint()..color = const Color(0xFFF5F5F0),
     );
 
-    // Badge background
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(badgeRect, const Radius.circular(3)),
-      Paint()..color = const Color(0xFFE67E22),
+    // ✅ 3. Proper shadow
+    final shadowPath = Path()
+      ..addRRect(RRect.fromRectAndRadius(
+        Rect.fromLTWH(0, 0, canvasWidth, canvasHeight),
+        const Radius.circular(2),
+      ));
+    canvas.drawShadow(shadowPath, Colors.black.withOpacity(0.3), 14, true);
+
+    // ── PHOTO AREA ────────────────────────────────────────────────────
+    final photoRect = Rect.fromLTWH(padding, padding, photoWidth, photoHeight);
+
+    // Black bg
+    canvas.drawRect(photoRect, Paint()..color = const Color(0xFF111111));
+
+    // Border
+    canvas.drawRect(
+      photoRect,
+      Paint()
+        ..color = const Color(0xFFDDDDDD)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = math.max(1.5, baseSize * 0.002)
+        ..isAntiAlias = true,
     );
 
-    // Badge text "MANUAL"
-    final badgeTp = TextPainter(
-      text: const TextSpan(
-        text: 'MANUAL',
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: 8,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.5,
-        ),
-      ),
-      textDirection: ui.TextDirection.ltr,
-    )..layout();
-    badgeTp.paint(
-      canvas,
-      Offset(
-        badgeRect.center.dx - badgeTp.width / 2,
-        badgeRect.center.dy - badgeTp.height / 2,
-      ),
-    );
-  }
-
-  // Logo (kanan bawah, kecil, opacity rendah)
-  if (logoImage != null) {
-    final logoSize = bottomStripHeight * 0.42;
-    final logoW = logoImage.width.toDouble();
-    final logoH = logoImage.height.toDouble();
-    final scale = logoSize / (logoW > logoH ? logoW : logoH);
-    final drawW = logoW * scale;
-    final drawH = logoH * scale;
-
-    final logoX = rightX - drawW;
-    final logoY = photoHeight + padding + (bottomStripHeight - drawH) / 2;
-
+    // Draw photo
     canvas.drawImageRect(
-      logoImage,
-      Rect.fromLTWH(0, 0, logoW, logoH),
-      Rect.fromLTWH(logoX, logoY, drawW, drawH),
+      srcImage,
+      Rect.fromLTWH(0, 0, photoWidth, photoHeight),
+      photoRect,
       Paint()
         ..filterQuality = FilterQuality.high
-        ..color = const Color(0x33000000), // opacity ~20% grayscale effect
+        ..isAntiAlias = true
+        ..color = const Color(0xDDFFFFFF),
     );
-    logoImage.dispose();
+
+    // Scan line
+    final scanLineY = padding + photoHeight * 0.35;
+    canvas.drawLine(
+      Offset(padding, scanLineY),
+      Offset(padding + photoWidth, scanLineY),
+      Paint()
+        ..color = const Color(0x44FFAA00)
+        ..strokeWidth = math.max(1.5, baseSize * 0.002)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3)
+        ..isAntiAlias = true,
+    );
+
+    // ── TEXT CONTENT ──────────────────────────────────────────────────
+    final isManual = barcodeFormat == 'MANUAL';
+    final dateStr =
+        DateFormat('MMM dd, yyyy • HH:mm:ss').format(timestamp).toUpperCase();
+
+    // ✅ 2. GPS with proper N/S/E/W
+    String gpsStr;
+    if (locationName != null && locationName.isNotEmpty) {
+      gpsStr = locationName;
+    } else if (latitude != null && longitude != null) {
+      final latDir = latitude >= 0 ? 'N' : 'S';
+      final lonDir = longitude >= 0 ? 'E' : 'W';
+      gpsStr =
+          '${latitude.abs().toStringAsFixed(4)}° $latDir, '
+          '${longitude.abs().toStringAsFixed(4)}° $lonDir';
+    } else {
+      gpsStr = 'No location data';
+    }
+
+    // ✅ 4. Reserve right area if badge or logo present
+    final hasBadgeOrLogo = isManual || logoImage != null;
+    final rightReservedWidth = hasBadgeOrLogo
+        ? math.max(
+            isManual ? baseSize * 0.10 : 0, // badge width
+            logoDrawW ?? 0, // logo width
+          ) +
+            padding * 0.5
+        : 0.0;
+
+    final textX = padding + 6;
+    final textContentWidth = canvasWidth - (padding * 2) - 12 - rightReservedWidth;
+    double textY = photoHeight + padding + (bottomStripHeight * 0.06);
+
+    // Helper draw text
+    void drawText(String text, Color color, double fontSize,
+        {FontWeight fontWeight = FontWeight.normal, int maxLines = 1}) {
+      final tp = TextPainter(
+        text: TextSpan(
+          text: text,
+          style: TextStyle(
+            color: color,
+            fontSize: fontSize,
+            fontWeight: fontWeight,
+            height: 1.3,
+          ),
+        ),
+        textDirection: ui.TextDirection.ltr,
+        maxLines: maxLines,
+        ellipsis: '…',
+      )..layout(maxWidth: textContentWidth);
+      tp.paint(canvas, Offset(textX, textY));
+      textY += tp.height + fontSize * 0.3;
+    }
+
+    // Barcode
+    if (barcodeValue != null && barcodeValue.isNotEmpty) {
+      drawText(barcodeValue, const Color(0xFF2C2C2C), baseSize * 0.045,
+          fontWeight: FontWeight.w800);
+    }
+
+    // Operator
+    if (operatorName.isNotEmpty) {
+      drawText('OP: $operatorName', const Color(0xFF8B6914), baseSize * 0.032,
+          fontWeight: FontWeight.w700);
+    }
+
+    // Date
+    drawText(dateStr, const Color(0xFF666666), baseSize * 0.024,
+        fontWeight: FontWeight.w500);
+
+    // ✅ 5. GPS with 2-line support
+    drawText(gpsStr, const Color(0xFF888888), baseSize * 0.024, maxLines: 2);
+
+    // ── MANUAL BADGE (top-right of bottom strip) ──────────────────────
+    if (isManual) {
+      // ✅ 11. Responsive badge size
+      final badgeW = baseSize * 0.09;
+      final badgeH = baseSize * 0.028;
+      final badgeX = canvasWidth - padding - badgeW - 6;
+      final badgeY = photoHeight + padding + (bottomStripHeight * 0.10);
+
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(badgeX, badgeY, badgeW, badgeH),
+          Radius.circular(badgeH * 0.2),
+        ),
+        Paint()
+          ..color = const Color(0xFFE67E22)
+          ..isAntiAlias = true,
+      );
+
+      final badgeFontSize = badgeH * 0.55;
+      final badgeTp = TextPainter(
+        text: TextStyle(
+          color: Colors.white,
+          fontSize: badgeFontSize,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0.5,
+        ),
+        textDirection: ui.TextDirection.ltr,
+      )..text = const TextSpan(text: 'MANUAL');
+      badgeTp.layout();
+      badgeTp.paint(
+        canvas,
+        Offset(
+          badgeX + (badgeW - badgeTp.width) / 2,
+          badgeY + (badgeH - badgeTp.height) / 2,
+        ),
+      );
+    }
+
+    // ── LOGO (bottom-right, below badge if exists) ────────────────────
+    if (logoImage != null && logoDrawW != null && logoDrawH != null) {
+      final logoX = canvasWidth - padding - logoDrawW - 6;
+
+      // ✅ 4. If badge exists, place logo below it
+      final logoY = isManual
+          ? photoHeight +
+              padding +
+              (bottomStripHeight * 0.10) +
+              (baseSize * 0.028) +
+              4
+          : photoHeight + padding + (bottomStripHeight - logoDrawH) / 2;
+
+      // Don't overflow strip
+      final clampedLogoY = math.min(
+        logoY,
+        photoHeight + padding + bottomStripHeight - logoDrawH - 4,
+      );
+
+      canvas.drawImageRect(
+        logoImage,
+        Rect.fromLTWH(0, 0, logoImage.width.toDouble(),
+            logoImage.height.toDouble()),
+        Rect.fromLTWH(logoX, clampedLogoY, logoDrawW, logoDrawH),
+        Paint()
+          ..filterQuality = FilterQuality.high
+          ..isAntiAlias = true
+          // ✅ 9. Proper colorFilter for opacity
+          ..colorFilter = ColorFilter.mode(
+            Colors.white.withOpacity(0.25),
+            BlendMode.modulate,
+          ),
+      );
+      logoImage.dispose();
+    }
+
+    // ── FINALIZE ──────────────────────────────────────────────────────
+    final picture = recorder.endRecording();
+    final img =
+        await picture.toImage(canvasWidth.toInt(), canvasHeight.toInt());
+    srcImage.dispose();
+
+    final byteData = await img.toByteData(format: ui.ImageByteFormat.png);
+    img.dispose();
+
+    if (byteData == null) {
+      debugPrint('⚠️ Watermark: byteData is null');
+      return null;
+    }
+
+    final pngBytes = byteData.buffer.asUint8List();
+    await File(outputPath).writeAsBytes(pngBytes);
+
+    debugPrint(
+        '✅ Watermark: saved polaroid ${canvasWidth.toInt()}x${canvasHeight.toInt()} to $outputPath');
+    return outputPath;
+  } catch (e, stack) {
+    debugPrint('❌ Watermark render error: $e');
+    debugPrint('   Stack: $stack');
+    return null;
   }
+}
 
-  // ── GRAIN TEXTURE OVERLAY ────────────────────────────────────────────
-  // (subtle noise pattern via random dots)
-  final grainPaint = Paint()
-    ..color = const Color(0x08000000)
-    ..style = PaintingStyle.fill;
-  final rng = DateTime.now().millisecondsSinceEpoch;
-  for (int i = 0; i < 200; i++) {
-    final x = ((rng + i * 7) % canvasWidth.toInt()).toDouble();
-    final y = ((rng + i * 13) % canvasHeight.toInt()).toDouble();
-    canvas.drawCircle(Offset(x, y), 0.5, grainPaint);
-  }
-
-  // ── FINALIZE ─────────────────────────────────────────────────────────
-  final picture = recorder.endRecording();
-  final img =
-      await picture.toImage(canvasWidth.toInt(), canvasHeight.toInt());
-  srcImage.dispose();
-
-  final byteData = await img.toByteData(format: ui.ImageByteFormat.png);
-  img.dispose();
-
-  final pngBytes = byteData!.buffer.asUint8List();
-  await File(task.outputPath).writeAsBytes(pngBytes);
-  return task.outputPath;
+/// Count expected text lines for bottom strip height calculation.
+int _countTextLines({
+  required bool hasBarcode,
+  required bool hasOperator,
+  required bool hasLocation,
+}) {
+  int lines = 0;
+  if (hasBarcode) lines++;
+  if (hasOperator) lines++;
+  lines++; // date always present
+  if (hasLocation) lines++; // gps, could be 2 lines
+  return lines + 1; // +1 safety margin
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -318,34 +361,21 @@ class WatermarkService {
     String? locationName,
     String? logoPath,
   }) async {
-    try {
-      final file = File(imagePath);
-      if (!await file.exists()) return null;
+    debugPrint('🖼️ WatermarkService.addWatermark called');
+    debugPrint('   imagePath: $imagePath');
+    debugPrint('   outputPath: $outputPath');
 
-      final receivePort = ReceivePort();
-
-      final task = _WatermarkTask(
-        imagePath: imagePath,
-        outputPath: outputPath,
-        barcodeValue: barcodeValue,
-        barcodeFormat: barcodeFormat,
-        timestamp: timestamp,
-        latitude: latitude,
-        longitude: longitude,
-        locationName: locationName,
-        operatorName: operatorName,
-        logoPath: logoPath,
-        replyTo: receivePort.sendPort,
-      );
-
-      await Isolate.spawn(_watermarkIsolate, task);
-      final result = await receivePort.first as String?;
-      receivePort.close();
-
-      return result;
-    } catch (e) {
-      debugPrint('WatermarkService.addWatermark error: $e');
-      return null;
-    }
+    return _renderWatermark(
+      imagePath: imagePath,
+      outputPath: outputPath,
+      barcodeValue: barcodeValue,
+      barcodeFormat: barcodeFormat,
+      timestamp: timestamp,
+      latitude: latitude,
+      longitude: longitude,
+      locationName: locationName,
+      operatorName: operatorName,
+      logoPath: logoPath,
+    );
   }
 }
