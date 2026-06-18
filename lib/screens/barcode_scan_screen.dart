@@ -1,7 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:isolate';
-import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:saver_gallery/saver_gallery.dart';
@@ -13,164 +11,9 @@ import 'package:permission_handler/permission_handler.dart';
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
 import '../services/location_service.dart';
+import '../services/watermark_service.dart';
 import 'watermark_settings.dart';
 import 'watermark_settings_sheet.dart';
-
-// ── Isolate payload untuk watermark ──────────────────────────────────────
-class _WatermarkTask {
-  final String imagePath;
-  final String outputPath;
-  final String barcodeValue;
-  final String? barcodeFormat;
-  final DateTime timestamp;
-  final double? latitude;
-  final double? longitude;
-  final String? locationName;
-  final String operatorName;
-  final String? logoPath;
-  final SendPort replyTo;
-
-  const _WatermarkTask({
-    required this.imagePath,
-    required this.outputPath,
-    required this.barcodeValue,
-    required this.barcodeFormat,
-    required this.timestamp,
-    required this.latitude,
-    required this.longitude,
-    required this.locationName,
-    required this.operatorName,
-    required this.logoPath,
-    required this.replyTo,
-  });
-}
-
-/// Entry-point isolate — harus top-level function.
-void _watermarkIsolate(_WatermarkTask task) async {
-  try {
-    final result = await _renderWatermark(task);
-    task.replyTo.send(result);
-  } catch (e) {
-    task.replyTo.send(null);
-  }
-}
-
-/// Fungsi render watermark (berjalan di isolate terpisah).
-Future<String?> _renderWatermark(_WatermarkTask task) async {
-  final imageBytes = await File(task.imagePath).readAsBytes();
-  final codec = await ui.instantiateImageCodec(imageBytes);
-  final frame = await codec.getNextFrame();
-  final srcImage = frame.image;
-
-  final width = srcImage.width.toDouble();
-  final height = srcImage.height.toDouble();
-
-  // Load logo jika ada
-  ui.Image? logoImage;
-  if (task.logoPath != null) {
-    try {
-      final logoBytes = await File(task.logoPath!).readAsBytes();
-      final logoCodec = await ui.instantiateImageCodec(logoBytes, targetWidth: 160);
-      final logoFrame = await logoCodec.getNextFrame();
-      logoImage = logoFrame.image;
-    } catch (_) {}
-  }
-
-  final recorder = ui.PictureRecorder();
-  final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, width, height));
-  canvas.drawImage(srcImage, Offset.zero, Paint());
-
-  // Teks watermark
-  final dateStr = DateFormat('dd/MM/yyyy HH:mm:ss').format(task.timestamp);
-  final gpsStr = task.locationName ??
-      (task.latitude != null
-          ? '${task.latitude!.toStringAsFixed(5)}, ${task.longitude!.toStringAsFixed(5)}'
-          : ' tidak tersedia');
-  final isManual = task.barcodeFormat == 'MANUAL';
-
-  final lines = <Map<String, dynamic>>[
-    if (task.operatorName.isNotEmpty)
-      {'text': task.operatorName, 'color': const Color(0xFFFFD700)},
-    if (isManual)
-      {'text': '[INPUT MANUAL]', 'color': const Color(0xFFFFAA00)},
-    {'text': task.barcodeValue, 'color': Colors.white},
-    {'text': dateStr, 'color': const Color(0xFFCCCCCC)},
-    {'text': gpsStr, 'color': const Color(0xFFCCCCCC)},
-  ];
-
-  final fontSize = width * 0.03;
-  final padding = width * 0.04;
-  final rowHeight = fontSize * 1.65;
-  final logoSize = width * 0.1;
-  final bgHeight = (lines.length * rowHeight) + (padding * 2);
-  final finalBgHeight = logoImage != null
-      ? (bgHeight > logoSize + padding * 2 ? bgHeight : logoSize + padding * 2)
-      : bgHeight;
-
-  // Background strip
-  canvas.drawRect(
-    Rect.fromLTWH(0, height - finalBgHeight, width, finalBgHeight),
-    Paint()..color = const Color(0xCC000000),
-  );
-
-  // Logo kanan bawah
-  if (logoImage != null) {
-    final logoW = logoImage.width.toDouble();
-    final logoH = logoImage.height.toDouble();
-    final scale = logoSize / (logoW > logoH ? logoW : logoH);
-    final drawW = logoW * scale;
-    final drawH = logoH * scale;
-    final logoLeft = width - padding - drawW;
-    final logoTop = height - finalBgHeight + (finalBgHeight - drawH) / 2;
-
-    canvas.drawImageRect(
-      logoImage,
-      Rect.fromLTWH(0, 0, logoW, logoH),
-      Rect.fromLTWH(logoLeft, logoTop, drawW, drawH),
-      Paint()..filterQuality = FilterQuality.high,
-    );
-    logoImage.dispose();
-  }
-
-  // Teks baris per baris
-  final textMaxWidth = logoImage != null
-      ? width - (padding * 2) - (logoSize + padding)
-      : width - (padding * 2);
-
-  for (int i = 0; i < lines.length; i++) {
-    final tp = TextPainter(
-      text: TextSpan(
-        text: lines[i]['text'] as String,
-        style: TextStyle(
-          color: lines[i]['color'] as Color,
-          fontSize: fontSize,
-          fontWeight: FontWeight.bold,
-          shadows: const [Shadow(blurRadius: 2, color: Colors.black)],
-        ),
-      ),
-      textDirection: ui.TextDirection.ltr,
-    )..layout(maxWidth: textMaxWidth);
-
-    tp.paint(
-      canvas,
-      Offset(
-        padding,
-        (height - finalBgHeight + padding) + (i * rowHeight),
-      ),
-    );
-  }
-
-  final picture = recorder.endRecording();
-  final img = await picture.toImage(width.toInt(), height.toInt());
-  srcImage.dispose();
-
-  final byteData = await img.toByteData(format: ui.ImageByteFormat.png);
-  img.dispose();
-
-  final pngBytes = byteData!.buffer.asUint8List();
-  await File(task.outputPath).writeAsBytes(pngBytes);
-  return task.outputPath;
-}
 
 // ═════════════════════════════════════════════════════════════════════════
 class BarcodeScanScreen extends StatefulWidget {
@@ -190,6 +33,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   final Service _loc = Service();
   final ImagePicker _picker = ImagePicker();
   final WatermarkSettings _wmSettings = WatermarkSettings();
+  final WatermarkService _watermarkService = WatermarkService();
 
   @override
   void initState() {
@@ -233,13 +77,11 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     setState(() {
       _scanning = false;
       _lastCode = code;
-      // Jangan set _isSaving di sini, nanti diatur di dalam _takePhotoAndShow
     });
 
     try {
       HapticFeedback.mediumImpact();
 
-      // Simpan barcode DULU tanpa  (akan diupdate nanti)
       final entry = ScanEntry(
         id: _storage.generateId(),
         type: ScanType.barcode,
@@ -391,7 +233,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     setState(() {
       _scanning = false;
       _lastCode = code;
-      // Jangan set _isSaving di sini
     });
 
     try {
@@ -431,10 +272,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   }
 
   // ── FOTO & WATERMARK ─────────────────────────────────────────────────────
-  /// Ambil foto, proses watermark, dan tampilkan result sheet.
-  /// `_isSaving` diaktifkan hanya setelah foto berhasil diambil.
   Future<void> _takePhotoAndShow(ScanEntry entry) async {
-    // Ambil foto dari kamera (tanpa set _isSaving)
     final XFile? file;
     try {
       file = await _picker.pickImage(
@@ -454,7 +292,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     }
 
     if (file == null) {
-      // User membatalkan, lanjutkan scanning
       if (mounted) {
         setState(() {
           _scanning = true;
@@ -464,14 +301,11 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       return;
     }
 
-    // Setelah foto diambil, aktifkan _isSaving
     if (mounted) setState(() => _isSaving = true);
 
     try {
-      // 1. Dapatkan koordinat CEPAT (tanpa reverse geocoding)
       final coords = await _loc.getCoordinatesOnly();
 
-      // 2. Update entry dengan koordinat (address masih null)
       ScanEntry updatedEntry = entry.copyWith(
         latitude: coords.lat,
         longitude: coords.lng,
@@ -479,7 +313,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       );
       await _storage.update(updatedEntry);
 
-      // 3. Tampilkan result sheet dengan status "memproses"
       final stateNotifier = ValueNotifier<_ResultState>(
         _ResultState(entry: updatedEntry, photoPath: null, processing: true),
       );
@@ -498,12 +331,10 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
           setState(() {
             _scanning = true;
             _lastCode = null;
-            // _isSaving sudah direset di finally
           });
         }
       });
 
-      // 4. Jalankan reverse geocoding di BACKGROUND (tanpa await)
       if (coords.lat != null && coords.lng != null) {
         // ignore: unawaited_futures
         _loc.updateAddressForEntry(
@@ -528,19 +359,16 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         );
       }
 
-      // 5. Proses watermark dan simpan foto (tidak menunggu address)
       String wmPath;
       try {
         wmPath = await _addWatermarkInIsolate(file.path, updatedEntry);
       } catch (e) {
         debugPrint('Watermark error: $e');
-        // Jika watermark gagal, gunakan foto asli sebagai fallback
         wmPath = file.path;
       }
 
       final savedPhotoPath = await _storage.savePhoto(wmPath, name: entry.value);
 
-      // Buat entri foto
       final photoEntry = ScanEntry(
         id: _storage.generateId(),
         type: ScanType.photo,
@@ -552,7 +380,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       );
       await _storage.add(photoEntry);
 
-      // Update sheet dengan hasil foto
       stateNotifier.value = _ResultState(
         entry: updatedEntry,
         photoPath: savedPhotoPath,
@@ -560,7 +387,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       );
     } catch (e) {
       debugPrint('Error in _takePhotoAndShow: $e');
-      // Tampilkan error di sheet jika masih terbuka
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -574,35 +400,27 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     }
   }
 
-  /// Jalankan watermark di Isolate agar UI tidak freeze
   Future<String> _addWatermarkInIsolate(String imagePath, ScanEntry entry) async {
-    final receivePort = ReceivePort();
     final outputPath =
         '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.png';
 
-    final task = _WatermarkTask(
+    final result = await _watermarkService.addWatermark(
       imagePath: imagePath,
       outputPath: outputPath,
+      operatorName: _wmSettings.operatorName,
       barcodeValue: entry.value,
       barcodeFormat: entry.barcodeFormat,
       timestamp: entry.timestamp,
       latitude: entry.latitude,
       longitude: entry.longitude,
       locationName: entry.locationName,
-      operatorName: _wmSettings.operatorName,
       logoPath: _wmSettings.hasLogo ? _wmSettings.logoPath : null,
-      replyTo: receivePort.sendPort,
     );
-
-    await Isolate.spawn(_watermarkIsolate, task);
-    final result = await receivePort.first as String?;
-    receivePort.close();
 
     if (result == null) throw Exception('Watermark isolate gagal');
     return result;
   }
 
-  /// ✅ FUNGSI SAVE TO GALLERY - menggunakan saver_gallery 3.0.10
   Future<bool> _saveToGallery(String filePath, ScanEntry entry) async {
     try {
       await SaverGallery.saveFile(
@@ -733,7 +551,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   }
 }
 
-// ── Result State (untuk live-update sheet) ──────────────────────────────
+// ── Result State ──────────────────────────────────────────────────────────
 class _ResultState {
   final ScanEntry entry;
   final String? photoPath;
@@ -942,7 +760,6 @@ class _ResultSheetState extends State<_ResultSheet> {
                               if (note.isNotEmpty) {
                                 final updated = entry.copyWith(note: note);
                                 await widget.storage.update(updated);
-                                // Update notifier agar note muncul
                                 widget.notifier.value = _ResultState(
                                   entry: updated,
                                   photoPath: state.photoPath,
