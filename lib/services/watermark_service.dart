@@ -5,17 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 /// Render watermark gaya POLAROID FIELD OPS.
-///
-/// Fixes applied:
-/// ✅ GPS N/S/E/W direction
-/// ✅ OOM protection via targetWidth decode
-/// ✅ min(width,height) based padding
-/// ✅ Logo vs badge collision prevention
-/// ✅ Adaptive bottom strip height
-/// ✅ Proper shadow rendering
-/// ✅ Logo colorFilter instead of color overlay
-/// ✅ Manual badge responsive size
-/// ✅ 2-line support for long location names
 Future<String?> _renderWatermark({
   required String imagePath,
   required String outputPath,
@@ -36,12 +25,7 @@ Future<String?> _renderWatermark({
     }
 
     final imageBytes = await file.readAsBytes();
-
-    // ✅ 7. OOM protection — decode max 3000px wide
-    final codec = await ui.instantiateImageCodec(
-      imageBytes,
-      targetWidth: 3000,
-    );
+    final codec = await ui.instantiateImageCodec(imageBytes, targetWidth: 3000);
     final frame = await codec.getNextFrame();
     final srcImage = frame.image;
 
@@ -51,15 +35,13 @@ Future<String?> _renderWatermark({
     debugPrint(
         '🖼️ Watermark: rendering polaroid for ${photoWidth.toInt()}x${photoHeight.toInt()}');
 
-    // ✅ 10. Padding based on min dimension
     final baseSize = math.min(photoWidth, photoHeight);
     final padding = baseSize * 0.06;
 
-    // ✅ 6. Adaptive bottom strip
     final textLineCount = _countTextLines(
       hasBarcode: barcodeValue != null && barcodeValue.isNotEmpty,
       hasOperator: operatorName.isNotEmpty,
-      hasLocation: true, // date + gps always present
+      hasLocation: true,
     );
     final bottomStripHeight = math.max(
       photoHeight * 0.22,
@@ -82,7 +64,6 @@ Future<String?> _renderWatermark({
           final logoFrame = await logoCodec.getNextFrame();
           logoImage = logoFrame.image;
 
-          // Pre-calculate logo draw size
           final logoMaxH = bottomStripHeight * 0.45;
           final logoW = logoImage.width.toDouble();
           final logoH = logoImage.height.toDouble();
@@ -102,13 +83,13 @@ Future<String?> _renderWatermark({
     final canvas =
         Canvas(recorder, Rect.fromLTWH(0, 0, canvasWidth, canvasHeight));
 
-    // ── PAPER BACKGROUND ──────────────────────────────────────────────
+    // Paper background
     canvas.drawRect(
       Rect.fromLTWH(0, 0, canvasWidth, canvasHeight),
       Paint()..color = const Color(0xFFF5F5F0),
     );
 
-    // ✅ 3. Proper shadow
+    // Shadow
     final shadowPath = Path()
       ..addRRect(RRect.fromRectAndRadius(
         Rect.fromLTWH(0, 0, canvasWidth, canvasHeight),
@@ -116,13 +97,9 @@ Future<String?> _renderWatermark({
       ));
     canvas.drawShadow(shadowPath, Colors.black.withOpacity(0.3), 14, true);
 
-    // ── PHOTO AREA ────────────────────────────────────────────────────
+    // Photo area
     final photoRect = Rect.fromLTWH(padding, padding, photoWidth, photoHeight);
-
-    // Black bg
     canvas.drawRect(photoRect, Paint()..color = const Color(0xFF111111));
-
-    // Border
     canvas.drawRect(
       photoRect,
       Paint()
@@ -132,7 +109,6 @@ Future<String?> _renderWatermark({
         ..isAntiAlias = true,
     );
 
-    // Draw photo
     canvas.drawImageRect(
       srcImage,
       Rect.fromLTWH(0, 0, photoWidth, photoHeight),
@@ -155,12 +131,11 @@ Future<String?> _renderWatermark({
         ..isAntiAlias = true,
     );
 
-    // ── TEXT CONTENT ──────────────────────────────────────────────────
+    // ── TEXT ──────────────────────────────────────────────────────────
     final isManual = barcodeFormat == 'MANUAL';
     final dateStr =
         DateFormat('MMM dd, yyyy • HH:mm:ss').format(timestamp).toUpperCase();
 
-    // ✅ 2. GPS with proper N/S/E/W
     String gpsStr;
     if (locationName != null && locationName.isNotEmpty) {
       gpsStr = locationName;
@@ -174,21 +149,20 @@ Future<String?> _renderWatermark({
       gpsStr = 'No location data';
     }
 
-    // ✅ 4. Reserve right area if badge or logo present
     final hasBadgeOrLogo = isManual || logoImage != null;
     final rightReservedWidth = hasBadgeOrLogo
         ? math.max(
-            isManual ? baseSize * 0.10 : 0, // badge width
-            logoDrawW ?? 0, // logo width
+            isManual ? baseSize * 0.10 : 0,
+            logoDrawW ?? 0,
           ) +
             padding * 0.5
         : 0.0;
 
     final textX = padding + 6;
-    final textContentWidth = canvasWidth - (padding * 2) - 12 - rightReservedWidth;
+    final textContentWidth =
+        canvasWidth - (padding * 2) - 12 - rightReservedWidth;
     double textY = photoHeight + padding + (bottomStripHeight * 0.06);
 
-    // Helper draw text
     void drawText(String text, Color color, double fontSize,
         {FontWeight fontWeight = FontWeight.normal, int maxLines = 1}) {
       final tp = TextPainter(
@@ -209,28 +183,23 @@ Future<String?> _renderWatermark({
       textY += tp.height + fontSize * 0.3;
     }
 
-    // Barcode
     if (barcodeValue != null && barcodeValue.isNotEmpty) {
       drawText(barcodeValue, const Color(0xFF2C2C2C), baseSize * 0.045,
           fontWeight: FontWeight.w800);
     }
 
-    // Operator
     if (operatorName.isNotEmpty) {
       drawText('OP: $operatorName', const Color(0xFF8B6914), baseSize * 0.032,
           fontWeight: FontWeight.w700);
     }
 
-    // Date
     drawText(dateStr, const Color(0xFF666666), baseSize * 0.024,
         fontWeight: FontWeight.w500);
 
-    // ✅ 5. GPS with 2-line support
     drawText(gpsStr, const Color(0xFF888888), baseSize * 0.024, maxLines: 2);
 
-    // ── MANUAL BADGE (top-right of bottom strip) ──────────────────────
+    // ── MANUAL BADGE ──────────────────────────────────────────────────
     if (isManual) {
-      // ✅ 11. Responsive badge size
       final badgeW = baseSize * 0.09;
       final badgeH = baseSize * 0.028;
       final badgeX = canvasWidth - padding - badgeW - 6;
@@ -248,15 +217,18 @@ Future<String?> _renderWatermark({
 
       final badgeFontSize = badgeH * 0.55;
       final badgeTp = TextPainter(
-        text: TextStyle(
-          color: Colors.white,
-          fontSize: badgeFontSize,
-          fontWeight: FontWeight.w800,
-          letterSpacing: 0.5,
+        // ✅ FIX: TextSpan, bukan TextStyle
+        text: const TextSpan(
+          text: 'MANUAL',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 9,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.5,
+          ),
         ),
         textDirection: ui.TextDirection.ltr,
-      )..text = const TextSpan(text: 'MANUAL');
-      badgeTp.layout();
+      )..layout();
       badgeTp.paint(
         canvas,
         Offset(
@@ -266,11 +238,9 @@ Future<String?> _renderWatermark({
       );
     }
 
-    // ── LOGO (bottom-right, below badge if exists) ────────────────────
+    // ── LOGO ──────────────────────────────────────────────────────────
     if (logoImage != null && logoDrawW != null && logoDrawH != null) {
       final logoX = canvasWidth - padding - logoDrawW - 6;
-
-      // ✅ 4. If badge exists, place logo below it
       final logoY = isManual
           ? photoHeight +
               padding +
@@ -279,7 +249,6 @@ Future<String?> _renderWatermark({
               4
           : photoHeight + padding + (bottomStripHeight - logoDrawH) / 2;
 
-      // Don't overflow strip
       final clampedLogoY = math.min(
         logoY,
         photoHeight + padding + bottomStripHeight - logoDrawH - 4,
@@ -287,13 +256,12 @@ Future<String?> _renderWatermark({
 
       canvas.drawImageRect(
         logoImage,
-        Rect.fromLTWH(0, 0, logoImage.width.toDouble(),
-            logoImage.height.toDouble()),
+        Rect.fromLTWH(
+            0, 0, logoImage.width.toDouble(), logoImage.height.toDouble()),
         Rect.fromLTWH(logoX, clampedLogoY, logoDrawW, logoDrawH),
         Paint()
           ..filterQuality = FilterQuality.high
           ..isAntiAlias = true
-          // ✅ 9. Proper colorFilter for opacity
           ..colorFilter = ColorFilter.mode(
             Colors.white.withOpacity(0.25),
             BlendMode.modulate,
@@ -329,7 +297,6 @@ Future<String?> _renderWatermark({
   }
 }
 
-/// Count expected text lines for bottom strip height calculation.
 int _countTextLines({
   required bool hasBarcode,
   required bool hasOperator,
@@ -338,9 +305,9 @@ int _countTextLines({
   int lines = 0;
   if (hasBarcode) lines++;
   if (hasOperator) lines++;
-  lines++; // date always present
-  if (hasLocation) lines++; // gps, could be 2 lines
-  return lines + 1; // +1 safety margin
+  lines++;
+  if (hasLocation) lines++;
+  return lines + 1;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
