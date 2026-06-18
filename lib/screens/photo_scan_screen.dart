@@ -9,7 +9,10 @@ import 'package:permission_handler/permission_handler.dart';
 import '../models/scan_entry.dart';
 import '../services/location_service.dart';
 import '../services/storage_service.dart';
+import '../services/watermark_service.dart';
 import '../theme/app_theme.dart';
+import 'watermark_settings.dart';
+import 'watermark_settings_sheet.dart';
 
 class PhotoScanScreen extends StatefulWidget {
   const PhotoScanScreen({super.key});
@@ -22,6 +25,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   final ImagePicker _picker = ImagePicker();
   final StorageService _storage = StorageService();
   final Service _loc = Service();
+  final WatermarkService _watermarkService = WatermarkService();
+  final WatermarkSettings _wmSettings = WatermarkSettings();
 
   bool _isSaving = false;
   int _photoCount = 0;
@@ -32,6 +37,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   void initState() {
     super.initState();
     _requestPermissions();
+    _wmSettings.load();
   }
 
   Future<void> _requestPermissions() async {
@@ -88,6 +94,40 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     return granted;
   }
 
+  void _openWatermarkSettings() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1E1E1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => const WatermarkSettingsSheet(),
+    ).then((_) => setState(() {}));
+  }
+
+  /// Render watermark ke foto, return path hasil atau fallback ke original.
+  Future<String> _applyWatermark(String imagePath, DateTime timestamp,
+      double? lat, double? lng) async {
+    final outputPath =
+        '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.png';
+
+    final result = await _watermarkService.addWatermark(
+      imagePath: imagePath,
+      outputPath: outputPath,
+      operatorName: _wmSettings.operatorName,
+      barcodeValue: null, // photo scan tidak ada barcode
+      barcodeFormat: null,
+      timestamp: timestamp,
+      latitude: lat,
+      longitude: lng,
+      locationName: null,
+      logoPath: _wmSettings.hasLogo ? _wmSettings.logoPath : null,
+    );
+
+    return result ?? imagePath; // fallback ke original jika watermark gagal
+  }
+
   /// Ambil foto dari kamera – `_isSaving` baru aktif setelah foto diambil.
   Future<void> _takePhoto() async {
     // Pastikan izin kamera
@@ -118,17 +158,24 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     try {
       HapticFeedback.mediumImpact();
 
+      final timestamp = DateTime.now();
+
       // Ambil koordinat dengan timeout (tidak menghalangi simpan foto)
       ({double? lat, double? lng}) coords;
       try {
-        coords = await _loc.getCoordinatesOnly().timeout(const Duration(seconds: 6));
+        coords =
+            await _loc.getCoordinatesOnly().timeout(const Duration(seconds: 6));
       } catch (e) {
         debugPrint(' timeout: $e');
         coords = (lat: null, lng: null);
       }
 
-      // Simpan foto permanen
-      final String savedPath = await _storage.savePhoto(xfile.path);
+      // Render watermark ke foto
+      final String watermarkedPath =
+          await _applyWatermark(xfile.path, timestamp, coords.lat, coords.lng);
+
+      // Simpan foto permanen (pakai hasil watermark)
+      final String savedPath = await _storage.savePhoto(watermarkedPath);
       if (savedPath.isEmpty) {
         throw Exception('Gagal menyimpan file foto');
       }
@@ -138,7 +185,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         id: _storage.generateId(),
         type: ScanType.photo,
         value: savedPath,
-        timestamp: DateTime.now(),
+        timestamp: timestamp,
         latitude: coords.lat,
         longitude: coords.lng,
         locationName: null,
@@ -194,20 +241,28 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     setState(() => _isSaving = true);
 
     try {
+      final timestamp = DateTime.now();
+
       // Ambil koordinat dengan timeout
       ({double? lat, double? lng}) coords;
       try {
-        coords = await _loc.getCoordinatesOnly().timeout(const Duration(seconds: 6));
+        coords =
+            await _loc.getCoordinatesOnly().timeout(const Duration(seconds: 6));
       } catch (e) {
         coords = (lat: null, lng: null);
       }
 
-      final String savedPath = await _storage.savePhoto(xfile.path);
+      // Render watermark ke foto
+      final String watermarkedPath =
+          await _applyWatermark(xfile.path, timestamp, coords.lat, coords.lng);
+
+      // Simpan foto permanen (pakai hasil watermark)
+      final String savedPath = await _storage.savePhoto(watermarkedPath);
       final entry = ScanEntry(
         id: _storage.generateId(),
         type: ScanType.photo,
         value: savedPath,
-        timestamp: DateTime.now(),
+        timestamp: timestamp,
         latitude: coords.lat,
         longitude: coords.lng,
         locationName: null,
@@ -229,11 +284,12 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     }
   }
 
-  Future<void> _updateAddressLater(String entryId, double lat, double lng) async {
+  Future<void> _updateAddressLater(
+      String entryId, double lat, double lng) async {
     try {
       final address = await _loc.reverseGeocode(lat, lng).timeout(
-        const Duration(seconds: 5),
-      );
+            const Duration(seconds: 5),
+          );
       if (address != null && mounted) {
         final entry = await _storage.getEntry(entryId);
         if (entry != null) {
@@ -297,6 +353,31 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
           icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.pop(context, _photoCount),
         ),
+        actions: [
+          IconButton(
+            onPressed: _openWatermarkSettings,
+            icon: Stack(
+              children: [
+                const Icon(Icons.tune, color: Colors.white),
+                if (_wmSettings.operatorName.isNotEmpty ||
+                    _wmSettings.hasLogo)
+                  Positioned(
+                    right: 0,
+                    top: 0,
+                    child: Container(
+                      width: 8,
+                      height: 8,
+                      decoration: const BoxDecoration(
+                        color: Colors.amber,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            tooltip: 'Pengaturan Watermark',
+          ),
+        ],
       ),
       body: Center(
         child: Padding(
@@ -327,7 +408,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
               ).animate().fadeIn(delay: 100.ms),
               const Gap(8),
               Text(
-                'Foto otomatis disertai timestamp & ',
+                'Foto otomatis disertai timestamp, , & watermark',
                 style: Theme.of(context).textTheme.bodyMedium,
                 textAlign: TextAlign.center,
               ).animate().fadeIn(delay: 200.ms),
@@ -343,7 +424,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                           child: CircularProgressIndicator(
                               color: Colors.black, strokeWidth: 2))
                       : const Icon(Icons.camera_alt, size: 22),
-                  label: Text(_isSaving ? 'Menyimpan...' : 'Ambil Foto Kamera'),
+                  label:
+                      Text(_isSaving ? 'Menyimpan...' : 'Ambil Foto Kamera'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppTheme.accentOrange,
                     foregroundColor: Colors.black,
@@ -385,7 +467,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                     Gap(10),
                     Expanded(
                       child: Text(
-                        'Setiap foto otomatis dicatat: waktu, koordinat , & nama lokasi',
+                        'Setiap foto otomatis dicatat: waktu, koordinat , nama lokasi, & watermark',
                         style: TextStyle(
                             color: AppTheme.textSecondary, fontSize: 12),
                       ),
