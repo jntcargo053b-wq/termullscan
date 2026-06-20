@@ -20,6 +20,7 @@ abstract class WatermarkLayout {
     required WatermarkData data,
   });
 
+  // Default implementation (tidak perlu di-override di subclass)
   WatermarkCanvasSize computeCanvasSize({
     required double photoWidth,
     required double photoHeight,
