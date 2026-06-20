@@ -16,7 +16,26 @@ class WatermarkSettings extends ChangeNotifier {
   String? get logoPath => _logoPath;
   WatermarkStyle get style => _style;
 
-  bool get hasLogo => _logoPath != null && File(_logoPath!).existsSync();
+  bool get hasLogo {
+    if (_logoPath == null) return false;
+    try {
+      return File(_logoPath!).existsSync();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Dapatkan file logo jika ada dan valid
+  File? get logoFile {
+    if (_logoPath == null) return null;
+    try {
+      final file = File(_logoPath!);
+      if (file.existsSync()) return file;
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
 
   static final WatermarkSettings _instance = WatermarkSettings._internal();
   factory WatermarkSettings() => _instance;
