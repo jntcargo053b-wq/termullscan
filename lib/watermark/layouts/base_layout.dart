@@ -34,7 +34,7 @@ abstract class WatermarkLayout {
   }
 
   void paintOnCanvas({
-    required Canvas canvas,
+    required ui.Canvas canvas,
     required LayoutMetrics metrics,
     required ui.Image srcImage,
     required double photoWidth,
