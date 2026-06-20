@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'theme/app_theme.dart';
 import 'screens/home_screen.dart';
+import 'screens/watermark_settings.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -14,6 +15,7 @@ void main() async {
     statusBarIconBrightness: Brightness.light,
     systemNavigationBarColor: AppTheme.bg,
   ));
+  await WatermarkSettings().load();
   runApp(const WHScannerApp());
 }
 

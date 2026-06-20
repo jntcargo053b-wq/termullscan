@@ -58,8 +58,9 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
     final name = _operatorController.text.trim();
     await _settings.setOperatorName(name);
     if (mounted) {
+      final messenger = ScaffoldMessenger.of(context);
       Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
+      messenger.showSnackBar(
         const SnackBar(
           content: Text('✓ Pengaturan watermark disimpan'),
           backgroundColor: Colors.green,

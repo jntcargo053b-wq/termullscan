@@ -13,6 +13,7 @@ class StorageService {
 
   // ── In-memory cache ──────────────────────────────────────────────────────
   List<ScanEntry>? _cache;
+  Future<void> _writeQueue = Future.value();
 
   Future<Directory> get _dir async {
     final base = await getApplicationDocumentsDirectory();
@@ -46,10 +47,13 @@ class StorageService {
   }
 
   Future<void> _persist() async {
-    final f = await _jsonFile;
-    await f.writeAsString(
-      json.encode((_cache ?? []).map((e) => e.toJson()).toList()),
-    );
+    _writeQueue = _writeQueue.then((_) async {
+      final f = await _jsonFile;
+      await f.writeAsString(
+        json.encode((_cache ?? []).map((e) => e.toJson()).toList()),
+      );
+    });
+    await _writeQueue;
   }
 
   /// Append entry ke cache + disk tanpa baca ulang file.

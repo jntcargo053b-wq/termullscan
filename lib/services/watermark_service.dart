@@ -60,7 +60,7 @@ Future<String?> _renderWatermark({
         if (await logoFile.exists()) {
           final logoBytes = await logoFile.readAsBytes();
           final logoCodec =
-              await ui.instantiateImageCodec(logoBytes, targetWidth: 200);
+              await ui.instantiateImageCodec(logoBytes);
           final logoFrame = await logoCodec.getNextFrame();
           logoImage = logoFrame.image;
 
