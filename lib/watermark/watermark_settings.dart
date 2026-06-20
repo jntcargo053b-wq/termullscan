@@ -11,10 +11,12 @@ class WatermarkSettings extends ChangeNotifier {
   String _operatorName = '';
   String? _logoPath;
   WatermarkStyle _style = WatermarkStyle.polaroid;
+  bool _isLoaded = false;
 
   String get operatorName => _operatorName;
   String? get logoPath => _logoPath;
   WatermarkStyle get style => _style;
+  bool get isLoaded => _isLoaded;
 
   bool get hasLogo {
     if (_logoPath == null) return false;
@@ -41,15 +43,22 @@ class WatermarkSettings extends ChangeNotifier {
   WatermarkSettings._internal();
 
   Future<void> load() async {
-    final prefs = await SharedPreferences.getInstance();
-    _operatorName = prefs.getString(_keyOperator) ?? '';
-    _logoPath = prefs.getString(_keyLogoPath);
-    final styleName = prefs.getString(_keyStyle);
-    _style = WatermarkStyle.values.firstWhere(
-      (s) => s.name == styleName,
-      orElse: () => WatermarkStyle.polaroid,
-    );
-    notifyListeners();
+    if (_isLoaded) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _operatorName = prefs.getString(_keyOperator) ?? '';
+      _logoPath = prefs.getString(_keyLogoPath);
+      final styleName = prefs.getString(_keyStyle);
+      _style = WatermarkStyle.values.firstWhere(
+        (s) => s.name == styleName,
+        orElse: () => WatermarkStyle.polaroid,
+      );
+      _isLoaded = true;
+      notifyListeners();
+    } catch (e) {
+      debugPrint('❌ Error loading WatermarkSettings: $e');
+      _isLoaded = true; // tetap set true agar tidak infinite loop
+    }
   }
 
   Future<void> setStyle(WatermarkStyle style) async {
@@ -67,6 +76,19 @@ class WatermarkSettings extends ChangeNotifier {
   }
 
   Future<void> setLogoPath(String? path) async {
+    // ✅ Hapus logo lama jika ada
+    if (_logoPath != null && path != _logoPath) {
+      try {
+        final oldFile = File(_logoPath!);
+        if (await oldFile.exists()) {
+          await oldFile.delete();
+          debugPrint('🗑️ Old logo deleted: $_logoPath');
+        }
+      } catch (e) {
+        debugPrint('⚠️ Could not delete old logo: $e');
+      }
+    }
+
     _logoPath = path;
     final prefs = await SharedPreferences.getInstance();
     if (path == null) {
