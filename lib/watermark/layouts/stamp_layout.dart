@@ -12,7 +12,7 @@ import '../helpers/layout_helper.dart';
 import '../helpers/text_helper.dart';
 import '../widgets/logo_widget.dart';
 
-class StampLayout implements WatermarkLayout {
+class StampLayout extends WatermarkLayout {
   @override
   String get displayName => '✔ Verified Stamp';
 
