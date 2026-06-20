@@ -11,7 +11,7 @@ import '../helpers/layout_helper.dart';
 import '../helpers/text_helper.dart';
 import '../widgets/logo_widget.dart';
 
-class MinimalLayout implements WatermarkLayout {
+class MinimalLayout extends WatermarkLayout {
   @override
   String get displayName => '⚡ Minimal';
 
