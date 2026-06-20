@@ -408,6 +408,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       imagePath: imagePath,
       outputPath: outputPath,
       operatorName: _wmSettings.operatorName,
+      style: _wmSettings.style,
       barcodeValue: entry.value,
       barcodeFormat: entry.barcodeFormat,
       timestamp: entry.timestamp,
@@ -418,6 +419,17 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     );
 
     if (result == null) throw Exception('Watermark isolate gagal');
+
+    if (result != imagePath) {
+      // Watermark sukses & menghasilkan file baru → foto asli (pre-watermark)
+      // sudah tidak diperlukan, hapus agar tidak menumpuk jadi sampah.
+      try {
+        await File(imagePath).delete();
+      } catch (_) {
+        // Bukan masalah kritis, biarkan saja jika gagal dihapus.
+      }
+    }
+
     return result;
   }
 

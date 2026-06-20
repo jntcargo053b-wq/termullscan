@@ -1,13 +1,19 @@
 import 'dart:io';
-import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
+import '../watermark/models/watermark_data.dart';
+import '../watermark/models/watermark_style.dart';
+import '../watermark/watermark_factory.dart';
 
-/// Render watermark gaya POLAROID FIELD OPS.
+/// Load source image & (opsional) logo dari disk, lalu delegasikan proses
+/// menggambar ke [WatermarkRenderer] yang sesuai dengan [style]. Encoding
+/// hasil akhir ke PNG dan penulisan file output juga ditangani di sini,
+/// terpusat untuk semua gaya — supaya logika I/O tidak terduplikasi di
+/// setiap renderer.
 Future<String?> _renderWatermark({
   required String imagePath,
   required String outputPath,
+  required WatermarkStyle style,
   required String? barcodeValue,
   required String? barcodeFormat,
   required DateTime timestamp,
@@ -17,6 +23,8 @@ Future<String?> _renderWatermark({
   required String operatorName,
   required String? logoPath,
 }) async {
+  ui.Image? srcImage;
+  ui.Image? logoImage;
   try {
     final file = File(imagePath);
     if (!await file.exists()) {
@@ -30,50 +38,24 @@ Future<String?> _renderWatermark({
       targetWidth: 2048,
     );
     final frame = await codec.getNextFrame();
-    final srcImage = frame.image;
+    srcImage = frame.image;
 
     final photoWidth = srcImage.width.toDouble();
     final photoHeight = srcImage.height.toDouble();
 
+    final renderer = WatermarkFactory.create(style);
     debugPrint(
-        '🖼️ Watermark: rendering polaroid for ${photoWidth.toInt()}x${photoHeight.toInt()}');
+        '🖼️ Watermark: rendering ${renderer.name} for ${photoWidth.toInt()}x${photoHeight.toInt()}');
 
-    final baseSize = math.min(photoWidth, photoHeight);
-    final padding = baseSize * 0.06;
-
-    final textLineCount = _countTextLines(
-      hasBarcode: barcodeValue != null && barcodeValue.isNotEmpty,
-      hasOperator: operatorName.isNotEmpty,
-      hasLocation: latitude != null && longitude != null,
-    );
-    final bottomStripHeight = math.max(
-      photoHeight * 0.22,
-      textLineCount * (baseSize * 0.032 * 1.6) + padding * 2.5,
-    );
-
-    final canvasWidth = photoWidth + (padding * 2);
-    final canvasHeight = photoHeight + padding + bottomStripHeight;
-
-    // Load logo
-    ui.Image? logoImage;
-    double? logoDrawW, logoDrawH;
+    // Load logo, jika ada.
     if (logoPath != null && logoPath.isNotEmpty) {
       try {
         final logoFile = File(logoPath);
         if (await logoFile.exists()) {
           final logoBytes = await logoFile.readAsBytes();
-          final logoCodec =
-              await ui.instantiateImageCodec(logoBytes);
+          final logoCodec = await ui.instantiateImageCodec(logoBytes);
           final logoFrame = await logoCodec.getNextFrame();
           logoImage = logoFrame.image;
-
-          final logoMaxH = bottomStripHeight * 0.45;
-          final logoW = logoImage.width.toDouble();
-          final logoH = logoImage.height.toDouble();
-          final scale = logoMaxH / logoH;
-          logoDrawW = logoW * scale;
-          logoDrawH = logoH * scale;
-
           debugPrint(
               '🖼️ Watermark: logo loaded (${logoImage.width}x${logoImage.height})');
         }
@@ -82,202 +64,45 @@ Future<String?> _renderWatermark({
       }
     }
 
+    final data = WatermarkData(
+      timestamp: timestamp,
+      operatorName: operatorName,
+      barcodeValue: barcodeValue,
+      barcodeFormat: barcodeFormat,
+      latitude: latitude,
+      longitude: longitude,
+      locationName: locationName,
+      logoPath: logoPath,
+    );
+
+    final canvasSize = renderer.computeCanvasSize(
+      photoWidth: photoWidth,
+      photoHeight: photoHeight,
+      data: data,
+    );
+
     final recorder = ui.PictureRecorder();
-    final canvas =
-        Canvas(recorder, Rect.fromLTWH(0, 0, canvasWidth, canvasHeight));
-
-    // Paper background
-    canvas.drawRect(
-      Rect.fromLTWH(0, 0, canvasWidth, canvasHeight),
-      Paint()..color = const Color(0xFFF5F5F0),
+    final canvas = Canvas(
+      recorder,
+      Rect.fromLTWH(0, 0, canvasSize.width, canvasSize.height),
     );
 
-    // Shadow
-    final shadowPath = Path()
-      ..addRRect(RRect.fromRectAndRadius(
-        Rect.fromLTWH(0, 0, canvasWidth, canvasHeight),
-        const Radius.circular(2),
-      ));
-    canvas.drawShadow(shadowPath, Colors.black.withOpacity(0.3), 14, true);
-
-    // Photo area
-    final photoRect = Rect.fromLTWH(padding, padding, photoWidth, photoHeight);
-    canvas.drawRect(photoRect, Paint()..color = const Color(0xFF111111));
-    canvas.drawRect(
-      photoRect,
-      Paint()
-        ..color = const Color(0xFFDDDDDD)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = math.max(1.5, baseSize * 0.002)
-        ..isAntiAlias = true,
+    renderer.paint(
+      canvas: canvas,
+      canvasSize: canvasSize,
+      srcImage: srcImage,
+      photoWidth: photoWidth,
+      photoHeight: photoHeight,
+      logoImage: logoImage,
+      data: data,
     );
-
-    canvas.drawImageRect(
-      srcImage,
-      Rect.fromLTWH(0, 0, photoWidth, photoHeight),
-      photoRect,
-      Paint()
-        ..filterQuality = FilterQuality.high
-        ..isAntiAlias = true
-        ..color = const Color(0xDDFFFFFF),
-    );
-
-    // Scan line
-    final scanLineY = padding + photoHeight * 0.35;
-    canvas.drawLine(
-      Offset(padding, scanLineY),
-      Offset(padding + photoWidth, scanLineY),
-      Paint()
-        ..color = const Color(0x44FFAA00)
-        ..strokeWidth = math.max(1.5, baseSize * 0.002)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3)
-        ..isAntiAlias = true,
-    );
-
-    // ── TEXT ──────────────────────────────────────────────────────────
-    final isManual = barcodeFormat == 'MANUAL';
-    final dateStr =
-        DateFormat('MMM dd, yyyy • HH:mm:ss').format(timestamp).toUpperCase();
-
-    String gpsStr;
-    if (locationName != null && locationName.isNotEmpty) {
-      gpsStr = locationName;
-    } else if (latitude != null && longitude != null) {
-      final latDir = latitude >= 0 ? 'N' : 'S';
-      final lonDir = longitude >= 0 ? 'E' : 'W';
-      gpsStr =
-          '${latitude.abs().toStringAsFixed(4)}° $latDir, '
-          '${longitude.abs().toStringAsFixed(4)}° $lonDir';
-    } else {
-      gpsStr = 'No location data';
-    }
-
-    final hasBadgeOrLogo = isManual || logoImage != null;
-    final rightReservedWidth = hasBadgeOrLogo
-        ? math.max(
-            isManual ? baseSize * 0.10 : 0,
-            logoDrawW ?? 0,
-          ) +
-            padding * 0.5
-        : 0.0;
-
-    final textX = padding + 6;
-    final textContentWidth =
-        canvasWidth - (padding * 2) - 12 - rightReservedWidth;
-    double textY = photoHeight + padding + (bottomStripHeight * 0.06);
-
-    void drawText(String text, Color color, double fontSize,
-        {FontWeight fontWeight = FontWeight.normal, int maxLines = 1}) {
-      final tp = TextPainter(
-        text: TextSpan(
-          text: text,
-          style: TextStyle(
-            color: color,
-            fontSize: fontSize,
-            fontWeight: fontWeight,
-            height: 1.3,
-          ),
-        ),
-        textDirection: ui.TextDirection.ltr,
-        maxLines: maxLines,
-        ellipsis: '…',
-      )..layout(maxWidth: textContentWidth);
-      tp.paint(canvas, Offset(textX, textY));
-      textY += tp.height + fontSize * 0.3;
-    }
-
-    if (barcodeValue != null && barcodeValue.isNotEmpty) {
-      drawText(barcodeValue, const Color(0xFF2C2C2C), baseSize * 0.045,
-          fontWeight: FontWeight.w800);
-    }
-
-    if (operatorName.isNotEmpty) {
-      drawText('OP: $operatorName', const Color(0xFF8B6914), baseSize * 0.032,
-          fontWeight: FontWeight.w700);
-    }
-
-    drawText(dateStr, const Color(0xFF666666), baseSize * 0.024,
-        fontWeight: FontWeight.w500);
-
-    drawText(gpsStr, const Color(0xFF888888), baseSize * 0.024, maxLines: 2);
-
-    // ── MANUAL BADGE ──────────────────────────────────────────────────
-    if (isManual) {
-      final badgeW = baseSize * 0.09;
-      final badgeH = baseSize * 0.028;
-      final badgeX = canvasWidth - padding - badgeW - 6;
-      final badgeY = photoHeight + padding + (bottomStripHeight * 0.10);
-
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(badgeX, badgeY, badgeW, badgeH),
-          Radius.circular(badgeH * 0.2),
-        ),
-        Paint()
-          ..color = const Color(0xFFE67E22)
-          ..isAntiAlias = true,
-      );
-
-      final badgeFontSize = badgeH * 0.55;
-      final badgeTp = TextPainter(
-        // ✅ FIX: TextSpan, bukan TextStyle
-        text: const TextSpan(
-          text: 'MANUAL',
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 9,
-            fontWeight: FontWeight.w800,
-            letterSpacing: 0.5,
-          ),
-        ),
-        textDirection: ui.TextDirection.ltr,
-      )..layout();
-      badgeTp.paint(
-        canvas,
-        Offset(
-          badgeX + (badgeW - badgeTp.width) / 2,
-          badgeY + (badgeH - badgeTp.height) / 2,
-        ),
-      );
-    }
-
-    // ── LOGO ──────────────────────────────────────────────────────────
-    if (logoImage != null && logoDrawW != null && logoDrawH != null) {
-      final logoX = canvasWidth - padding - logoDrawW - 6;
-      final logoY = isManual
-          ? photoHeight +
-              padding +
-              (bottomStripHeight * 0.10) +
-              (baseSize * 0.028) +
-              4
-          : photoHeight + padding + (bottomStripHeight - logoDrawH) / 2;
-
-      final clampedLogoY = math.min(
-        logoY,
-        photoHeight + padding + bottomStripHeight - logoDrawH - 4,
-      );
-
-      canvas.drawImageRect(
-        logoImage,
-        Rect.fromLTWH(
-            0, 0, logoImage.width.toDouble(), logoImage.height.toDouble()),
-        Rect.fromLTWH(logoX, clampedLogoY, logoDrawW, logoDrawH),
-        Paint()
-          ..filterQuality = FilterQuality.high
-          ..isAntiAlias = true
-          ..colorFilter = ColorFilter.mode(
-            Colors.white.withOpacity(0.25),
-            BlendMode.modulate,
-          ),
-      );
-      logoImage.dispose();
-    }
 
     // ── FINALIZE ──────────────────────────────────────────────────────
     final picture = recorder.endRecording();
-    final img =
-        await picture.toImage(canvasWidth.toInt(), canvasHeight.toInt());
-    srcImage.dispose();
+    final img = await picture.toImage(
+      canvasSize.width.toInt(),
+      canvasSize.height.toInt(),
+    );
 
     final byteData = await img.toByteData(format: ui.ImageByteFormat.png);
     img.dispose();
@@ -291,26 +116,18 @@ Future<String?> _renderWatermark({
     await File(outputPath).writeAsBytes(pngBytes);
 
     debugPrint(
-        '✅ Watermark: saved polaroid ${canvasWidth.toInt()}x${canvasHeight.toInt()} to $outputPath');
+        '✅ Watermark: saved ${renderer.name} ${canvasSize.width.toInt()}x${canvasSize.height.toInt()} to $outputPath');
     return outputPath;
   } catch (e, stack) {
     debugPrint('❌ Watermark render error: $e');
     debugPrint('   Stack: $stack');
     return null;
+  } finally {
+    // Pastikan native image resources selalu dibersihkan, baik pada jalur
+    // sukses maupun ketika terjadi exception di tengah proses render.
+    srcImage?.dispose();
+    logoImage?.dispose();
   }
-}
-
-int _countTextLines({
-  required bool hasBarcode,
-  required bool hasOperator,
-  required bool hasLocation,
-}) {
-  int lines = 0;
-  if (hasBarcode) lines++;
-  if (hasOperator) lines++;
-  lines++;
-  if (hasLocation) lines++;
-  return lines + 1;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -323,6 +140,7 @@ class WatermarkService {
     required String imagePath,
     required String outputPath,
     required String operatorName,
+    WatermarkStyle style = WatermarkStyle.polaroid,
     String? barcodeValue,
     String? barcodeFormat,
     required DateTime timestamp,
@@ -331,13 +149,14 @@ class WatermarkService {
     String? locationName,
     String? logoPath,
   }) async {
-    debugPrint('🖼️ WatermarkService.addWatermark called');
+    debugPrint('🖼️ WatermarkService.addWatermark called (style: ${style.name})');
     debugPrint('   imagePath: $imagePath');
     debugPrint('   outputPath: $outputPath');
 
     return _renderWatermark(
       imagePath: imagePath,
       outputPath: outputPath,
+      style: style,
       barcodeValue: barcodeValue,
       barcodeFormat: barcodeFormat,
       timestamp: timestamp,

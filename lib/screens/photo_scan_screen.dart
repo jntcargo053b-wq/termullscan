@@ -116,6 +116,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       imagePath: imagePath,
       outputPath: outputPath,
       operatorName: _wmSettings.operatorName,
+      style: _wmSettings.style,
       barcodeValue: null, // photo scan tidak ada barcode
       barcodeFormat: null,
       timestamp: timestamp,
@@ -124,6 +125,16 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       locationName: null,
       logoPath: _wmSettings.hasLogo ? _wmSettings.logoPath : null,
     );
+
+    if (result != null && result != imagePath) {
+      // Watermark sukses & menghasilkan file baru → foto asli (pre-watermark)
+      // sudah tidak diperlukan, hapus agar tidak menumpuk jadi sampah.
+      try {
+        await File(imagePath).delete();
+      } catch (_) {
+        // Bukan masalah kritis, biarkan saja jika gagal dihapus.
+      }
+    }
 
     return result ?? imagePath; // fallback ke original jika watermark gagal
   }
