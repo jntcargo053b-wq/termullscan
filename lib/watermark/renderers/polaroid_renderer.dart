@@ -1,8 +1,6 @@
 import 'dart:ui' as ui;
-import 'package:flutter/material.dart';
 import 'base_renderer.dart';
 import '../models/watermark_data.dart';
-import '../models/watermark_style.dart';
 import '../layouts/polaroid_layout.dart';
 
 class PolaroidRenderer implements WatermarkRenderer {
@@ -34,9 +32,14 @@ class PolaroidRenderer implements WatermarkRenderer {
     required ui.Image? logoImage,
     required WatermarkData data,
   }) {
+    final metrics = _layout.computeMetrics(
+      photoWidth: photoWidth,
+      photoHeight: photoHeight,
+      data: data,
+    );
     _layout.paintOnCanvas(
       canvas: canvas,
-      canvasSize: canvasSize,
+      metrics: metrics,
       srcImage: srcImage,
       photoWidth: photoWidth,
       photoHeight: photoHeight,
