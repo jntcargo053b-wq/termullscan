@@ -12,8 +12,8 @@ import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
 import '../services/location_service.dart';
 import '../services/watermark_service.dart';
-import '../watermark/watermark_settings.dart';      // ✅ WatermarkSettings
-import 'watermark_settings_sheet.dart';             // ✅ WatermarkSettingsSheet (satu folder)
+import '../watermark/watermark_settings.dart';
+import 'watermark_settings_sheet.dart';
 
 // ═════════════════════════════════════════════════════════════════════════
 class BarcodeScanScreen extends StatefulWidget {
@@ -429,16 +429,18 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     return result;
   }
 
+  // ── SAVE TO GALLERY ─────────────────────────────────────────────────────
   Future<bool> _saveToGallery(String filePath, ScanEntry entry) async {
     try {
-      await SaverGallery.saveFile(
-        filePath: filePath,
-        fileName: filePath.split('/').last,
+      // ✅ SaverGallery API terbaru
+      final result = await SaverGallery.saveFile(
+        file: filePath,                        // ✅ 'filePath' → 'file'
+        name: filePath.split('/').last,        // ✅ 'fileName' → 'name'
         androidRelativePath: 'Pictures/TERMULScan',
         skipIfExists: false,
       );
       debugPrint('✅ Berhasil menyimpan ke galeri: $filePath');
-      return true;
+      return result.isSuccess;
     } catch (e) {
       debugPrint('❌ Error _saveToGallery: $e');
       return false;
