@@ -4,9 +4,7 @@ import 'package:flutter/material.dart';
 import '../watermark/models/watermark_data.dart';
 import '../watermark/models/watermark_style.dart';
 import '../watermark/watermark_factory.dart';
-import '../watermark/layouts/base_layout.dart';
 
-/// Load source image & logo, lalu delegasikan ke layout untuk menggambar watermark.
 Future<String?> _renderWatermark({
   required String imagePath,
   required String outputPath,
@@ -40,12 +38,11 @@ Future<String?> _renderWatermark({
     final photoWidth = srcImage.width.toDouble();
     final photoHeight = srcImage.height.toDouble();
 
-    // 🔥 Langsung ambil layout dari factory
-    final layout = WatermarkFactory.createLayout(style);
+    // 🔥 LANGSUNG PAKAI LAYOUT, BUKAN RENDERER
+    final layout = WatermarkFactory.create(style);
+    debugPrint('🖼️ Watermark: using layout ${layout.displayName}');
 
-    debugPrint('🖼️ Watermark: rendering ${layout.displayName} for ${photoWidth.toInt()}x${photoHeight.toInt()}');
-
-    // Load logo, jika ada.
+    // Load logo
     if (logoPath != null && logoPath.isNotEmpty) {
       try {
         final logoFile = File(logoPath);
@@ -54,7 +51,7 @@ Future<String?> _renderWatermark({
           final logoCodec = await ui.instantiateImageCodec(logoBytes);
           final logoFrame = await logoCodec.getNextFrame();
           logoImage = logoFrame.image;
-          debugPrint('🖼️ Watermark: logo loaded (${logoImage.width}x${logoImage.height})');
+          debugPrint('🖼️ Watermark: logo loaded');
         }
       } catch (e) {
         debugPrint('⚠️ Watermark: logo load failed - $e');
@@ -72,23 +69,19 @@ Future<String?> _renderWatermark({
       logoPath: logoPath,
     );
 
-    // 🔥 Hitung metrik menggunakan layout
+    // 🔥 METRIK + PAINT LEWAT LAYOUT
     final metrics = layout.computeMetrics(
       photoWidth: photoWidth,
       photoHeight: photoHeight,
       data: data,
     );
 
-    final canvasWidth = metrics.canvasWidth;
-    final canvasHeight = metrics.canvasHeight;
-
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(
       recorder,
-      Rect.fromLTWH(0, 0, canvasWidth, canvasHeight),
+      Rect.fromLTWH(0, 0, metrics.canvasWidth, metrics.canvasHeight),
     );
 
-    // 🔥 Gambar langsung menggunakan layout
     layout.paintOnCanvas(
       canvas: canvas,
       metrics: metrics,
@@ -99,9 +92,12 @@ Future<String?> _renderWatermark({
       data: data,
     );
 
-    // Finalize
+    // ── FINALIZE ──
     final picture = recorder.endRecording();
-    final img = await picture.toImage(canvasWidth.toInt(), canvasHeight.toInt());
+    final img = await picture.toImage(
+      metrics.canvasWidth.toInt(),
+      metrics.canvasHeight.toInt(),
+    );
 
     final byteData = await img.toByteData(format: ui.ImageByteFormat.png);
     img.dispose();
@@ -114,7 +110,7 @@ Future<String?> _renderWatermark({
     final pngBytes = byteData.buffer.asUint8List();
     await File(outputPath).writeAsBytes(pngBytes);
 
-    debugPrint('✅ Watermark: saved ${layout.displayName} ${canvasWidth.toInt()}x${canvasHeight.toInt()} to $outputPath');
+    debugPrint('✅ Watermark: saved ${layout.displayName} to $outputPath');
     return outputPath;
   } catch (e, stack) {
     debugPrint('❌ Watermark render error: $e');
@@ -145,9 +141,6 @@ class WatermarkService {
     String? logoPath,
   }) async {
     debugPrint('🖼️ WatermarkService.addWatermark called (style: ${style.name})');
-    debugPrint('   imagePath: $imagePath');
-    debugPrint('   outputPath: $outputPath');
-
     return _renderWatermark(
       imagePath: imagePath,
       outputPath: outputPath,
