@@ -1,9 +1,10 @@
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:gap/gap.dart';
-import 'package:intl/intl.dart';
 import 'base_layout.dart';
+import 'layout_metrics.dart';
 import '../models/watermark_data.dart';
 import '../models/watermark_style.dart';
 import '../helpers/layout_helper.dart';
@@ -18,29 +19,58 @@ class MinimalLayout implements WatermarkLayout {
   WatermarkStyle get style => WatermarkStyle.minimal;
 
   @override
-  WatermarkCanvasSize computeCanvasSize({
+  LayoutMetrics computeMetrics({
     required double photoWidth,
     required double photoHeight,
     required WatermarkData data,
   }) {
-    // Kanvas sama dengan ukuran foto
-    return WatermarkCanvasSize(photoWidth, photoHeight);
+    final baseSize = LayoutHelper.getBaseSize(photoWidth, photoHeight);
+    final padding = LayoutHelper.padding(baseSize);
+
+    int lineCount = 1; // timestamp
+    if (data.hasBarcode) lineCount++;
+    if (data.hasOperator) lineCount++;
+    lineCount++; // location
+
+    final lineH = LayoutHelper.lineHeight(baseSize, ratio: 0.035);
+    final fontSz = LayoutHelper.fontSize(baseSize, ratio: 0.024);
+    final overlayHeight = math.max(
+      photoHeight * 0.14,
+      lineCount * lineH + padding * 2,
+    );
+
+    final logoMaxSize = baseSize * 0.13;
+    final rightReserved = logoMaxSize + padding;
+    final textW = photoWidth - padding * 2 - rightReserved;
+
+    return LayoutMetrics(
+      baseSize: baseSize,
+      padding: padding,
+      fontSize: fontSz,
+      lineHeight: lineH,
+      stripHeight: overlayHeight,
+      logoMaxSize: logoMaxSize,
+      textRowCount: lineCount,
+      canvasWidth: photoWidth,
+      canvasHeight: photoHeight,
+      textAvailableWidth: textW,
+    );
   }
 
   @override
   void paintOnCanvas({
-    required Canvas canvas,
-    required WatermarkCanvasSize canvasSize,
+    required ui.Canvas canvas,
+    required LayoutMetrics metrics,
     required ui.Image srcImage,
     required double photoWidth,
     required double photoHeight,
     required ui.Image? logoImage,
     required WatermarkData data,
   }) {
-    final baseSize = LayoutHelper.getBaseSize(photoWidth, photoHeight);
-    final padding = LayoutHelper.padding(baseSize);
+    final padding = metrics.padding;
+    final overlayHeight = metrics.stripHeight;
+    final overlayTop = photoHeight - overlayHeight;
 
-    // Gambar foto full
     canvas.drawImageRect(
       srcImage,
       Rect.fromLTWH(0, 0, photoWidth, photoHeight),
@@ -50,20 +80,6 @@ class MinimalLayout implements WatermarkLayout {
         ..isAntiAlias = true,
     );
 
-    // Hitung jumlah baris
-    int lineCount = 1; // tanggal
-    if (data.hasBarcode) lineCount++;
-    if (data.hasOperator) lineCount++;
-    lineCount++; // lokasi
-
-    final lineHeight = LayoutHelper.lineHeight(baseSize, ratio: 0.035);
-    final overlayHeight = math.max(
-      photoHeight * 0.14,
-      lineCount * lineHeight + padding * 2,
-    );
-    final overlayTop = photoHeight - overlayHeight;
-
-    // Gradient overlay
     final gradientPaint = Paint()
       ..shader = ui.Gradient.linear(
         Offset(0, overlayTop),
@@ -75,16 +91,14 @@ class MinimalLayout implements WatermarkLayout {
       gradientPaint,
     );
 
-    // Teks
-    final logoReserve = logoImage != null ? baseSize * 0.16 : 0.0;
     final textX = padding;
-    final textContentWidth = photoWidth - padding * 2 - logoReserve;
-    double textY = photoHeight - padding - lineCount * lineHeight;
+    final textContentWidth = metrics.textAvailableWidth;
+    double textY = photoHeight - padding - metrics.textRowCount * metrics.lineHeight;
 
     void drawText(String text, Color color, double fontSize,
         {FontWeight fontWeight = FontWeight.w500, int maxLines = 1}) {
       final tp = TextHelper.paintText(
-        canvas,
+        canvas: canvas,
         text: text,
         x: textX,
         y: textY,
@@ -98,24 +112,22 @@ class MinimalLayout implements WatermarkLayout {
     }
 
     if (data.hasBarcode) {
-      drawText(data.barcodeValue!, Colors.white, baseSize * 0.030,
+      drawText(data.barcodeValue!, Colors.white, metrics.baseSize * 0.030,
           fontWeight: FontWeight.w700);
     }
     if (data.hasOperator) {
-      drawText(data.operatorName, Colors.white70, baseSize * 0.024);
+      drawText(data.operatorName, Colors.white70, metrics.baseSize * 0.024);
     }
-    drawText(data.formattedTimestamp, Colors.white70, baseSize * 0.022);
-    drawText(data.displayLocation, Colors.white60, baseSize * 0.022, maxLines: 1);
+    drawText(data.formattedTimestamp, Colors.white70, metrics.baseSize * 0.022);
+    drawText(data.displayLocation, Colors.white60, metrics.baseSize * 0.022, maxLines: 1);
 
-    // Badge MANUAL (mini)
     if (data.isManual) {
-      drawText('• MANUAL ENTRY', const Color(0xFFFFB74D), baseSize * 0.020,
+      drawText('• MANUAL ENTRY', const Color(0xFFFFB74D), metrics.baseSize * 0.020,
           fontWeight: FontWeight.w700);
     }
 
-    // Logo (pojok kanan bawah)
     if (logoImage != null) {
-      final logoSize = baseSize * 0.13;
+      final logoSize = metrics.logoMaxSize;
       final logoW = logoImage.width.toDouble();
       final logoH = logoImage.height.toDouble();
       final scale = math.min(logoSize / logoW, logoSize / logoH);
@@ -141,7 +153,15 @@ class MinimalLayout implements WatermarkLayout {
     required WatermarkData previewData,
     required bool hasLogo,
     required String? logoPath,
+    double previewWidth = 300,
+    double previewHeight = 400,
   }) {
+    final metrics = computeMetrics(
+      photoWidth: previewWidth,
+      photoHeight: previewHeight,
+      data: previewData,
+    );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -195,8 +215,8 @@ class MinimalLayout implements WatermarkLayout {
               const Gap(8),
               Image.file(
                 File(logoPath),
-                width: 28,
-                height: 28,
+                width: metrics.logoMaxSize,
+                height: metrics.logoMaxSize,
                 fit: BoxFit.contain,
                 errorBuilder: (_, __, ___) => const Icon(Icons.business, color: Colors.white24),
               ),
