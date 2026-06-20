@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';  // ✅ untuk debugPrint
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../models/scan_entry.dart';
@@ -80,7 +81,6 @@ class StorageService {
     if (idx < 0) return;
     final entry = _cache![idx];
 
-    // ✅ Hapus file foto jika ada
     if (entry.isPhoto) {
       try {
         final f = File(entry.value);
@@ -100,7 +100,6 @@ class StorageService {
   Future<void> deleteAll() async {
     if (_cache == null) await loadAll();
 
-    // ✅ Hapus semua file foto
     int deletedCount = 0;
     for (final e in _cache!) {
       if (e.isPhoto) {
@@ -168,9 +167,10 @@ class StorageService {
     return f.path;
   }
 
+  // ✅ Perbaiki: padLeft (lowercase)
   String _fmt(DateTime d) =>
-      '${d.day.toString().PadLeft(2, '0')}-${d.month.toString().PadLeft(2, '0')}-${d.year} '
-      '${d.hour.toString().PadLeft(2, '0')}:${d.minute.toString().PadLeft(2, '0')}:${d.second.toString().PadLeft(2, '0')}';
+      '${d.day.toString().padLeft(2, '0')}-${d.month.toString().padLeft(2, '0')}-${d.year} '
+      '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}:${d.second.toString().padLeft(2, '0')}';
 
   Future<void> shareTxt(String path) async {
     await Share.shareXFiles([XFile(path)], subject: 'Log Scan WH Scanner');
