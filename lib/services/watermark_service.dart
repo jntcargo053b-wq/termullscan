@@ -43,7 +43,9 @@ Future<String?> _renderWatermark({
     final photoWidth = srcImage.width.toDouble();
     final photoHeight = srcImage.height.toDouble();
 
-    final renderer = WatermarkFactory.create(style);
+    // 🔥 PERBAIKAN DI SINI
+    final renderer = WatermarkFactory.createRenderer(style);
+
     debugPrint(
         '🖼️ Watermark: rendering ${renderer.name} for ${photoWidth.toInt()}x${photoHeight.toInt()}');
 
@@ -123,8 +125,6 @@ Future<String?> _renderWatermark({
     debugPrint('   Stack: $stack');
     return null;
   } finally {
-    // Pastikan native image resources selalu dibersihkan, baik pada jalur
-    // sukses maupun ketika terjadi exception di tengah proses render.
     srcImage?.dispose();
     logoImage?.dispose();
   }
