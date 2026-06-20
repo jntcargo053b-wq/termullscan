@@ -6,7 +6,7 @@ import 'layouts/professional_layout.dart';
 import 'layouts/stamp_layout.dart';
 
 class WatermarkFactory {
-  static WatermarkLayout createLayout(WatermarkStyle style) {
+  static WatermarkLayout create(WatermarkStyle style) {
     switch (style) {
       case WatermarkStyle.polaroid:
         return PolaroidLayout();
