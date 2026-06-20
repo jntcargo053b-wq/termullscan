@@ -304,7 +304,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
               runSpacing: 8,
               children: WatermarkStyle.values.map((style) {
                 final selected = currentStyle == style;
-                final layout = WatermarkFactory.createLayout(style);
+                final layout = WatermarkFactory.create(style); // <-- FIX: create, not createLayout
                 return ChoiceChip(
                   label: Text(
                     layout.displayName,
@@ -353,8 +353,8 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                     ),
                   ),
                   const Gap(8),
-                  // 🔥 Gunakan layout untuk preview
-                  WatermarkFactory.createLayout(currentStyle).buildPreview(
+                  // 🔥 FIX: Gunakan create, bukan createLayout
+                  WatermarkFactory.create(currentStyle).buildPreview(
                     previewData: previewData,
                     hasLogo: _settings.hasLogo,
                     logoPath: _settings.logoPath,
