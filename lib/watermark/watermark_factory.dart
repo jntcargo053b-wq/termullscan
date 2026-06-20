@@ -4,9 +4,13 @@ import 'layouts/polaroid_layout.dart';
 import 'layouts/minimal_layout.dart';
 import 'layouts/professional_layout.dart';
 import 'layouts/stamp_layout.dart';
+import 'renderers/base_renderer.dart';
+import 'renderers/polaroid_renderer.dart';
+import 'renderers/minimal_renderer.dart';
+import 'renderers/professional_renderer.dart';
+import 'renderers/stamp_renderer.dart';
 
 class WatermarkFactory {
-  // --- RENDERER (untuk renderer di service) ---
   static WatermarkRenderer createRenderer(WatermarkStyle style) {
     switch (style) {
       case WatermarkStyle.polaroid:
@@ -20,7 +24,6 @@ class WatermarkFactory {
     }
   }
 
-  // --- LAYOUT (untuk preview) ---
   static WatermarkLayout createLayout(WatermarkStyle style) {
     switch (style) {
       case WatermarkStyle.polaroid:
