@@ -1,11 +1,7 @@
 import 'dart:ui' as ui;
 import '../models/watermark_data.dart';
-
-class WatermarkCanvasSize {
-  final double width;
-  final double height;
-  const WatermarkCanvasSize(this.width, this.height);
-}
+// Hapus definisi WatermarkCanvasSize, gunakan dari base_layout
+import '../layouts/base_layout.dart' show WatermarkCanvasSize;
 
 abstract class WatermarkRenderer {
   String get name;
@@ -15,7 +11,7 @@ abstract class WatermarkRenderer {
     required WatermarkData data,
   });
   void paint({
-    required Canvas canvas,
+    required ui.Canvas canvas,
     required WatermarkCanvasSize canvasSize,
     required ui.Image srcImage,
     required double photoWidth,
