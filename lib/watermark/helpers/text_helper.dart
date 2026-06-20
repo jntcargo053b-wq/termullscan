@@ -12,6 +12,7 @@ class TextHelper {
     FontWeight fontWeight = FontWeight.normal,
     int maxLines = 1,
     TextAlign textAlign = TextAlign.left,
+    String fontFamily = 'Roboto',
   }) {
     final tp = TextPainter(
       text: TextSpan(
@@ -20,6 +21,7 @@ class TextHelper {
           color: color,
           fontSize: fontSize,
           fontWeight: fontWeight,
+          fontFamily: fontFamily,
         ),
       ),
       textDirection: TextDirection.ltr,
@@ -36,11 +38,16 @@ class TextHelper {
     required String text,
     required double fontSize,
     FontWeight fontWeight = FontWeight.normal,
+    String fontFamily = 'Roboto',
   }) {
     final tp = TextPainter(
       text: TextSpan(
         text: text,
-        style: TextStyle(fontSize: fontSize, fontWeight: fontWeight),
+        style: TextStyle(
+          fontSize: fontSize,
+          fontWeight: fontWeight,
+          fontFamily: fontFamily,
+        ),
       ),
       textDirection: TextDirection.ltr,
     )..layout();
