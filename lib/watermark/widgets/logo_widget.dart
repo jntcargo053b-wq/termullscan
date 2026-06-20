@@ -12,10 +12,14 @@ class LogoWidget {
     double opacity = 1.0,
     BlendMode blendMode = BlendMode.srcOver,
   }) {
-    if (logoImage == null) return;
+    if (logoImage == null) {
+      debugPrint('⚠️ LogoWidget: logoImage is null, skipping paint');
+      return;
+    }
 
     final logoW = logoImage.width.toDouble();
     final logoH = logoImage.height.toDouble();
+    debugPrint('🖼️ LogoWidget: drawing logo ${logoW}x$logoH at ($x, $y)');
 
     final scaleX = maxWidth / logoW;
     final scaleY = maxHeight / logoH;
