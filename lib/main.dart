@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'theme/app_theme.dart';
 import 'screens/home_screen.dart';
-import 'screens/watermark_settings.dart';
+import 'watermark/watermark_settings.dart';  // ✅ Perbaiki import
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
