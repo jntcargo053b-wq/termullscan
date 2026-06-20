@@ -11,8 +11,8 @@ import '../services/location_service.dart';
 import '../services/storage_service.dart';
 import '../services/watermark_service.dart';
 import '../theme/app_theme.dart';
-import '../screens/watermark_settings_sheet.dart';  // karena file ada di screens
-import 'watermark_settings_sheet.dart';
+import '../watermark/watermark_settings.dart';          // ✅ Tambahkan import WatermarkSettings
+import 'watermark_settings_sheet.dart';                // ✅ Satu import sheet (cukup sekali)
 
 class PhotoScanScreen extends StatefulWidget {
   const PhotoScanScreen({super.key});
