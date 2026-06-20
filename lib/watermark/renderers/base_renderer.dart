@@ -1,6 +1,6 @@
 import 'dart:ui' as ui;
 import '../models/watermark_data.dart';
-import '../layouts/base_layout.dart';
+import '../layouts/base_layout.dart'; // import untuk WatermarkCanvasSize
 
 abstract class WatermarkRenderer {
   String get name;
