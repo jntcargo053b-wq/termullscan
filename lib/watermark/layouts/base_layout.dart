@@ -11,20 +11,19 @@ class WatermarkCanvasSize {
 }
 
 /// Base class untuk semua layout.
-/// Menyediakan implementasi default computeCanvasSize yang memanggil computeMetrics.
 abstract class WatermarkLayout {
   String get displayName;
   WatermarkStyle get style;
 
-  /// Hitung semua metrik layout. Wajib diimplementasikan oleh subclass.
+  /// Hitung semua metrik layout. WAJIB diimplementasikan.
   LayoutMetrics computeMetrics({
     required double photoWidth,
     required double photoHeight,
     required WatermarkData data,
   });
 
-  /// Hitung ukuran kanvas akhir. 
-  /// Subclass tidak perlu override method ini kecuali ingin custom.
+  /// Hitung ukuran kanvas (implementasi DEFAULT, pakai metrics).
+  /// SUBCLASS TIDAK PERLU OVERRIDE METHOD INI.
   WatermarkCanvasSize computeCanvasSize({
     required double photoWidth,
     required double photoHeight,
@@ -49,7 +48,7 @@ abstract class WatermarkLayout {
     required WatermarkData data,
   });
 
-  /// Preview widget untuk settings.
+  /// Widget preview untuk settings.
   Widget buildPreview({
     required WatermarkData previewData,
     required bool hasLogo,
