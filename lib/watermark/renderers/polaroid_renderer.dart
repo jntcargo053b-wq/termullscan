@@ -2,6 +2,7 @@ import 'dart:ui' as ui;
 import 'base_renderer.dart';
 import '../models/watermark_data.dart';
 import '../layouts/polaroid_layout.dart';
+import '../layouts/base_layout.dart';
 
 class PolaroidRenderer implements WatermarkRenderer {
   final PolaroidLayout _layout = PolaroidLayout();
@@ -24,7 +25,7 @@ class PolaroidRenderer implements WatermarkRenderer {
 
   @override
   void paint({
-    required Canvas canvas,
+    required ui.Canvas canvas,
     required WatermarkCanvasSize canvasSize,
     required ui.Image srcImage,
     required double photoWidth,
