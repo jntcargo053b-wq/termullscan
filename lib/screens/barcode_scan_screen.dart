@@ -12,8 +12,8 @@ import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
 import '../services/location_service.dart';
 import '../services/watermark_service.dart';
-import '../watermark/watermark_settings.dart';      // ✅ FIX: path ke watermark_settings.dart
-import 'watermark_settings_sheet.dart';            // ✅ file sheet ada di screens/ (satu folder)
+import '../watermark/watermark_settings.dart';      // ✅ WatermarkSettings
+import 'watermark_settings_sheet.dart';             // ✅ WatermarkSettingsSheet (satu folder)
 
 // ═════════════════════════════════════════════════════════════════════════
 class BarcodeScanScreen extends StatefulWidget {
@@ -421,13 +421,9 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     if (result == null) throw Exception('Watermark isolate gagal');
 
     if (result != imagePath) {
-      // Watermark sukses & menghasilkan file baru → foto asli (pre-watermark)
-      // sudah tidak diperlukan, hapus agar tidak menumpuk jadi sampah.
       try {
         await File(imagePath).delete();
-      } catch (_) {
-        // Bukan masalah kritis, biarkan saja jika gagal dihapus.
-      }
+      } catch (_) {}
     }
 
     return result;
