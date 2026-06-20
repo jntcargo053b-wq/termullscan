@@ -11,7 +11,7 @@ import '../helpers/layout_helper.dart';
 import '../helpers/text_helper.dart';
 import '../widgets/logo_widget.dart';
 
-class ProfessionalLayout implements WatermarkLayout {
+class ProfessionalLayout extends WatermarkLayout {
   @override
   String get displayName => '🏢 Professional';
 
