@@ -4,7 +4,7 @@ import 'package:gap/gap.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import '../watermark/models/watermark_style.dart';
-import '../watermark/watermark_settings.dart';   // ✅ Perbaikan: import dari watermark
+import '../watermark/watermark_settings.dart';
 import '../watermark/watermark_factory.dart';
 import '../watermark/models/watermark_data.dart';
 
@@ -44,15 +44,46 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
     try {
       final appDir = await getApplicationDocumentsDirectory();
       final dest = '${appDir.path}/wm_logo.png';
+
+      // ✅ Validasi: pastikan file berhasil disalin
       await File(file.path).copy(dest);
+      if (!await File(dest).exists()) {
+        throw Exception('Gagal menyimpan logo ke $dest');
+      }
+
       await _settings.setLogoPath(dest);
+      debugPrint('✅ Logo saved: $dest');
+    } catch (e) {
+      debugPrint('❌ Error saving logo: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Gagal menyimpan logo: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
   }
 
   Future<void> _removeLogo() async {
+    final oldPath = _settings.logoPath;
     await _settings.setLogoPath(null);
+
+    // ✅ Hapus file logo dari disk
+    if (oldPath != null) {
+      try {
+        final file = File(oldPath);
+        if (await file.exists()) {
+          await file.delete();
+          debugPrint('🗑️ Logo deleted: $oldPath');
+        }
+      } catch (e) {
+        debugPrint('⚠️ Could not delete logo: $e');
+      }
+    }
     setState(() {});
   }
 
