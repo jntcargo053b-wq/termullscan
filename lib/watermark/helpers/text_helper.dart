@@ -1,5 +1,5 @@
-import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+// Tidak perlu import dart:ui, karena TextPainter tersedia di material.
 
 class TextHelper {
   static double paintText({
@@ -14,8 +14,8 @@ class TextHelper {
     int maxLines = 1,
     TextAlign textAlign = TextAlign.left,
   }) {
-    final tp = ui.TextPainter(
-      text: ui.TextSpan(
+    final tp = TextPainter(
+      text: TextSpan(
         text: text,
         style: TextStyle(
           color: color,
@@ -23,7 +23,7 @@ class TextHelper {
           fontWeight: fontWeight,
         ),
       ),
-      textDirection: ui.TextDirection.ltr,
+      textDirection: TextDirection.ltr,
       maxLines: maxLines,
       ellipsis: '…',
       textAlign: textAlign,
@@ -38,12 +38,12 @@ class TextHelper {
     required double fontSize,
     FontWeight fontWeight = FontWeight.normal,
   }) {
-    final tp = ui.TextPainter(
-      text: ui.TextSpan(
+    final tp = TextPainter(
+      text: TextSpan(
         text: text,
         style: TextStyle(fontSize: fontSize, fontWeight: fontWeight),
       ),
-      textDirection: ui.TextDirection.ltr,
+      textDirection: TextDirection.ltr,
     )..layout();
     return tp.width;
   }
