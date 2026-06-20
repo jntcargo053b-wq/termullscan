@@ -25,7 +25,10 @@ Future<String?> _renderWatermark({
     }
 
     final imageBytes = await file.readAsBytes();
-    final codec = await ui.instantiateImageCodec(imageBytes, targetWidth: 3000);
+    final codec = await ui.instantiateImageCodec(
+      imageBytes,
+      targetWidth: 2048,
+    );
     final frame = await codec.getNextFrame();
     final srcImage = frame.image;
 
@@ -41,7 +44,7 @@ Future<String?> _renderWatermark({
     final textLineCount = _countTextLines(
       hasBarcode: barcodeValue != null && barcodeValue.isNotEmpty,
       hasOperator: operatorName.isNotEmpty,
-      hasLocation: true,
+      hasLocation: latitude != null && longitude != null,
     );
     final bottomStripHeight = math.max(
       photoHeight * 0.22,

@@ -49,9 +49,12 @@ class StorageService {
   Future<void> _persist() async {
     _writeQueue = _writeQueue.then((_) async {
       final f = await _jsonFile;
-      await f.writeAsString(
+      final tmp = File('${f.path}.tmp');
+      await tmp.writeAsString(
         json.encode((_cache ?? []).map((e) => e.toJson()).toList()),
       );
+      if (await f.exists()) { await f.delete(); }
+      await tmp.rename(f.path);
     });
     await _writeQueue;
   }
@@ -73,7 +76,9 @@ class StorageService {
 
   Future<void> delete(String id) async {
     if (_cache == null) await loadAll();
-    final entry = _cache!.firstWhere((e) => e.id == id);
+    final idx = _cache!.indexWhere((e) => e.id == id);
+    if (idx < 0) return;
+    final entry = _cache![idx];
     if (entry.isPhoto) {
       try {
         final f = File(entry.value);
@@ -166,7 +171,7 @@ class StorageService {
     final cleanName = name != null
         ? name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
         : 'photo';
-    final dest = '${photoDir.path}/${cleanName}_$id.jpg';
+    final dest = '${photoDir.path}/${cleanName}_$id.png';
     try {
       await File(tempPath).rename(dest);
     } on FileSystemException {
@@ -179,7 +184,7 @@ class StorageService {
     return dest;
   }
 
-  String generateId() => 'sc_${DateTime.now().millisecondsSinceEpoch}';
+  String generateId() => 'sc_${DateTime.now().microsecondsSinceEpoch}_${DateTime.now().hashCode.abs()}';
 
   // ── Method getEntry untuk mengambil satu entri berdasarkan ID ─────────────
   Future<ScanEntry?> getEntry(String id) async {

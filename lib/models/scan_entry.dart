@@ -53,7 +53,13 @@ class ScanEntry {
 
   factory ScanEntry.fromJson(Map<String, dynamic> j) => ScanEntry(
     id: j['id'],
-    type: ScanType.values.firstWhere((e) => e.name == j['type']),
+    type: (() {
+      final v = j['type'];
+      for (final e in ScanType.values) {
+        if (e.name == v) return e;
+      }
+      return ScanType.photo;
+    })(),
     value: j['value'],
     barcodeFormat: j['barcodeFormat'],
     timestamp: DateTime.parse(j['timestamp']),
