@@ -11,8 +11,8 @@ import '../services/location_service.dart';
 import '../services/storage_service.dart';
 import '../services/watermark_service.dart';
 import '../theme/app_theme.dart';
-import '../watermark/watermark_settings.dart';   // ✅ WatermarkSettings
-import 'watermark_settings_sheet.dart';          // ✅ WatermarkSettingsSheet
+import '../watermark/watermark_settings.dart';
+import 'watermark_settings_sheet.dart';
 
 class PhotoScanScreen extends StatefulWidget {
   const PhotoScanScreen({super.key});
@@ -78,7 +78,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     return granted;
   }
 
-  Future<bool> _ensurePermission() async {
+  Future<bool> _ensureLocationPermission() async {
     if (_locationGranted) return true;
     final status = await Permission.location.status;
     if (status.isGranted) {
@@ -88,7 +88,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     final result = await Permission.location.request();
     final granted = result.isGranted;
     setState(() => _locationGranted = granted);
-    if (!granted) _showError('Izin lokasi ditolak, foto tetap tersimpan tanpa ');
+    if (!granted) _showError('Izin lokasi ditolak, foto tetap tersimpan tanpa lokasi');
     return granted;
   }
 
@@ -134,7 +134,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
   Future<void> _takePhoto() async {
     if (!await _ensureCameraPermission()) return;
-    await _ensurePermission();
+    await _ensureLocationPermission();
 
     final XFile? xfile;
     try {
@@ -162,7 +162,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         coords =
             await _loc.getCoordinatesOnly().timeout(const Duration(seconds: 6));
       } catch (e) {
-        debugPrint(' timeout: $e');
+        debugPrint('Location timeout: $e');
         coords = (lat: null, lng: null);
       }
 
@@ -193,7 +193,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('⚠️  tidak tersedia, foto tersimpan tanpa lokasi'),
+              content: Text('⚠️ Lokasi tidak tersedia, foto tersimpan tanpa lokasi'),
               duration: Duration(seconds: 2),
               backgroundColor: Colors.orange,
             ),
@@ -211,7 +211,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   }
 
   Future<void> _pickFromGallery() async {
-    await _ensurePermission();
+    await _ensureLocationPermission();
 
     final XFile? xfile;
     try {
@@ -284,7 +284,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('📍  terdeteksi: $address'),
+                content: Text('📍 Lokasi terdeteksi: $address'),
                 duration: const Duration(seconds: 2),
                 backgroundColor: Colors.green.shade700,
               ),
@@ -394,7 +394,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
               ).animate().fadeIn(delay: 100.ms),
               const Gap(8),
               Text(
-                'Foto otomatis disertai timestamp, , & watermark',
+                'Foto otomatis disertai timestamp, lokasi, & watermark',
                 style: Theme.of(context).textTheme.bodyMedium,
                 textAlign: TextAlign.center,
               ).animate().fadeIn(delay: 200.ms),
@@ -453,7 +453,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                     Gap(10),
                     Expanded(
                       child: Text(
-                        'Setiap foto otomatis dicatat: waktu, koordinat , nama lokasi, & watermark',
+                        'Setiap foto otomatis dicatat: waktu, koordinat, nama lokasi, & watermark',
                         style: TextStyle(
                             color: AppTheme.textSecondary, fontSize: 12),
                       ),
