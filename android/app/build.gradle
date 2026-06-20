@@ -5,28 +5,34 @@ plugins {
 }
 
 android {
-    namespace "com.termulscan.app"
-    compileSdk rootProject.ext.compileSdkVersion
+    namespace "com.termulscan.whscanner"
+    compileSdk = 34
 
     defaultConfig {
-        applicationId "com.termulscan.app"
-        minSdk rootProject.ext.minSdkVersion
-        targetSdk rootProject.ext.targetSdkVersion
-        versionCode flutter.versionCode
-        versionName flutter.versionName
+        applicationId "com.termulscan.whscanner"
+        minSdk = 21
+        targetSdk = 34
+        versionCode = flutter.versionCode
+        versionName = flutter.versionName
     }
 
     buildTypes {
         release {
-            signingConfig signingConfigs.debug
-            minifyEnabled false
-            shrinkResources false
+            signingConfig = signingConfigs.debug
+            minifyEnabled = true
+            shrinkResources = true
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+        debug {
+            signingConfig = signingConfigs.debug
+            minifyEnabled = false
+            shrinkResources = false
         }
     }
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
     kotlinOptions {
@@ -35,5 +41,5 @@ android {
 }
 
 flutter {
-    source "../.."
+    source = "../.."
 }
