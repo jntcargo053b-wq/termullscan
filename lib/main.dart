@@ -6,6 +6,10 @@ import 'watermark/watermark_settings.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // ✅ Load WatermarkSettings sebelum runApp
+  await WatermarkSettings().load();
+
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
@@ -15,7 +19,7 @@ void main() async {
     statusBarIconBrightness: Brightness.light,
     systemNavigationBarColor: AppTheme.bg,
   ));
-  await WatermarkSettings().load();
+
   runApp(const WHScannerApp());
 }
 
