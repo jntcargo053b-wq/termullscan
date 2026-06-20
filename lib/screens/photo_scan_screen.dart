@@ -11,7 +11,7 @@ import '../services/location_service.dart';
 import '../services/storage_service.dart';
 import '../services/watermark_service.dart';
 import '../theme/app_theme.dart';
-import 'watermark_settings.dart';
+import '../screens/watermark_settings_sheet.dart';  // karena file ada di screens
 import 'watermark_settings_sheet.dart';
 
 class PhotoScanScreen extends StatefulWidget {
