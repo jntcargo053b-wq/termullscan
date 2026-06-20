@@ -13,8 +13,7 @@ import '../services/storage_service.dart';
 import '../services/location_service.dart';
 import '../services/watermark_service.dart';
 import 'watermark_settings.dart';
-import 'watermark_settings_sheet.dart';
-
+import '../screens/watermark_settings_sheet.dart';  // karena file ada di screens
 // ═════════════════════════════════════════════════════════════════════════
 class BarcodeScanScreen extends StatefulWidget {
   const BarcodeScanScreen({super.key});
