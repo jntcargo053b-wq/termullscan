@@ -1,17 +1,13 @@
 import 'models/watermark_style.dart';
-import 'renderers/base_renderer.dart';
-import 'renderers/minimal_renderer.dart';
-import 'renderers/polaroid_renderer.dart';
-import 'renderers/professional_renderer.dart';
-import 'renderers/stamp_renderer.dart';
+import 'layouts/base_layout.dart';
+import 'layouts/polaroid_layout.dart';
+import 'layouts/minimal_layout.dart';
+import 'layouts/professional_layout.dart';
+import 'layouts/stamp_layout.dart';
 
-/// Membuat instance [WatermarkRenderer] yang sesuai untuk sebuah
-/// [WatermarkStyle]. Satu-satunya tempat yang perlu diubah ketika
-/// menambah gaya watermark baru di masa depan.
 class WatermarkFactory {
-  WatermarkFactory._();
-
-  static WatermarkRenderer create(WatermarkStyle style) {
+  // --- RENDERER (untuk renderer di service) ---
+  static WatermarkRenderer createRenderer(WatermarkStyle style) {
     switch (style) {
       case WatermarkStyle.polaroid:
         return PolaroidRenderer();
@@ -21,6 +17,20 @@ class WatermarkFactory {
         return ProfessionalRenderer();
       case WatermarkStyle.stamp:
         return StampRenderer();
+    }
+  }
+
+  // --- LAYOUT (untuk preview) ---
+  static WatermarkLayout createLayout(WatermarkStyle style) {
+    switch (style) {
+      case WatermarkStyle.polaroid:
+        return PolaroidLayout();
+      case WatermarkStyle.minimal:
+        return MinimalLayout();
+      case WatermarkStyle.professional:
+        return ProfessionalLayout();
+      case WatermarkStyle.stamp:
+        return StampLayout();
     }
   }
 }
