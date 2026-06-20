@@ -7,10 +7,12 @@ class LayoutHelper {
   static double padding(double baseSize, {double ratio = 0.04}) =>
       baseSize * ratio;
 
-  static double fontSize(double baseSize, {double ratio = 0.028}) =>
+  // 🔥 FONT LEBIH BESAR (dari 0.028 → 0.038)
+  static double fontSize(double baseSize, {double ratio = 0.038}) =>
       baseSize * ratio;
 
-  static double lineHeight(double baseSize, {double ratio = 0.045}) =>
+  // 🔥 SPASI LEBIH LEGA (dari 0.045 → 0.055)
+  static double lineHeight(double baseSize, {double ratio = 0.055}) =>
       baseSize * ratio;
 
   static double logoSize(double baseSize, {double ratio = 0.15}) =>
