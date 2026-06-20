@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:gap/gap.dart';
+import 'package:intl/intl.dart';
 import 'base_layout.dart';
 import 'layout_metrics.dart';
 import '../models/watermark_data.dart';
@@ -11,7 +12,7 @@ import '../helpers/layout_helper.dart';
 import '../helpers/text_helper.dart';
 import '../widgets/logo_widget.dart';
 
-class PolaroidLayout implements WatermarkLayout {
+class PolaroidLayout extends WatermarkLayout {
   @override
   String get displayName => '📷 Polaroid';
 
@@ -41,7 +42,7 @@ class PolaroidLayout implements WatermarkLayout {
     final logoMaxH = bottomStripHeight * 0.45;
     final isManual = data.isManual;
     final rightReserved = (isManual ? baseSize * 0.10 : 0.0) +
-        (bottomStripHeight * 0.45); // reserve untuk logo
+        (bottomStripHeight * 0.45);
     final textW = canvasW - padding * 2 - 12 - rightReserved;
 
     return LayoutMetrics(
