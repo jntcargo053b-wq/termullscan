@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../models/scan_entry.dart';
+import 'package:uuid/uuid.dart';
 
 class StorageService {
   static final _i = StorageService._();
@@ -11,7 +12,6 @@ class StorageService {
 
   static const _fileName = 'scan_log.json';
 
-  // ── In-memory cache ──────────────────────────────────────────────────────
   List<ScanEntry>? _cache;
   Future<void> _writeQueue = Future.value();
 
@@ -53,15 +53,15 @@ class StorageService {
       await tmp.writeAsString(
         json.encode((_cache ?? []).map((e) => e.toJson()).toList()),
       );
-      if (await f.exists()) { await f.delete(); }
+      if (await f.exists()) {
+        await f.delete();
+      }
       await tmp.rename(f.path);
     });
     await _writeQueue;
   }
 
-  /// Append entry ke cache + disk tanpa baca ulang file.
   Future<void> add(ScanEntry entry) async {
-    // Pastikan cache sudah di-load sekali
     if (_cache == null) await loadAll();
     _cache!.insert(0, entry);
     await _persist();
@@ -79,32 +79,47 @@ class StorageService {
     final idx = _cache!.indexWhere((e) => e.id == id);
     if (idx < 0) return;
     final entry = _cache![idx];
+
+    // ✅ Hapus file foto jika ada
     if (entry.isPhoto) {
       try {
         final f = File(entry.value);
-        if (await f.exists()) await f.delete();
-      } catch (_) {}
+        if (await f.exists()) {
+          await f.delete();
+          debugPrint('🗑️ Deleted photo: ${entry.value}');
+        }
+      } catch (e) {
+        debugPrint('⚠️ Could not delete photo: $e');
+      }
     }
+
     _cache!.removeWhere((e) => e.id == id);
     await _persist();
   }
 
   Future<void> deleteAll() async {
     if (_cache == null) await loadAll();
+
+    // ✅ Hapus semua file foto
+    int deletedCount = 0;
     for (final e in _cache!) {
       if (e.isPhoto) {
         try {
           final f = File(e.value);
-          if (await f.exists()) await f.delete();
+          if (await f.exists()) {
+            await f.delete();
+            deletedCount++;
+          }
         } catch (_) {}
       }
     }
+    debugPrint('🗑️ Deleted $deletedCount photo files');
+
     _cache = [];
     final f = await _jsonFile;
     if (await f.exists()) await f.delete();
   }
 
-  /// Invalidasi cache (misal setelah proses luar mengubah file)
   void invalidateCache() => _cache = null;
 
   Future<String> exportTxt(List<ScanEntry> entries) async {
@@ -154,15 +169,13 @@ class StorageService {
   }
 
   String _fmt(DateTime d) =>
-      '${d.day.toString().padLeft(2, '0')}-${d.month.toString().padLeft(2, '0')}-${d.year} '
-      '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}:${d.second.toString().padLeft(2, '0')}';
+      '${d.day.toString().PadLeft(2, '0')}-${d.month.toString().PadLeft(2, '0')}-${d.year} '
+      '${d.hour.toString().PadLeft(2, '0')}:${d.minute.toString().PadLeft(2, '0')}:${d.second.toString().PadLeft(2, '0')}';
 
   Future<void> shareTxt(String path) async {
     await Share.shareXFiles([XFile(path)], subject: 'Log Scan WH Scanner');
   }
 
-  /// Simpan foto ke folder permanen app.
-  /// Mengembalikan path final — TIDAK melakukan copy ganda.
   Future<String> savePhoto(String tempPath, {String? name}) async {
     final d = await _dir;
     final photoDir = Directory('${d.path}/photos');
@@ -172,10 +185,10 @@ class StorageService {
         ? name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
         : 'photo';
     final dest = '${photoDir.path}/${cleanName}_$id.png';
+
     try {
       await File(tempPath).rename(dest);
     } on FileSystemException {
-      // rename lintas partisi tidak bisa → fallback copy+delete
       await File(tempPath).copy(dest);
       try {
         await File(tempPath).delete();
@@ -184,9 +197,8 @@ class StorageService {
     return dest;
   }
 
-  String generateId() => 'sc_${DateTime.now().microsecondsSinceEpoch}_${DateTime.now().hashCode.abs()}';
+  String generateId() => const Uuid().v4();
 
-  // ── Method getEntry untuk mengambil satu entri berdasarkan ID ─────────────
   Future<ScanEntry?> getEntry(String id) async {
     if (_cache == null) await loadAll();
     try {
