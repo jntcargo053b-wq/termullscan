@@ -1,8 +1,10 @@
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:gap/gap.dart';
 import 'base_layout.dart';
+import 'layout_metrics.dart';
 import '../models/watermark_data.dart';
 import '../models/watermark_style.dart';
 import '../helpers/layout_helper.dart';
@@ -17,39 +19,61 @@ class ProfessionalLayout implements WatermarkLayout {
   WatermarkStyle get style => WatermarkStyle.professional;
 
   @override
-  WatermarkCanvasSize computeCanvasSize({
+  LayoutMetrics computeMetrics({
     required double photoWidth,
     required double photoHeight,
     required WatermarkData data,
   }) {
     final baseSize = LayoutHelper.getBaseSize(photoWidth, photoHeight);
-    final rowHeight = baseSize * 0.052;
+    final padding = LayoutHelper.padding(baseSize);
+
     int rowCount = 1; // timestamp
     if (data.hasBarcode) rowCount++;
     if (data.hasOperator) rowCount++;
     rowCount++; // location
-    final stripHeight = rowCount * rowHeight + baseSize * 0.04;
-    return WatermarkCanvasSize(photoWidth, photoHeight + stripHeight);
+
+    final rowH = baseSize * 0.052;
+    final fontSz = LayoutHelper.fontSize(baseSize, ratio: 0.026);
+    final lineH = LayoutHelper.lineHeight(baseSize, ratio: 0.052);
+    final stripHeight = rowCount * rowH + baseSize * 0.04;
+
+    final canvasW = photoWidth;
+    final canvasH = photoHeight + stripHeight;
+
+    final logoMaxSize = stripHeight * 0.55;
+    final rightReserved = logoMaxSize + padding;
+    final textW = canvasW - padding * 2 - rightReserved;
+
+    return LayoutMetrics(
+      baseSize: baseSize,
+      padding: padding,
+      fontSize: fontSz,
+      lineHeight: lineH,
+      stripHeight: stripHeight,
+      logoMaxSize: logoMaxSize,
+      textRowCount: rowCount,
+      canvasWidth: canvasW,
+      canvasHeight: canvasH,
+      textAvailableWidth: textW,
+    );
   }
 
   @override
   void paintOnCanvas({
-    required Canvas canvas,
-    required WatermarkCanvasSize canvasSize,
+    required ui.Canvas canvas,
+    required LayoutMetrics metrics,
     required ui.Image srcImage,
     required double photoWidth,
     required double photoHeight,
     required ui.Image? logoImage,
     required WatermarkData data,
   }) {
-    final canvasWidth = canvasSize.width;
-    final canvasHeight = canvasSize.height;
-    final baseSize = LayoutHelper.getBaseSize(photoWidth, photoHeight);
-    final stripHeight = canvasHeight - photoHeight;
+    final canvasWidth = metrics.canvasWidth;
+    final canvasHeight = metrics.canvasHeight;
+    final stripHeight = metrics.stripHeight;
     final stripTop = photoHeight;
-    final padding = LayoutHelper.padding(baseSize);
+    final padding = metrics.padding;
 
-    // Foto
     canvas.drawImageRect(
       srcImage,
       Rect.fromLTWH(0, 0, photoWidth, photoHeight),
@@ -59,46 +83,39 @@ class ProfessionalLayout implements WatermarkLayout {
         ..isAntiAlias = true,
     );
 
-    // Strip putih
     canvas.drawRect(
       Rect.fromLTWH(0, stripTop, canvasWidth, stripHeight),
       Paint()..color = Colors.white,
     );
-    // Garis pemisah tebal
     canvas.drawLine(
       Offset(0, stripTop),
       Offset(canvasWidth, stripTop),
       Paint()
         ..color = const Color(0xFF1A2A3A)
-        ..strokeWidth = math.max(2.0, baseSize * 0.003),
+        ..strokeWidth = math.max(2.0, metrics.baseSize * 0.003),
     );
 
-    // Logo reserve (kanan)
-    final logoReserve = logoImage != null ? baseSize * 0.20 : 0.0;
-
-    // Tabel dua kolom
+    final logoReserve = logoImage != null ? metrics.logoMaxSize : 0.0;
     _paintTwoColumnTable(
       canvas: canvas,
       data: data,
       x: padding,
       y: stripTop + padding * 0.6,
       maxWidth: canvasWidth - padding * 2 - logoReserve,
-      baseSize: baseSize,
+      metrics: metrics,
     );
 
-    // Manual badge
     if (data.isManual) {
       _paintManualBadge(
         canvas: canvas,
-        x: canvasWidth - padding - logoReserve - baseSize * 0.13,
+        x: canvasWidth - padding - logoReserve - metrics.baseSize * 0.13,
         y: stripTop + padding * 0.6,
-        baseSize: baseSize,
+        baseSize: metrics.baseSize,
       );
     }
 
-    // Logo
     if (logoImage != null) {
-      final logoMaxH = stripHeight * 0.55;
+      final logoMaxH = metrics.logoMaxSize;
       final logoW = logoImage.width.toDouble();
       final logoH = logoImage.height.toDouble();
       final scale = logoMaxH / logoH;
@@ -124,7 +141,15 @@ class ProfessionalLayout implements WatermarkLayout {
     required WatermarkData previewData,
     required bool hasLogo,
     required String? logoPath,
+    double previewWidth = 300,
+    double previewHeight = 400,
   }) {
+    final metrics = computeMetrics(
+      photoWidth: previewWidth,
+      photoHeight: previewHeight,
+      data: previewData,
+    );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -147,8 +172,8 @@ class ProfessionalLayout implements WatermarkLayout {
               const Gap(8),
               Image.file(
                 File(logoPath),
-                width: 32,
-                height: 32,
+                width: metrics.logoMaxSize * 0.6,
+                height: metrics.logoMaxSize * 0.6,
                 fit: BoxFit.contain,
                 errorBuilder: (_, __, ___) => const Icon(Icons.business, color: Colors.white24),
               ),
@@ -176,26 +201,23 @@ class ProfessionalLayout implements WatermarkLayout {
     );
   }
 
-  // --- PRIVATE HELPERS ---
-
   void _paintTwoColumnTable({
-    required Canvas canvas,
+    required ui.Canvas canvas,
     required WatermarkData data,
     required double x,
     required double y,
     required double maxWidth,
-    required double baseSize,
+    required LayoutMetrics metrics,
   }) {
-    final fontSz = LayoutHelper.fontSize(baseSize, ratio: 0.026);
-    final lineH = LayoutHelper.lineHeight(baseSize, ratio: 0.052);
+    final fontSz = metrics.fontSize;
+    final lineH = metrics.lineHeight;
     final col1Width = maxWidth * 0.30;
     final col2Width = maxWidth * 0.65;
     double currentY = y;
 
     void drawRow(String label, String value, {bool emphasize = false}) {
-      // Label (rata kanan)
       TextHelper.paintText(
-        canvas,
+        canvas: canvas,
         text: label,
         x: x,
         y: currentY,
@@ -205,9 +227,8 @@ class ProfessionalLayout implements WatermarkLayout {
         fontWeight: FontWeight.w600,
         textAlign: TextAlign.right,
       );
-      // Value (rata kiri)
       TextHelper.paintText(
-        canvas,
+        canvas: canvas,
         text: value,
         x: x + col1Width + 8,
         y: currentY,
@@ -230,7 +251,7 @@ class ProfessionalLayout implements WatermarkLayout {
   }
 
   void _paintManualBadge({
-    required Canvas canvas,
+    required ui.Canvas canvas,
     required double x,
     required double y,
     required double baseSize,
@@ -241,8 +262,8 @@ class ProfessionalLayout implements WatermarkLayout {
       Rect.fromLTWH(x, y, badgeW, badgeH),
       Paint()..color = const Color(0xFF1A2A3A),
     );
-    final badgeTp = TextHelper.paintText(
-      canvas,
+    TextHelper.paintText(
+      canvas: canvas,
       text: 'INPUT MANUAL',
       x: x + 4,
       y: y + 2,
@@ -254,13 +275,10 @@ class ProfessionalLayout implements WatermarkLayout {
   }
 }
 
-// --- Preview row untuk professional ---
 class _PreviewRow extends StatelessWidget {
   final String label;
   final String value;
-
   const _PreviewRow({required this.label, required this.value});
-
   @override
   Widget build(BuildContext context) {
     return Padding(
