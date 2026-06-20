@@ -1,9 +1,10 @@
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:gap/gap.dart';
 import 'base_layout.dart';
+import 'layout_metrics.dart';
 import '../models/watermark_data.dart';
 import '../models/watermark_style.dart';
 import '../helpers/layout_helper.dart';
@@ -18,7 +19,7 @@ class PolaroidLayout implements WatermarkLayout {
   WatermarkStyle get style => WatermarkStyle.polaroid;
 
   @override
-  WatermarkCanvasSize computeCanvasSize({
+  LayoutMetrics computeMetrics({
     required double photoWidth,
     required double photoHeight,
     required WatermarkData data,
@@ -26,39 +27,61 @@ class PolaroidLayout implements WatermarkLayout {
     final baseSize = LayoutHelper.getBaseSize(photoWidth, photoHeight);
     final padding = LayoutHelper.padding(baseSize);
     final rowCount = _countTextLines(data);
+    final lineH = LayoutHelper.lineHeight(baseSize, ratio: 0.048);
+    final fontSz = LayoutHelper.fontSize(baseSize, ratio: 0.032);
+
     final bottomStripHeight = math.max(
       photoHeight * 0.22,
-      rowCount * LayoutHelper.lineHeight(baseSize) + padding * 2.5,
+      rowCount * lineH + padding * 2.5,
     );
-    return WatermarkCanvasSize(
-      photoWidth + padding * 2,
-      photoHeight + padding + bottomStripHeight,
+
+    final canvasW = photoWidth + padding * 2;
+    final canvasH = photoHeight + padding + bottomStripHeight;
+
+    final logoMaxH = bottomStripHeight * 0.45;
+    final isManual = data.isManual;
+    final rightReserved = (isManual ? baseSize * 0.10 : 0.0) +
+        (bottomStripHeight * 0.45); // reserve untuk logo
+    final textW = canvasW - padding * 2 - 12 - rightReserved;
+
+    return LayoutMetrics(
+      baseSize: baseSize,
+      padding: padding,
+      fontSize: fontSz,
+      lineHeight: lineH,
+      stripHeight: bottomStripHeight,
+      logoMaxSize: logoMaxH,
+      textRowCount: rowCount,
+      canvasWidth: canvasW,
+      canvasHeight: canvasH,
+      textAvailableWidth: textW,
     );
   }
 
   @override
   void paintOnCanvas({
-    required Canvas canvas,
-    required WatermarkCanvasSize canvasSize,
+    required ui.Canvas canvas,
+    required LayoutMetrics metrics,
     required ui.Image srcImage,
     required double photoWidth,
     required double photoHeight,
     required ui.Image? logoImage,
     required WatermarkData data,
   }) {
-    final canvasWidth = canvasSize.width;
-    final canvasHeight = canvasSize.height;
-    final baseSize = LayoutHelper.getBaseSize(photoWidth, photoHeight);
-    final padding = LayoutHelper.padding(baseSize);
-    final bottomStripHeight = canvasHeight - photoHeight - padding;
+    final canvasWidth = metrics.canvasWidth;
+    final canvasHeight = metrics.canvasHeight;
+    final padding = metrics.padding;
+    final baseSize = metrics.baseSize;
+    final stripHeight = metrics.stripHeight;
+    final stripTop = photoHeight + padding;
 
-    // --- Background kertas ---
+    // Background kertas
     canvas.drawRect(
       Rect.fromLTWH(0, 0, canvasWidth, canvasHeight),
       Paint()..color = const Color(0xFFF5F5F0),
     );
 
-    // --- Shadow ---
+    // Shadow
     final shadowPath = Path()
       ..addRRect(RRect.fromRectAndRadius(
         Rect.fromLTWH(0, 0, canvasWidth, canvasHeight),
@@ -66,7 +89,7 @@ class PolaroidLayout implements WatermarkLayout {
       ));
     canvas.drawShadow(shadowPath, Colors.black.withOpacity(0.3), 14, true);
 
-    // --- Area foto ---
+    // Area foto
     final photoRect = Rect.fromLTWH(padding, padding, photoWidth, photoHeight);
     canvas.drawRect(photoRect, Paint()..color = const Color(0xFF111111));
     canvas.drawRect(
@@ -85,9 +108,7 @@ class PolaroidLayout implements WatermarkLayout {
         ..isAntiAlias = true,
     );
 
-    // --- Strip bawah ---
-    final stripTop = photoHeight + padding;
-    // Garis pemisah (opsional)
+    // Garis pemisah strip
     canvas.drawLine(
       Offset(padding, stripTop),
       Offset(canvasWidth - padding, stripTop),
@@ -96,14 +117,13 @@ class PolaroidLayout implements WatermarkLayout {
         ..strokeWidth = 1,
     );
 
-    // --- Tabel info ---
+    // Tabel info
     final isManual = data.isManual;
     final hasLogo = logoImage != null;
     final rightReserved = (isManual ? baseSize * 0.10 : 0.0) +
         (hasLogo ? baseSize * 0.15 : 0.0);
-
     final tableX = padding + 6;
-    final tableY = stripTop + (bottomStripHeight * 0.06);
+    final tableY = stripTop + (stripHeight * 0.06);
     final tableWidth = canvasWidth - padding * 2 - 12 - rightReserved;
 
     _paintInfoTable(
@@ -113,21 +133,23 @@ class PolaroidLayout implements WatermarkLayout {
       y: tableY,
       maxWidth: tableWidth,
       baseSize: baseSize,
+      fontSize: metrics.fontSize,
+      lineHeight: metrics.lineHeight,
     );
 
-    // --- Manual badge ---
+    // Manual badge
     if (isManual) {
       _paintManualBadge(
         canvas: canvas,
         x: canvasWidth - padding - baseSize * 0.09 - 6,
-        y: stripTop + (bottomStripHeight * 0.10),
+        y: stripTop + (stripHeight * 0.10),
         baseSize: baseSize,
       );
     }
 
-    // --- Logo ---
+    // Logo
     if (hasLogo) {
-      final logoMaxH = bottomStripHeight * 0.45;
+      final logoMaxH = metrics.logoMaxSize;
       final logoW = logoImage!.width.toDouble();
       final logoH = logoImage.height.toDouble();
       final scale = logoMaxH / logoH;
@@ -135,14 +157,14 @@ class PolaroidLayout implements WatermarkLayout {
       final drawH = logoH * scale;
       final logoX = canvasWidth - padding - drawW - 6;
       final logoY = isManual
-          ? stripTop + (bottomStripHeight * 0.10) + (baseSize * 0.028) + 4
-          : stripTop + (bottomStripHeight - drawH) / 2;
+          ? stripTop + (stripHeight * 0.10) + (baseSize * 0.028) + 4
+          : stripTop + (stripHeight - drawH) / 2;
 
       LogoWidget.paint(
         canvas: canvas,
         logoImage: logoImage,
         x: logoX,
-        y: logoY.clamp(stripTop, stripTop + bottomStripHeight - drawH),
+        y: logoY.clamp(stripTop, stripTop + stripHeight - drawH),
         maxWidth: drawW,
         maxHeight: drawH,
         opacity: 0.25,
@@ -156,7 +178,15 @@ class PolaroidLayout implements WatermarkLayout {
     required WatermarkData previewData,
     required bool hasLogo,
     required String? logoPath,
+    double previewWidth = 300,
+    double previewHeight = 400,
   }) {
+    final metrics = computeMetrics(
+      photoWidth: previewWidth,
+      photoHeight: previewHeight,
+      data: previewData,
+    );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -203,8 +233,8 @@ class PolaroidLayout implements WatermarkLayout {
                 ),
                 child: Image.file(
                   File(logoPath),
-                  width: 40,
-                  height: 40,
+                  width: metrics.logoMaxSize,
+                  height: metrics.logoMaxSize,
                   fit: BoxFit.contain,
                   errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, color: Colors.white24),
                 ),
@@ -212,8 +242,8 @@ class PolaroidLayout implements WatermarkLayout {
             ] else ...[
               const Gap(8),
               Container(
-                width: 40,
-                height: 40,
+                width: metrics.logoMaxSize,
+                height: metrics.logoMaxSize,
                 decoration: BoxDecoration(
                   color: Colors.white10,
                   borderRadius: BorderRadius.circular(6),
@@ -245,51 +275,49 @@ class PolaroidLayout implements WatermarkLayout {
     );
   }
 
-  // --- PRIVATE HELPERS ---
-
   int _countTextLines(WatermarkData data) {
     int lines = 0;
     if (data.hasBarcode) lines++;
     if (data.hasOperator) lines++;
     lines++; // waktu
     lines++; // lokasi
-    return lines + 1; // +1 padding ekstra
+    return lines + 1;
   }
 
   void _paintInfoTable({
-    required Canvas canvas,
+    required ui.Canvas canvas,
     required WatermarkData data,
     required double x,
     required double y,
     required double maxWidth,
     required double baseSize,
+    required double fontSize,
+    required double lineHeight,
   }) {
-    final fontSz = LayoutHelper.fontSize(baseSize, ratio: 0.032);
-    final lineH = LayoutHelper.lineHeight(baseSize, ratio: 0.048);
     double currentY = y;
 
     void drawRow(String label, String value, {bool emphasize = false}) {
-      final labelTp = TextHelper.paintText(
-        canvas,
+      TextHelper.paintText(
+        canvas: canvas,
         text: label.toUpperCase(),
         x: x,
         y: currentY,
         maxWidth: maxWidth * 0.25,
         color: const Color(0xFF666666),
-        fontSize: fontSz * 0.85,
+        fontSize: fontSize * 0.85,
         fontWeight: FontWeight.w700,
       );
       TextHelper.paintText(
-        canvas,
+        canvas: canvas,
         text: value,
         x: x + maxWidth * 0.25,
         y: currentY,
         maxWidth: maxWidth * 0.75,
         color: const Color(0xFF2C2C2C),
-        fontSize: fontSz,
+        fontSize: fontSize,
         fontWeight: emphasize ? FontWeight.w800 : FontWeight.w600,
       );
-      currentY += lineH;
+      currentY += lineHeight;
     }
 
     if (data.hasBarcode) {
@@ -303,7 +331,7 @@ class PolaroidLayout implements WatermarkLayout {
   }
 
   void _paintManualBadge({
-    required Canvas canvas,
+    required ui.Canvas canvas,
     required double x,
     required double y,
     required double baseSize,
@@ -317,8 +345,8 @@ class PolaroidLayout implements WatermarkLayout {
       ),
       Paint()..color = const Color(0xFFE67E22),
     );
-    final badgeTp = TextHelper.paintText(
-      canvas,
+    TextHelper.paintText(
+      canvas: canvas,
       text: 'MANUAL',
       x: x + 4,
       y: y + 2,
@@ -330,18 +358,11 @@ class PolaroidLayout implements WatermarkLayout {
   }
 }
 
-// --- Preview line widget ---
 class _PreviewLine extends StatelessWidget {
   final String text;
   final Color color;
   final IconData icon;
-
-  const _PreviewLine({
-    required this.text,
-    required this.color,
-    required this.icon,
-  });
-
+  const _PreviewLine({required this.text, required this.color, required this.icon});
   @override
   Widget build(BuildContext context) {
     return Row(
@@ -351,11 +372,7 @@ class _PreviewLine extends StatelessWidget {
         Expanded(
           child: Text(
             text,
-            style: TextStyle(
-              color: color,
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
-            ),
+            style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w600),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
