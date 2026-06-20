@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace "com.termulscan.whscanner"
-    compileSdk = 34
+    compileSdk = 35   // ✅ 34 → 35
 
     defaultConfig {
         applicationId "com.termulscan.whscanner"
