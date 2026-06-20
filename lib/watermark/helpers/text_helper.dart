@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-// Tidak perlu import dart:ui, karena TextPainter tersedia di material.
 
 class TextHelper {
   static double paintText({
