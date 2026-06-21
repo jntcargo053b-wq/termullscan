@@ -2,25 +2,15 @@ import 'package:flutter/material.dart';
 
 /// Enum untuk posisi watermark
 enum WatermarkStyle {
-  /// Posisi kiri bawah (default)
   standard,
-  
-  /// Posisi kiri atas
   topLeft,
-  
-  /// Posisi kanan atas
   topRight,
-  
-  /// Posisi kiri bawah
   bottomLeft,
-  
-  /// Posisi kanan bawah
   bottomRight,
 }
 
 /// Extension untuk mendapatkan properti dari WatermarkStyle
 extension WatermarkStyleExtension on WatermarkStyle {
-  /// Ukuran font default berdasarkan style
   double get fontSize {
     switch (this) {
       case WatermarkStyle.standard:
@@ -36,7 +26,6 @@ extension WatermarkStyleExtension on WatermarkStyle {
     }
   }
 
-  /// Alignment dari style
   Alignment get alignment {
     switch (this) {
       case WatermarkStyle.standard:
@@ -52,7 +41,6 @@ extension WatermarkStyleExtension on WatermarkStyle {
     }
   }
 
-  /// Nama display untuk UI
   String get displayName {
     switch (this) {
       case WatermarkStyle.standard:
@@ -68,7 +56,6 @@ extension WatermarkStyleExtension on WatermarkStyle {
     }
   }
 
-  /// Icon untuk UI
   IconData get icon {
     switch (this) {
       case WatermarkStyle.standard:
