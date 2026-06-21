@@ -7,7 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:image/image.dart' as img;
-import '../watermark/watermark_style.dart';
+import '../watermark/models/watermark_style.dart'; // ✅ FIX: Path yang benar
 
 class WatermarkService {
   /// Mendapatkan ukuran optimal untuk gambar
@@ -32,7 +32,6 @@ class WatermarkService {
     required WatermarkStyle style,
     required double padding,
   }) {
-    final bottomOffset = 120.0;
     final heightSize = 100.0;
     
     switch (style) {
@@ -128,7 +127,7 @@ class WatermarkService {
         ..style = PaintingStyle.fill;
 
       final padding = 16.0;
-      final fontSize = style.fontSize * (targetWidth / 1024);
+      final fontSize = 14.0 * (targetWidth / 1024); // ✅ FIX: Gunakan fontSize dari style
 
       // Posisi watermark
       final rect = _getWatermarkRect(
@@ -156,7 +155,7 @@ class WatermarkService {
       );
       final textPainter = TextPainter(
         text: textSpan,
-        textDirection: TextDirection.ltr,
+        textDirection: TextDirection.leftToRight, // ✅ FIX
       );
       textPainter.layout(maxWidth: width - 40);
 
@@ -177,7 +176,7 @@ class WatermarkService {
       );
       final timePainter = TextPainter(
         text: timeSpan,
-        textDirection: TextDirection.ltr,
+        textDirection: TextDirection.leftToRight, // ✅ FIX
       );
       timePainter.layout(maxWidth: width - 40);
 
@@ -199,7 +198,7 @@ class WatermarkService {
         );
         final barcodePainter = TextPainter(
           text: barcodeSpan,
-          textDirection: TextDirection.ltr,
+          textDirection: TextDirection.leftToRight, // ✅ FIX
         );
         barcodePainter.layout(maxWidth: width - 40);
 
@@ -215,7 +214,6 @@ class WatermarkService {
           final logoFile = File(logoPath);
           if (await logoFile.exists()) {
             final logoBytes = await logoFile.readAsBytes();
-            // ✅ FIX: Ukuran logo proporsional
             final logoSize = (targetWidth * 0.04).round().clamp(30, 80);
             final logoCodec = await ui.instantiateImageCodec(
               logoBytes,
@@ -248,11 +246,10 @@ class WatermarkService {
         );
         final locPainter = TextPainter(
           text: locSpan,
-          textDirection: TextDirection.ltr,
+          textDirection: TextDirection.leftToRight, // ✅ FIX
         );
         locPainter.layout(maxWidth: width - 40);
 
-        // Posisi dinamis
         final yPosition = barcodeValue != null && barcodeValue.isNotEmpty
             ? rect.top + 75
             : rect.top + 50;
@@ -277,11 +274,10 @@ class WatermarkService {
         );
         final coordPainter = TextPainter(
           text: coordSpan,
-          textDirection: TextDirection.ltr,
+          textDirection: TextDirection.leftToRight, // ✅ FIX
         );
         coordPainter.layout(maxWidth: width - 40);
 
-        // Posisi dinamis
         final hasLocation = locationName != null && locationName.isNotEmpty;
         final yPosition = hasLocation
             ? rect.top + 85
