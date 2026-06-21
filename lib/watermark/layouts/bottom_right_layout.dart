@@ -4,7 +4,7 @@ import 'package:gap/gap.dart';
 import '../models/watermark_data.dart';
 import '../models/watermark_style.dart';
 import '../watermark_factory.dart';
-
+import 'dart:io';
 class BottomRightLayout extends WatermarkLayout {
   const BottomRightLayout();
 
