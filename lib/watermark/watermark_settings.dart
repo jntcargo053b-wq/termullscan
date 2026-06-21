@@ -9,7 +9,7 @@ class WatermarkSettings {
   static const String _keyHasLogo = 'watermark_has_logo';
 
   String operatorName = '';
-  WatermarkStyle style = WatermarkStyle.standard;
+  WatermarkStyle style = WatermarkStyle.standard; // ✅ Enum tersedia
   String? logoPath;
   bool hasLogo = false;
 
