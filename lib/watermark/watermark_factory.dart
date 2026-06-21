@@ -11,31 +11,6 @@ import 'layouts/top_right_layout.dart';
 import 'layouts/bottom_left_layout.dart';
 import 'layouts/bottom_right_layout.dart';
 
-class WatermarkFactory {
-  static WatermarkLayout create(WatermarkStyle style) {
-    switch (style) {
-      case WatermarkStyle.standard:
-        return const StandardLayout();
-      case WatermarkStyle.polaroid:
-        return const PolaroidLayout();
-      case WatermarkStyle.minimal:
-        return const MinimalLayout();
-      case WatermarkStyle.professional:
-        return const ProfessionalLayout();
-      case WatermarkStyle.stamp:
-        return const StampLayout();
-      case WatermarkStyle.topLeft:
-        return const TopLeftLayout();
-      case WatermarkStyle.topRight:
-        return const TopRightLayout();
-      case WatermarkStyle.bottomLeft:
-        return const BottomLeftLayout();
-      case WatermarkStyle.bottomRight:
-        return const BottomRightLayout();
-    }
-  }
-}
-
 abstract class WatermarkLayout {
   const WatermarkLayout();
   String get displayName;
@@ -44,4 +19,29 @@ abstract class WatermarkLayout {
     required bool hasLogo,
     required String? logoPath,
   });
+}
+
+class WatermarkFactory {
+  static WatermarkLayout create(WatermarkStyle style) {
+    switch (style) {
+      case WatermarkStyle.standard:
+        return StandardLayout(); // ✅ HAPUS const
+      case WatermarkStyle.polaroid:
+        return PolaroidLayout(); // ✅ HAPUS const
+      case WatermarkStyle.minimal:
+        return MinimalLayout(); // ✅ HAPUS const
+      case WatermarkStyle.professional:
+        return ProfessionalLayout(); // ✅ HAPUS const
+      case WatermarkStyle.stamp:
+        return StampLayout(); // ✅ HAPUS const
+      case WatermarkStyle.topLeft:
+        return TopLeftLayout(); // ✅ HAPUS const
+      case WatermarkStyle.topRight:
+        return TopRightLayout(); // ✅ HAPUS const
+      case WatermarkStyle.bottomLeft:
+        return BottomLeftLayout(); // ✅ HAPUS const
+      case WatermarkStyle.bottomRight:
+        return BottomRightLayout(); // ✅ HAPUS const
+    }
+  }
 }
