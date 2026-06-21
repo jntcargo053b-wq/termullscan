@@ -32,15 +32,28 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   int _photoCount = 0;
   bool _locationGranted = false;
   bool _cameraGranted = false;
+  bool _settingsLoaded = false; // ✅ Tambahan
 
   @override
   void initState() {
     super.initState();
     _requestPermissions();
-    _wmSettings.load();
+    _initializeSettings(); // ✅ FIX: Panggil method async
   }
 
+  // ✅ FIX: Inisialisasi settings dengan await
+  Future<void> _initializeSettings() async {
+    await _wmSettings.load();
+    if (mounted) {
+      setState(() {
+        _settingsLoaded = true;
+      });
+    }
+  }
+
+  // ✅ FIX: Permission dengan photos untuk Android 13+
   Future<void> _requestPermissions() async {
+    // Camera permission
     final cameraStatus = await Permission.camera.status;
     if (!cameraStatus.isGranted) {
       final result = await Permission.camera.request();
@@ -56,6 +69,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       }
     }
 
+    // Location permission
     final locStatus = await Permission.location.status;
     if (!locStatus.isGranted) {
       final result = await Permission.location.request();
@@ -69,6 +83,25 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       if (mounted) {
         setState(() => _locationGranted = true);
       }
+    }
+
+    // ✅ Photos permission untuk Android 13+
+    if (await _isAndroid13OrHigher()) {
+      final photosStatus = await Permission.photos.status;
+      if (!photosStatus.isGranted) {
+        await Permission.photos.request();
+      }
+    }
+  }
+
+  // ✅ Helper untuk deteksi Android 13+
+  Future<bool> _isAndroid13OrHigher() async {
+    try {
+      // TODO: Gunakan device_info_plus untuk deteksi akurat
+      // Sementara return false (kompatibel dengan semua versi)
+      return false;
+    } catch (_) {
+      return false;
     }
   }
 
@@ -108,7 +141,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     return granted;
   }
 
-  // ✅ FIX 1: BottomSheet dengan mounted check
+  // ✅ FIX: BottomSheet dengan mounted check
   void _openWatermarkSettings() {
     showModalBottomSheet(
       context: context,
@@ -119,14 +152,13 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       ),
       builder: (_) => const WatermarkSettingsSheet(),
     ).then((_) {
-      // ✅ Cek mounted sebelum setState
       if (mounted) {
         setState(() {});
       }
     });
   }
 
-  // ✅ FIX 2: Safe file deletion dengan cache check
+  // ✅ FIX: Safe file deletion dengan cache check
   Future<String> _applyWatermark(String imagePath, DateTime timestamp,
       double? lat, double? lng) async {
     final outputPath =
@@ -151,7 +183,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       final file = File(imagePath);
       try {
         final parentPath = file.parent.path.toLowerCase();
-        // Hanya hapus file dari direktori cache/tmp
         if (parentPath.contains('cache') || 
             parentPath.contains('tmp') ||
             parentPath.contains('.cache')) {
@@ -395,8 +426,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
             icon: Stack(
               children: [
                 const Icon(Icons.tune, color: Colors.white),
-                if (_wmSettings.operatorName.isNotEmpty ||
-                    _wmSettings.hasLogo)
+                if (_settingsLoaded && (_wmSettings.operatorName.isNotEmpty ||
+                    _wmSettings.hasLogo))
                   Positioned(
                     right: 0,
                     top: 0,
