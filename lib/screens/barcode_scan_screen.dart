@@ -11,7 +11,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
 import '../services/location_service.dart';
-import '../services/watermark_service.dart';
+import '../watermark/watermark_renderer.dart';
 import '../watermark/watermark_settings.dart';
 import 'watermark_settings_sheet.dart';
 
@@ -34,7 +34,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   final Service _loc = Service();
   final ImagePicker _picker = ImagePicker();
   final WatermarkSettings _wmSettings = WatermarkSettings();
-  final WatermarkService _watermarkService = WatermarkService();
 
   @override
   void initState() {
@@ -440,7 +439,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     final outputPath =
         '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.png';
 
-    final result = await _watermarkService.addWatermark(
+    final result = await WatermarkRenderer.render(
       imagePath: imagePath,
       outputPath: outputPath,
       operatorName: _wmSettings.operatorName,
