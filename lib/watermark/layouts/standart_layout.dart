@@ -66,14 +66,6 @@ class StandardLayout extends WatermarkLayout {
                     fontSize: 10,
                   ),
                 ),
-                if (previewData.locationName != null)
-                  Text(
-                    previewData.locationName!,
-                    style: const TextStyle(
-                      color: Colors.white54,
-                      fontSize: 9,
-                    ),
-                  ),
               ],
             ),
           ),
