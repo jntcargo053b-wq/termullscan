@@ -9,7 +9,7 @@ class WatermarkSettings {
   static const String _keyHasLogo = 'watermark_has_logo';
 
   String operatorName = '';
-  WatermarkStyle style = WatermarkStyle.standard; // ✅ Enum tersedia
+  WatermarkStyle style = WatermarkStyle.standard;
   String? logoPath;
   bool hasLogo = false;
 
@@ -22,16 +22,17 @@ class WatermarkSettings {
       final prefs = await SharedPreferences.getInstance();
       operatorName = prefs.getString(_keyOperatorName) ?? '';
       final styleIndex = prefs.getInt(_keyStyle) ?? 0;
-      style = WatermarkStyle.values[styleIndex.clamp(0, WatermarkStyle.values.length - 1)];
+      final values = WatermarkStyle.values;
+      if (styleIndex >= 0 && styleIndex < values.length) {
+        style = values[styleIndex];
+      } else {
+        style = WatermarkStyle.standard;
+      }
       logoPath = prefs.getString(_keyLogoPath);
       hasLogo = prefs.getBool(_keyHasLogo) ?? false;
-      if (kDebugMode) {
-        debugPrint('✅ Watermark settings loaded: operator=$operatorName, hasLogo=$hasLogo');
-      }
+      debugPrint('✅ Watermark settings loaded');
     } catch (e) {
-      if (kDebugMode) {
-        debugPrint('⚠️ Error loading watermark settings: $e');
-      }
+      debugPrint('⚠️ Error loading watermark settings: $e');
     }
   }
 
@@ -46,13 +47,9 @@ class WatermarkSettings {
         await prefs.remove(_keyLogoPath);
       }
       await prefs.setBool(_keyHasLogo, hasLogo);
-      if (kDebugMode) {
-        debugPrint('✅ Watermark settings saved');
-      }
+      debugPrint('✅ Watermark settings saved');
     } catch (e) {
-      if (kDebugMode) {
-        debugPrint('⚠️ Error saving watermark settings: $e');
-      }
+      debugPrint('⚠️ Error saving watermark settings: $e');
     }
   }
 
