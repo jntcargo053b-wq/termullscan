@@ -16,6 +16,8 @@ class BottomRightLayout extends WatermarkLayout {
     required WatermarkData previewData,
     required bool hasLogo,
     required String? logoPath,
+    double previewWidth = 300,
+    double previewHeight = 400,
   }) {
     return Container(
       width: double.infinity,
