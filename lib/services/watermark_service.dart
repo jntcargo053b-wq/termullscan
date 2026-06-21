@@ -1,13 +1,16 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:image/image.dart' as img;
 import '../watermark/watermark_style.dart';
 
 class WatermarkService {
-  /// Tambahkan fungsi helper untuk mendapatkan ukuran optimal
+  /// Mendapatkan ukuran optimal untuk gambar
   Future<int> _getOptimalTargetWidth(Uint8List imageBytes) async {
     try {
       final codec = await ui.instantiateImageCodec(imageBytes);
@@ -15,14 +18,64 @@ class WatermarkService {
       final originalWidth = frame.image.width;
       
       // Gunakan ukuran asli atau maksimal 1024, mana yang lebih kecil
-      // ✅ FIX: Dari 2048 menjadi dinamis
       return originalWidth <= 1024 ? originalWidth : 1024;
     } catch (e) {
-      debugPrint('Error getting image size: $e');
+      debugPrint('⚠️ Error getting image size: $e');
       return 1024; // Fallback aman
     }
   }
 
+  /// Mendapatkan posisi watermark berdasarkan style
+  Rect _getWatermarkRect({
+    required double width,
+    required double height,
+    required WatermarkStyle style,
+    required double padding,
+  }) {
+    final bottomOffset = 120.0;
+    final heightSize = 100.0;
+    
+    switch (style) {
+      case WatermarkStyle.topLeft:
+        return Rect.fromLTWH(
+          padding,
+          padding,
+          width - (padding * 2),
+          heightSize,
+        );
+      case WatermarkStyle.topRight:
+        return Rect.fromLTWH(
+          padding,
+          padding,
+          width - (padding * 2),
+          heightSize,
+        );
+      case WatermarkStyle.bottomLeft:
+        return Rect.fromLTWH(
+          padding,
+          height - heightSize - padding,
+          width - (padding * 2),
+          heightSize,
+        );
+      case WatermarkStyle.bottomRight:
+        return Rect.fromLTWH(
+          padding,
+          height - heightSize - padding,
+          width - (padding * 2),
+          heightSize,
+        );
+      case WatermarkStyle.standard:
+      default:
+        return Rect.fromLTWH(
+          padding,
+          height - heightSize - padding,
+          width - (padding * 2),
+          heightSize,
+        );
+    }
+  }
+
+  /// Menambahkan watermark ke gambar
   Future<String?> addWatermark({
     required String imagePath,
     required String outputPath,
@@ -40,16 +93,16 @@ class WatermarkService {
       // Baca file gambar
       final file = File(imagePath);
       if (!await file.exists()) {
-        debugPrint('File not found: $imagePath');
+        debugPrint('❌ File not found: $imagePath');
         return null;
       }
 
       final imageBytes = await file.readAsBytes();
       
-      // ✅ FIX: Dapatkan ukuran optimal (dinamis, bukan fixed 2048)
+      // Dapatkan ukuran optimal
       final targetWidth = await _getOptimalTargetWidth(imageBytes);
       
-      // Decode gambar dengan ukuran optimal
+      // Decode gambar
       final codec = await ui.instantiateImageCodec(
         imageBytes,
         targetWidth: targetWidth,
@@ -57,7 +110,7 @@ class WatermarkService {
       final frame = await codec.getNextFrame();
       final image = frame.image;
 
-      // Buat canvas untuk watermark
+      // Buat canvas
       final recorder = ui.PictureRecorder();
       final canvas = Canvas(recorder);
       final paint = Paint();
@@ -65,7 +118,7 @@ class WatermarkService {
       // Gambar original
       canvas.drawImage(image, Offset.zero, paint);
 
-      // ── WATERMARK LOGIC ──────────────────────────────────────────────
+      // ── WATERMARK ──────────────────────────────────────────────
       final width = image.width.toDouble();
       final height = image.height.toDouble();
 
@@ -75,21 +128,22 @@ class WatermarkService {
         ..style = PaintingStyle.fill;
 
       final padding = 16.0;
-      final fontSize = style.fontSize * (targetWidth / 1024); // Scale font
+      final fontSize = style.fontSize * (targetWidth / 1024);
 
-      // Posisi watermark (bawah)
-      final rect = Rect.fromLTWH(
-        padding,
-        height - 120 - padding,
-        width - (padding * 2),
-        100,
+      // Posisi watermark
+      final rect = _getWatermarkRect(
+        width: width,
+        height: height,
+        style: style,
+        padding: padding,
       );
+      
       canvas.drawRRect(
         RRect.fromRectAndRadius(rect, const Radius.circular(8)),
         bgPaint,
       );
 
-      // ── TEXT WATERMARK ──────────────────────────────────────────────
+      // ── TEXT ──────────────────────────────────────────────────
       final textStyle = TextStyle(
         color: Colors.white,
         fontSize: fontSize,
@@ -106,13 +160,12 @@ class WatermarkService {
       );
       textPainter.layout(maxWidth: width - 40);
 
-      // Gambar teks
       textPainter.paint(
         canvas,
-        Offset(padding + 8, height - 100 - padding),
+        Offset(padding + 8, rect.top + 8),
       );
 
-      // ── TIMESTAMP ────────────────────────────────────────────────────
+      // ── TIMESTAMP ─────────────────────────────────────────────
       final timeStyle = TextStyle(
         color: Colors.white70,
         fontSize: fontSize * 0.7,
@@ -130,10 +183,10 @@ class WatermarkService {
 
       timePainter.paint(
         canvas,
-        Offset(padding + 8, height - 60 - padding),
+        Offset(padding + 8, rect.top + 30),
       );
 
-      // ── BARCODE VALUE (jika ada) ────────────────────────────────────
+      // ── BARCODE ──────────────────────────────────────────────
       if (barcodeValue != null && barcodeValue.isNotEmpty) {
         final barcodeStyle = TextStyle(
           color: Colors.amber,
@@ -152,35 +205,37 @@ class WatermarkService {
 
         barcodePainter.paint(
           canvas,
-          Offset(padding + 8, height - 80 - padding),
+          Offset(padding + 8, rect.top + 50),
         );
       }
 
-      // ── LOGO (jika ada) ──────────────────────────────────────────────
+      // ── LOGO ──────────────────────────────────────────────────
       if (logoPath != null && logoPath.isNotEmpty) {
         try {
           final logoFile = File(logoPath);
           if (await logoFile.exists()) {
             final logoBytes = await logoFile.readAsBytes();
+            // ✅ FIX: Ukuran logo proporsional
+            final logoSize = (targetWidth * 0.04).round().clamp(30, 80);
             final logoCodec = await ui.instantiateImageCodec(
               logoBytes,
-              targetWidth: 40,
+              targetWidth: logoSize,
             );
             final logoFrame = await logoCodec.getNextFrame();
             final logoImage = logoFrame.image;
 
             canvas.drawImage(
               logoImage,
-              Offset(width - 60, height - 60),
+              Offset(width - logoSize - 16, rect.top + 8),
               Paint(),
             );
           }
         } catch (e) {
-          debugPrint('Error loading logo: $e');
+          debugPrint('⚠️ Error loading logo: $e');
         }
       }
 
-      // ── LOCATION (jika ada) ──────────────────────────────────────────
+      // ── LOCATION ──────────────────────────────────────────────
       if (locationName != null && locationName.isNotEmpty) {
         final locStyle = TextStyle(
           color: Colors.white54,
@@ -197,13 +252,18 @@ class WatermarkService {
         );
         locPainter.layout(maxWidth: width - 40);
 
+        // Posisi dinamis
+        final yPosition = barcodeValue != null && barcodeValue.isNotEmpty
+            ? rect.top + 75
+            : rect.top + 50;
+            
         locPainter.paint(
           canvas,
-          Offset(padding + 8, height - 35 - padding),
+          Offset(padding + 8, yPosition),
         );
       }
 
-      // ── COORDINATES (jika ada) ──────────────────────────────────────
+      // ── COORDINATES ──────────────────────────────────────────
       if (latitude != null && longitude != null) {
         final coordText = '${latitude.toStringAsFixed(6)}, ${longitude.toStringAsFixed(6)}';
         final coordStyle = TextStyle(
@@ -221,13 +281,21 @@ class WatermarkService {
         );
         coordPainter.layout(maxWidth: width - 40);
 
+        // Posisi dinamis
+        final hasLocation = locationName != null && locationName.isNotEmpty;
+        final yPosition = hasLocation
+            ? rect.top + 85
+            : (barcodeValue != null && barcodeValue.isNotEmpty
+                ? rect.top + 75
+                : rect.top + 50);
+            
         coordPainter.paint(
           canvas,
-          Offset(padding + 8, height - 15 - padding),
+          Offset(padding + 8, yPosition),
         );
       }
 
-      // ── SAVE IMAGE ──────────────────────────────────────────────────
+      // ── SAVE ──────────────────────────────────────────────────
       final picture = recorder.endRecording();
       final outputImage = await picture.toImage(
         image.width,
@@ -238,34 +306,54 @@ class WatermarkService {
       );
       
       if (byteData == null) {
-        debugPrint('Failed to encode image');
+        debugPrint('❌ Failed to encode image');
         return null;
       }
 
       final outputFile = File(outputPath);
       await outputFile.writeAsBytes(byteData.buffer.asUint8List());
 
+      debugPrint('✅ Watermark saved: $outputPath');
       return outputPath;
+      
     } catch (e, stack) {
-      debugPrint('Error adding watermark: $e\n$stack');
+      debugPrint('❌ Error adding watermark: $e\n$stack');
       return null;
     }
   }
 
-  /// ✅ TAMBAHAN: Cleanup method untuk membersihkan file watermark sementara
+  /// Bersihkan file watermark sementara
   Future<void> cleanupTempWatermarks(Directory tempDir) async {
     try {
       if (!await tempDir.exists()) return;
       
       final files = await tempDir.list().toList();
+      int count = 0;
+      
       for (var entity in files) {
         if (entity is File && entity.path.contains('wm_')) {
           await entity.delete();
-          debugPrint('✅ Cleaned temp watermark: ${entity.path}');
+          count++;
         }
+      }
+      
+      if (count > 0) {
+        debugPrint('✅ Cleaned $count temp watermark files');
       }
     } catch (e) {
       debugPrint('⚠️ Error cleaning watermarks: $e');
+    }
+  }
+
+  /// Kompres gambar jika terlalu besar
+  Future<Uint8List> compressImage(Uint8List bytes, {int quality = 65}) async {
+    try {
+      final img.Image image = img.decodeImage(bytes)!;
+      final compressed = img.encodeJpg(image, quality: quality);
+      return Uint8List.fromList(compressed);
+    } catch (e) {
+      debugPrint('⚠️ Error compressing image: $e');
+      return bytes;
     }
   }
 }
