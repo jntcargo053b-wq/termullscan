@@ -51,6 +51,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     ].request();
   }
 
+  // ✅ FIX 1: BottomSheet dengan mounted check
   void _openWatermarkSettings() {
     showModalBottomSheet(
       context: context,
@@ -60,7 +61,12 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (_) => const WatermarkSettingsSheet(),
-    ).then((_) => setState(() {}));
+    ).then((_) {
+      // ✅ Cek mounted sebelum setState
+      if (mounted) {
+        setState(() {});
+      }
+    });
   }
 
   // ── AUTO SCAN ────────────────────────────────────────────────────────────
@@ -317,6 +323,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         _ResultState(entry: updatedEntry, photoPath: null, processing: true),
       );
 
+      // ✅ FIX 2: BottomSheet result dengan mounted check
       showModalBottomSheet(
         context: context,
         isDismissible: true,
@@ -327,6 +334,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
           onSaveToGallery: _saveToGallery,
         ),
       ).then((_) {
+        // ✅ Cek mounted sebelum setState
         if (mounted) {
           setState(() {
             _scanning = true;
@@ -400,6 +408,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     }
   }
 
+  // ✅ FIX 3: Safe file deletion dengan cache check
   Future<String> _addWatermarkInIsolate(String imagePath, ScanEntry entry) async {
     final outputPath =
         '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.png';
@@ -420,10 +429,23 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
 
     if (result == null) throw Exception('Watermark isolate gagal');
 
+    // ✅ Hanya hapus jika file adalah cache internal
     if (result != imagePath) {
+      final file = File(imagePath);
       try {
-        await File(imagePath).delete();
-      } catch (_) {}
+        final parentPath = file.parent.path.toLowerCase();
+        // Hanya hapus file dari direktori cache/tmp
+        if (parentPath.contains('cache') || 
+            parentPath.contains('tmp') ||
+            parentPath.contains('.cache')) {
+          await file.delete();
+          debugPrint('✅ Cache file deleted: $imagePath');
+        } else {
+          debugPrint('⏭️ Skipped deleting non-cache file: $imagePath');
+        }
+      } catch (e) {
+        debugPrint('⚠️ Error deleting file: $e');
+      }
     }
 
     return result;
