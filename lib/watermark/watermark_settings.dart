@@ -1,6 +1,7 @@
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'models/watermark_style.dart';
-import 'package:flutter/foundation.dart';
+
 class WatermarkSettings {
   static const String _keyOperatorName = 'watermark_operator_name';
   static const String _keyStyle = 'watermark_style';
@@ -24,9 +25,13 @@ class WatermarkSettings {
       style = WatermarkStyle.values[styleIndex.clamp(0, WatermarkStyle.values.length - 1)];
       logoPath = prefs.getString(_keyLogoPath);
       hasLogo = prefs.getBool(_keyHasLogo) ?? false;
-      debugPrint('✅ Watermark settings loaded: operator=$operatorName, hasLogo=$hasLogo');
+      if (kDebugMode) {
+        debugPrint('✅ Watermark settings loaded: operator=$operatorName, hasLogo=$hasLogo');
+      }
     } catch (e) {
-      debugPrint('⚠️ Error loading watermark settings: $e');
+      if (kDebugMode) {
+        debugPrint('⚠️ Error loading watermark settings: $e');
+      }
     }
   }
 
@@ -41,9 +46,13 @@ class WatermarkSettings {
         await prefs.remove(_keyLogoPath);
       }
       await prefs.setBool(_keyHasLogo, hasLogo);
-      debugPrint('✅ Watermark settings saved');
+      if (kDebugMode) {
+        debugPrint('✅ Watermark settings saved');
+      }
     } catch (e) {
-      debugPrint('⚠️ Error saving watermark settings: $e');
+      if (kDebugMode) {
+        debugPrint('⚠️ Error saving watermark settings: $e');
+      }
     }
   }
 
