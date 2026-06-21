@@ -3,20 +3,16 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:image/image.dart' as img;
 import '../watermark/models/watermark_style.dart';
 
 class WatermarkService {
-  /// Mendapatkan ukuran optimal untuk gambar
   Future<int> _getOptimalTargetWidth(Uint8List imageBytes) async {
     try {
       final codec = await ui.instantiateImageCodec(imageBytes);
       final frame = await codec.getNextFrame();
       final originalWidth = frame.image.width;
-      
       return originalWidth <= 1024 ? originalWidth : 1024;
     } catch (e) {
       debugPrint('⚠️ Error getting image size: $e');
@@ -24,7 +20,6 @@ class WatermarkService {
     }
   }
 
-  /// Mendapatkan posisi watermark berdasarkan style
   Rect _getWatermarkRect({
     required double width,
     required double height,
@@ -35,45 +30,19 @@ class WatermarkService {
     
     switch (style) {
       case WatermarkStyle.topLeft:
-        return Rect.fromLTWH(
-          padding,
-          padding,
-          width - (padding * 2),
-          heightSize,
-        );
+        return Rect.fromLTWH(padding, padding, width - (padding * 2), heightSize);
       case WatermarkStyle.topRight:
-        return Rect.fromLTWH(
-          padding,
-          padding,
-          width - (padding * 2),
-          heightSize,
-        );
+        return Rect.fromLTWH(padding, padding, width - (padding * 2), heightSize);
       case WatermarkStyle.bottomLeft:
-        return Rect.fromLTWH(
-          padding,
-          height - heightSize - padding,
-          width - (padding * 2),
-          heightSize,
-        );
+        return Rect.fromLTWH(padding, height - heightSize - padding, width - (padding * 2), heightSize);
       case WatermarkStyle.bottomRight:
-        return Rect.fromLTWH(
-          padding,
-          height - heightSize - padding,
-          width - (padding * 2),
-          heightSize,
-        );
+        return Rect.fromLTWH(padding, height - heightSize - padding, width - (padding * 2), heightSize);
       case WatermarkStyle.standard:
       default:
-        return Rect.fromLTWH(
-          padding,
-          height - heightSize - padding,
-          width - (padding * 2),
-          heightSize,
-        );
+        return Rect.fromLTWH(padding, height - heightSize - padding, width - (padding * 2), heightSize);
     }
   }
 
-  /// Menambahkan watermark ke gambar
   Future<String?> addWatermark({
     required String imagePath,
     required String outputPath,
@@ -97,10 +66,7 @@ class WatermarkService {
       final imageBytes = await file.readAsBytes();
       final targetWidth = await _getOptimalTargetWidth(imageBytes);
       
-      final codec = await ui.instantiateImageCodec(
-        imageBytes,
-        targetWidth: targetWidth,
-      );
+      final codec = await ui.instantiateImageCodec(imageBytes, targetWidth: targetWidth);
       final frame = await codec.getNextFrame();
       final image = frame.image;
 
@@ -137,22 +103,13 @@ class WatermarkService {
         color: Colors.white,
         fontSize: fontSize,
         fontWeight: FontWeight.w600,
-        fontFamily: 'Roboto',
-      );
-      final textSpan = TextSpan(
-        text: operatorName,
-        style: textStyle,
       );
       final textPainter = TextPainter(
-        text: textSpan,
-        textDirection: TextDirection.leftToRight,
+        text: TextSpan(text: operatorName, style: textStyle),
+        textDirection: TextDirection.ltr, // ✅ ltr (bukan leftToRight)
       );
       textPainter.layout(maxWidth: width - 40);
-
-      textPainter.paint(
-        canvas,
-        Offset(padding + 8, rect.top + 8),
-      );
+      textPainter.paint(canvas, Offset(padding + 8, rect.top + 8));
 
       // ── TIMESTAMP ─────────────────────────────────────────────
       final timeStyle = TextStyle(
@@ -160,20 +117,15 @@ class WatermarkService {
         fontSize: fontSize * 0.7,
         fontWeight: FontWeight.w400,
       );
-      final timeSpan = TextSpan(
-        text: DateFormat('dd/MM/yyyy HH:mm:ss').format(timestamp),
-        style: timeStyle,
-      );
       final timePainter = TextPainter(
-        text: timeSpan,
-        textDirection: TextDirection.leftToRight,
+        text: TextSpan(
+          text: DateFormat('dd/MM/yyyy HH:mm:ss').format(timestamp),
+          style: timeStyle,
+        ),
+        textDirection: TextDirection.ltr, // ✅ ltr
       );
       timePainter.layout(maxWidth: width - 40);
-
-      timePainter.paint(
-        canvas,
-        Offset(padding + 8, rect.top + 30),
-      );
+      timePainter.paint(canvas, Offset(padding + 8, rect.top + 30));
 
       // ── BARCODE ──────────────────────────────────────────────
       if (barcodeValue != null && barcodeValue.isNotEmpty) {
@@ -182,20 +134,12 @@ class WatermarkService {
           fontSize: fontSize * 0.8,
           fontWeight: FontWeight.w700,
         );
-        final barcodeSpan = TextSpan(
-          text: barcodeValue,
-          style: barcodeStyle,
-        );
         final barcodePainter = TextPainter(
-          text: barcodeSpan,
-          textDirection: TextDirection.leftToRight,
+          text: TextSpan(text: barcodeValue, style: barcodeStyle),
+          textDirection: TextDirection.ltr, // ✅ ltr
         );
         barcodePainter.layout(maxWidth: width - 40);
-
-        barcodePainter.paint(
-          canvas,
-          Offset(padding + 8, rect.top + 50),
-        );
+        barcodePainter.paint(canvas, Offset(padding + 8, rect.top + 50));
       }
 
       // ── LOGO ──────────────────────────────────────────────────
@@ -205,13 +149,9 @@ class WatermarkService {
           if (await logoFile.exists()) {
             final logoBytes = await logoFile.readAsBytes();
             final logoSize = (targetWidth * 0.04).round().clamp(30, 80);
-            final logoCodec = await ui.instantiateImageCodec(
-              logoBytes,
-              targetWidth: logoSize,
-            );
+            final logoCodec = await ui.instantiateImageCodec(logoBytes, targetWidth: logoSize);
             final logoFrame = await logoCodec.getNextFrame();
             final logoImage = logoFrame.image;
-
             canvas.drawImage(
               logoImage,
               Offset(width - logoSize - 16, rect.top + 8),
@@ -230,24 +170,15 @@ class WatermarkService {
           fontSize: fontSize * 0.5,
           fontWeight: FontWeight.w300,
         );
-        final locSpan = TextSpan(
-          text: locationName,
-          style: locStyle,
-        );
         final locPainter = TextPainter(
-          text: locSpan,
-          textDirection: TextDirection.leftToRight,
+          text: TextSpan(text: locationName, style: locStyle),
+          textDirection: TextDirection.ltr, // ✅ ltr
         );
         locPainter.layout(maxWidth: width - 40);
-
         final yPosition = barcodeValue != null && barcodeValue.isNotEmpty
             ? rect.top + 75
             : rect.top + 50;
-            
-        locPainter.paint(
-          canvas,
-          Offset(padding + 8, yPosition),
-        );
+        locPainter.paint(canvas, Offset(padding + 8, yPosition));
       }
 
       // ── COORDINATES ──────────────────────────────────────────
@@ -258,38 +189,24 @@ class WatermarkService {
           fontSize: fontSize * 0.4,
           fontWeight: FontWeight.w300,
         );
-        final coordSpan = TextSpan(
-          text: coordText,
-          style: coordStyle,
-        );
         final coordPainter = TextPainter(
-          text: coordSpan,
-          textDirection: TextDirection.leftToRight,
+          text: TextSpan(text: coordText, style: coordStyle),
+          textDirection: TextDirection.ltr, // ✅ ltr
         );
         coordPainter.layout(maxWidth: width - 40);
-
         final hasLocation = locationName != null && locationName.isNotEmpty;
         final yPosition = hasLocation
             ? rect.top + 85
             : (barcodeValue != null && barcodeValue.isNotEmpty
                 ? rect.top + 75
                 : rect.top + 50);
-            
-        coordPainter.paint(
-          canvas,
-          Offset(padding + 8, yPosition),
-        );
+        coordPainter.paint(canvas, Offset(padding + 8, yPosition));
       }
 
       // ── SAVE ──────────────────────────────────────────────────
       final picture = recorder.endRecording();
-      final outputImage = await picture.toImage(
-        image.width,
-        image.height,
-      );
-      final byteData = await outputImage.toByteData(
-        format: ui.ImageByteFormat.png,
-      );
+      final outputImage = await picture.toImage(image.width, image.height);
+      final byteData = await outputImage.toByteData(format: ui.ImageByteFormat.png);
       
       if (byteData == null) {
         debugPrint('❌ Failed to encode image');
@@ -308,38 +225,22 @@ class WatermarkService {
     }
   }
 
-  /// Bersihkan file watermark sementara
   Future<void> cleanupTempWatermarks(Directory tempDir) async {
     try {
       if (!await tempDir.exists()) return;
-      
       final files = await tempDir.list().toList();
       int count = 0;
-      
       for (var entity in files) {
         if (entity is File && entity.path.contains('wm_')) {
           await entity.delete();
           count++;
         }
       }
-      
       if (count > 0) {
         debugPrint('✅ Cleaned $count temp watermark files');
       }
     } catch (e) {
       debugPrint('⚠️ Error cleaning watermarks: $e');
-    }
-  }
-
-  /// Kompres gambar jika terlalu besar
-  Future<Uint8List> compressImage(Uint8List bytes, {int quality = 65}) async {
-    try {
-      final img.Image image = img.decodeImage(bytes)!;
-      final compressed = img.encodeJpg(image, quality: quality);
-      return Uint8List.fromList(compressed);
-    } catch (e) {
-      debugPrint('⚠️ Error compressing image: $e');
-      return bytes;
     }
   }
 }
