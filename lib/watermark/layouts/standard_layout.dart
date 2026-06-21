@@ -6,11 +6,11 @@ import '../models/watermark_data.dart';
 import '../models/watermark_style.dart';
 import '../watermark_factory.dart';
 
-class TopRightLayout extends WatermarkLayout {
-  const TopRightLayout();
+class StandardLayout extends WatermarkLayout {
+  const StandardLayout();
 
   @override
-  String get displayName => 'Atas Kanan';
+  String get displayName => 'Standard';
 
   @override
   Widget buildPreview({
@@ -23,8 +23,8 @@ class TopRightLayout extends WatermarkLayout {
       height: 80,
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
+          begin: Alignment.bottomCenter,
+          end: Alignment.topCenter,
           colors: [
             Colors.black.withOpacity(0.9),
             Colors.black.withOpacity(0.3),
@@ -34,9 +34,41 @@ class TopRightLayout extends WatermarkLayout {
       ),
       padding: const EdgeInsets.all(12),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.end,
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (previewData.operatorName.isNotEmpty)
+                  Text(
+                    previewData.operatorName,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                if (previewData.barcodeValue != null)
+                  Text(
+                    previewData.barcodeValue!,
+                    style: const TextStyle(
+                      color: Colors.amber,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                Text(
+                  DateFormat('dd/MM/yyyy HH:mm:ss').format(previewData.timestamp),
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 10,
+                  ),
+                ),
+              ],
+            ),
+          ),
           if (hasLogo && logoPath != null)
             ClipRRect(
               borderRadius: BorderRadius.circular(4),
@@ -48,43 +80,6 @@ class TopRightLayout extends WatermarkLayout {
                 errorBuilder: (_, __, ___) => const SizedBox.shrink(),
               ),
             ),
-          const Gap(12),
-          Expanded(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                if (previewData.operatorName.isNotEmpty)
-                  Text(
-                    previewData.operatorName,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    textAlign: TextAlign.end,
-                  ),
-                if (previewData.barcodeValue != null)
-                  Text(
-                    previewData.barcodeValue!,
-                    style: const TextStyle(
-                      color: Colors.amber,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                    ),
-                    textAlign: TextAlign.end,
-                  ),
-                Text(
-                  DateFormat('dd/MM/yyyy HH:mm:ss').format(previewData.timestamp),
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 10,
-                  ),
-                  textAlign: TextAlign.end,
-                ),
-              ],
-            ),
-          ),
         ],
       ),
     );
