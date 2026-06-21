@@ -11,7 +11,7 @@ import '../models/watermark_style.dart';
 import '../helpers/layout_helper.dart';
 import '../helpers/text_helper.dart';
 import '../widgets/logo_widget.dart';
-
+import 'dart:io';
 class PolaroidLayout extends WatermarkLayout {
   @override
   String get displayName => '📷 Polaroid';
