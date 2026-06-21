@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 
 enum WatermarkStyle {
   standard,
+  polaroid,
+  minimal,
+  professional,
+  stamp,
   topLeft,
   topRight,
   bottomLeft,
@@ -13,6 +17,14 @@ extension WatermarkStyleExtension on WatermarkStyle {
     switch (this) {
       case WatermarkStyle.standard:
         return 14.0;
+      case WatermarkStyle.polaroid:
+        return 16.0;
+      case WatermarkStyle.minimal:
+        return 12.0;
+      case WatermarkStyle.professional:
+        return 14.0;
+      case WatermarkStyle.stamp:
+        return 18.0;
       case WatermarkStyle.topLeft:
         return 12.0;
       case WatermarkStyle.topRight:
@@ -28,6 +40,14 @@ extension WatermarkStyleExtension on WatermarkStyle {
     switch (this) {
       case WatermarkStyle.standard:
         return 'Standard';
+      case WatermarkStyle.polaroid:
+        return 'Polaroid';
+      case WatermarkStyle.minimal:
+        return 'Minimal';
+      case WatermarkStyle.professional:
+        return 'Professional';
+      case WatermarkStyle.stamp:
+        return 'Stamp';
       case WatermarkStyle.topLeft:
         return 'Atas Kiri';
       case WatermarkStyle.topRight:
