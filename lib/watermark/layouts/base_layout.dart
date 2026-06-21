@@ -12,15 +12,26 @@ class WatermarkCanvasSize {
 
 /// Base class untuk semua layout.
 abstract class WatermarkLayout {
-  String get displayName;
-  WatermarkStyle get style;
+  const WatermarkLayout();
 
-  /// Hitung semua metrik layout. WAJIB diimplementasikan.
+  String get displayName;
+
+  /// Default: tidak terikat ke satu WatermarkStyle spesifik.
+  /// Layout lengkap (Polaroid/Minimal/Professional/Stamp) override ini.
+  WatermarkStyle? get style => null;
+
+  /// Hitung semua metrik layout.
+  /// Layout preview-only (Standard/TopLeft/TopRight/BottomLeft/BottomRight)
+  /// tidak perlu override ini karena tidak melakukan canvas rendering sendiri.
   LayoutMetrics computeMetrics({
     required double photoWidth,
     required double photoHeight,
     required WatermarkData data,
-  });
+  }) {
+    throw UnimplementedError(
+      '$runtimeType belum mengimplementasikan computeMetrics()',
+    );
+  }
 
   /// Hitung ukuran kanvas (implementasi DEFAULT, pakai metrics).
   /// SUBCLASS TIDAK PERLU OVERRIDE METHOD INI.
@@ -38,6 +49,7 @@ abstract class WatermarkLayout {
   }
 
   /// Gambar layout ke Canvas.
+  /// Layout preview-only tidak perlu override ini.
   void paintOnCanvas({
     required ui.Canvas canvas,
     required LayoutMetrics metrics,
@@ -46,7 +58,11 @@ abstract class WatermarkLayout {
     required double photoHeight,
     required ui.Image? logoImage,
     required WatermarkData data,
-  });
+  }) {
+    throw UnimplementedError(
+      '$runtimeType belum mengimplementasikan paintOnCanvas()',
+    );
+  }
 
   /// Widget preview untuk settings.
   Widget buildPreview({
