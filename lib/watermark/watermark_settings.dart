@@ -1,6 +1,6 @@
 import 'package:shared_preferences/shared_preferences.dart';
 import 'models/watermark_style.dart';
-
+import 'package:flutter/foundation.dart';
 class WatermarkSettings {
   static const String _keyOperatorName = 'watermark_operator_name';
   static const String _keyStyle = 'watermark_style';
