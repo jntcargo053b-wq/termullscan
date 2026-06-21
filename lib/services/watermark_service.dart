@@ -7,7 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:image/image.dart' as img;
-import '../watermark/models/watermark_style.dart'; // ✅ FIX: Path yang benar
+import '../watermark/models/watermark_style.dart';
 
 class WatermarkService {
   /// Mendapatkan ukuran optimal untuk gambar
@@ -17,11 +17,10 @@ class WatermarkService {
       final frame = await codec.getNextFrame();
       final originalWidth = frame.image.width;
       
-      // Gunakan ukuran asli atau maksimal 1024, mana yang lebih kecil
       return originalWidth <= 1024 ? originalWidth : 1024;
     } catch (e) {
       debugPrint('⚠️ Error getting image size: $e');
-      return 1024; // Fallback aman
+      return 1024;
     }
   }
 
@@ -89,7 +88,6 @@ class WatermarkService {
     String? logoPath,
   }) async {
     try {
-      // Baca file gambar
       final file = File(imagePath);
       if (!await file.exists()) {
         debugPrint('❌ File not found: $imagePath');
@@ -97,11 +95,8 @@ class WatermarkService {
       }
 
       final imageBytes = await file.readAsBytes();
-      
-      // Dapatkan ukuran optimal
       final targetWidth = await _getOptimalTargetWidth(imageBytes);
       
-      // Decode gambar
       final codec = await ui.instantiateImageCodec(
         imageBytes,
         targetWidth: targetWidth,
@@ -109,27 +104,22 @@ class WatermarkService {
       final frame = await codec.getNextFrame();
       final image = frame.image;
 
-      // Buat canvas
       final recorder = ui.PictureRecorder();
       final canvas = Canvas(recorder);
       final paint = Paint();
 
-      // Gambar original
       canvas.drawImage(image, Offset.zero, paint);
 
-      // ── WATERMARK ──────────────────────────────────────────────
       final width = image.width.toDouble();
       final height = image.height.toDouble();
 
-      // Background semi-transparan
       final bgPaint = Paint()
         ..color = const Color(0xCC000000)
         ..style = PaintingStyle.fill;
 
       final padding = 16.0;
-      final fontSize = 14.0 * (targetWidth / 1024); // ✅ FIX: Gunakan fontSize dari style
+      final fontSize = 14.0 * (targetWidth / 1024);
 
-      // Posisi watermark
       final rect = _getWatermarkRect(
         width: width,
         height: height,
@@ -155,7 +145,7 @@ class WatermarkService {
       );
       final textPainter = TextPainter(
         text: textSpan,
-        textDirection: TextDirection.leftToRight, // ✅ FIX
+        textDirection: TextDirection.ltr, // ✅ FIX: gunakan ltr
       );
       textPainter.layout(maxWidth: width - 40);
 
@@ -176,7 +166,7 @@ class WatermarkService {
       );
       final timePainter = TextPainter(
         text: timeSpan,
-        textDirection: TextDirection.leftToRight, // ✅ FIX
+        textDirection: TextDirection.ltr, // ✅ FIX
       );
       timePainter.layout(maxWidth: width - 40);
 
@@ -198,7 +188,7 @@ class WatermarkService {
         );
         final barcodePainter = TextPainter(
           text: barcodeSpan,
-          textDirection: TextDirection.leftToRight, // ✅ FIX
+          textDirection: TextDirection.ltr, // ✅ FIX
         );
         barcodePainter.layout(maxWidth: width - 40);
 
@@ -246,7 +236,7 @@ class WatermarkService {
         );
         final locPainter = TextPainter(
           text: locSpan,
-          textDirection: TextDirection.leftToRight, // ✅ FIX
+          textDirection: TextDirection.ltr, // ✅ FIX
         );
         locPainter.layout(maxWidth: width - 40);
 
@@ -274,7 +264,7 @@ class WatermarkService {
         );
         final coordPainter = TextPainter(
           text: coordSpan,
-          textDirection: TextDirection.leftToRight, // ✅ FIX
+          textDirection: TextDirection.ltr, // ✅ FIX
         );
         coordPainter.layout(maxWidth: width - 40);
 
