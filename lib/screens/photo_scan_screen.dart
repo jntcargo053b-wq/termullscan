@@ -44,23 +44,31 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     final cameraStatus = await Permission.camera.status;
     if (!cameraStatus.isGranted) {
       final result = await Permission.camera.request();
-      setState(() => _cameraGranted = result.isGranted);
+      if (mounted) {
+        setState(() => _cameraGranted = result.isGranted);
+      }
       if (!result.isGranted && mounted) {
         _showError('Izin kamera diperlukan untuk mengambil foto');
       }
     } else {
-      setState(() => _cameraGranted = true);
+      if (mounted) {
+        setState(() => _cameraGranted = true);
+      }
     }
 
     final locStatus = await Permission.location.status;
     if (!locStatus.isGranted) {
       final result = await Permission.location.request();
-      setState(() => _locationGranted = result.isGranted);
+      if (mounted) {
+        setState(() => _locationGranted = result.isGranted);
+      }
       if (!result.isGranted && mounted) {
         _showError('Izin lokasi diperlukan untuk menandai foto');
       }
     } else {
-      setState(() => _locationGranted = true);
+      if (mounted) {
+        setState(() => _locationGranted = true);
+      }
     }
   }
 
@@ -68,12 +76,16 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     if (_cameraGranted) return true;
     final status = await Permission.camera.status;
     if (status.isGranted) {
-      setState(() => _cameraGranted = true);
+      if (mounted) {
+        setState(() => _cameraGranted = true);
+      }
       return true;
     }
     final result = await Permission.camera.request();
     final granted = result.isGranted;
-    setState(() => _cameraGranted = granted);
+    if (mounted) {
+      setState(() => _cameraGranted = granted);
+    }
     if (!granted) _showError('Izin kamera ditolak');
     return granted;
   }
@@ -82,16 +94,21 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     if (_locationGranted) return true;
     final status = await Permission.location.status;
     if (status.isGranted) {
-      setState(() => _locationGranted = true);
+      if (mounted) {
+        setState(() => _locationGranted = true);
+      }
       return true;
     }
     final result = await Permission.location.request();
     final granted = result.isGranted;
-    setState(() => _locationGranted = granted);
+    if (mounted) {
+      setState(() => _locationGranted = granted);
+    }
     if (!granted) _showError('Izin lokasi ditolak, foto tetap tersimpan tanpa lokasi');
     return granted;
   }
 
+  // ✅ FIX 1: BottomSheet dengan mounted check
   void _openWatermarkSettings() {
     showModalBottomSheet(
       context: context,
@@ -101,9 +118,15 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (_) => const WatermarkSettingsSheet(),
-    ).then((_) => setState(() {}));
+    ).then((_) {
+      // ✅ Cek mounted sebelum setState
+      if (mounted) {
+        setState(() {});
+      }
+    });
   }
 
+  // ✅ FIX 2: Safe file deletion dengan cache check
   Future<String> _applyWatermark(String imagePath, DateTime timestamp,
       double? lat, double? lng) async {
     final outputPath =
@@ -123,10 +146,23 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       logoPath: _wmSettings.hasLogo ? _wmSettings.logoPath : null,
     );
 
+    // ✅ Hanya hapus jika file adalah cache internal
     if (result != null && result != imagePath) {
+      final file = File(imagePath);
       try {
-        await File(imagePath).delete();
-      } catch (_) {}
+        final parentPath = file.parent.path.toLowerCase();
+        // Hanya hapus file dari direktori cache/tmp
+        if (parentPath.contains('cache') || 
+            parentPath.contains('tmp') ||
+            parentPath.contains('.cache')) {
+          await file.delete();
+          debugPrint('✅ Cache file deleted: $imagePath');
+        } else {
+          debugPrint('⏭️ Skipped deleting non-cache file: $imagePath');
+        }
+      } catch (e) {
+        debugPrint('⚠️ Error deleting file: $e');
+      }
     }
 
     return result ?? imagePath;
@@ -151,7 +187,9 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
     if (xfile == null) return;
 
-    setState(() => _isSaving = true);
+    if (mounted) {
+      setState(() => _isSaving = true);
+    }
 
     try {
       HapticFeedback.mediumImpact();
@@ -185,7 +223,9 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       );
       await _storage.add(entry);
 
-      setState(() => _photoCount++);
+      if (mounted) {
+        setState(() => _photoCount++);
+      }
 
       if (coords.lat != null && coords.lng != null) {
         unawaited(_updateAddressLater(entry.id, coords.lat!, coords.lng!));
@@ -206,7 +246,9 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       debugPrint('Error in _takePhoto: $e\n$stack');
       _showError('Gagal memproses foto: ${e.toString().split(':').last}');
     } finally {
-      if (mounted) setState(() => _isSaving = false);
+      if (mounted) {
+        setState(() => _isSaving = false);
+      }
     }
   }
 
@@ -227,7 +269,9 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
     if (xfile == null) return;
 
-    setState(() => _isSaving = true);
+    if (mounted) {
+      setState(() => _isSaving = true);
+    }
 
     try {
       final timestamp = DateTime.now();
@@ -255,7 +299,9 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       );
       await _storage.add(entry);
 
-      setState(() => _photoCount++);
+      if (mounted) {
+        setState(() => _photoCount++);
+      }
 
       if (coords.lat != null && coords.lng != null) {
         unawaited(_updateAddressLater(entry.id, coords.lat!, coords.lng!));
@@ -266,7 +312,9 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       debugPrint('Error in _pickFromGallery: $e\n$stack');
       _showError('Gagal memproses foto dari galeri');
     } finally {
-      if (mounted) setState(() => _isSaving = false);
+      if (mounted) {
+        setState(() => _isSaving = false);
+      }
     }
   }
 
@@ -298,6 +346,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   }
 
   void _showSuccess(ScanEntry entry) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         backgroundColor: Colors.green.shade700,
@@ -320,6 +369,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   }
 
   void _showError(String msg) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         backgroundColor: AppTheme.error,
