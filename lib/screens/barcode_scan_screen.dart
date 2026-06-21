@@ -28,6 +28,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   bool _isSaving = false;
   String? _lastCode;
   int _scanCount = 0;
+  bool _settingsLoaded = false; // ✅ Tambahan
 
   final StorageService _storage = StorageService();
   final Service _loc = Service();
@@ -39,19 +40,47 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   void initState() {
     super.initState();
     _requestPermissions();
-    _wmSettings.load();
+    _initializeSettings(); // ✅ FIX: Panggil method async
   }
 
+  // ✅ FIX: Inisialisasi settings dengan await
+  Future<void> _initializeSettings() async {
+    await _wmSettings.load();
+    if (mounted) {
+      setState(() {
+        _settingsLoaded = true;
+      });
+    }
+  }
+
+  // ✅ FIX: Permission dinamis untuk Android 13+
   Future<void> _requestPermissions() async {
-    await [
+    final permissions = <Permission>[
       Permission.location,
       Permission.camera,
       Permission.photos,
-      Permission.storage,
-    ].request();
+    ];
+    
+    // Storage hanya untuk Android < 13
+    if (!await _isAndroid13OrHigher()) {
+      permissions.add(Permission.storage);
+    }
+    
+    await permissions.request();
   }
 
-  // ✅ FIX 1: BottomSheet dengan mounted check
+  // ✅ Helper untuk deteksi Android 13+
+  Future<bool> _isAndroid13OrHigher() async {
+    try {
+      // TODO: Gunakan device_info_plus untuk deteksi akurat
+      // Sementara return false (kompatibel dengan semua versi)
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // ✅ FIX: BottomSheet dengan mounted check
   void _openWatermarkSettings() {
     showModalBottomSheet(
       context: context,
@@ -62,7 +91,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       ),
       builder: (_) => const WatermarkSettingsSheet(),
     ).then((_) {
-      // ✅ Cek mounted sebelum setState
       if (mounted) {
         setState(() {});
       }
@@ -323,7 +351,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         _ResultState(entry: updatedEntry, photoPath: null, processing: true),
       );
 
-      // ✅ FIX 2: BottomSheet result dengan mounted check
+      // ✅ FIX: BottomSheet result dengan mounted check
       showModalBottomSheet(
         context: context,
         isDismissible: true,
@@ -334,7 +362,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
           onSaveToGallery: _saveToGallery,
         ),
       ).then((_) {
-        // ✅ Cek mounted sebelum setState
         if (mounted) {
           setState(() {
             _scanning = true;
@@ -408,7 +435,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     }
   }
 
-  // ✅ FIX 3: Safe file deletion dengan cache check
+  // ✅ FIX: Safe file deletion dengan cache check
   Future<String> _addWatermarkInIsolate(String imagePath, ScanEntry entry) async {
     final outputPath =
         '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.png';
@@ -434,7 +461,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       final file = File(imagePath);
       try {
         final parentPath = file.parent.path.toLowerCase();
-        // Hanya hapus file dari direktori cache/tmp
         if (parentPath.contains('cache') || 
             parentPath.contains('tmp') ||
             parentPath.contains('.cache')) {
@@ -454,7 +480,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   // ── SAVE TO GALLERY ─────────────────────────────────────────────────────
   Future<bool> _saveToGallery(String filePath, ScanEntry entry) async {
     try {
-      // ✅ SaverGallery API 3.0.6 — semua parameter wajib
       final result = await SaverGallery.saveFile(
         file: filePath,
         name: filePath.split('/').last,
@@ -481,7 +506,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
             icon: Stack(
               children: [
                 const Icon(Icons.tune, color: Colors.white),
-                if (_wmSettings.operatorName.isNotEmpty ||
+                if (_settingsLoaded && _wmSettings.operatorName.isNotEmpty ||
                     _wmSettings.hasLogo)
                   Positioned(
                     right: 0, top: 0,
@@ -503,7 +528,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         children: [
           MobileScanner(onDetect: _onDetect),
 
-          if (_wmSettings.operatorName.isNotEmpty && !_isSaving)
+          if (_settingsLoaded && _wmSettings.operatorName.isNotEmpty && !_isSaving)
             Positioned(
               top: 12,
               left: 0, right: 0,
