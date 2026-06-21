@@ -110,7 +110,7 @@ class WatermarkService {
       );
       final textPainter = TextPainter(
         text: TextSpan(text: operatorName, style: textStyle),
-        textDirection: TextDirection.ltr, // ✅ PAKAI ltr
+        textDirection: TextDirection.leftToRight,
       );
       textPainter.layout(maxWidth: width - 40);
       textPainter.paint(canvas, Offset(padding + 8, rect.top + 8));
@@ -126,7 +126,7 @@ class WatermarkService {
           text: DateFormat('dd/MM/yyyy HH:mm:ss').format(timestamp),
           style: timeStyle,
         ),
-        textDirection: TextDirection.ltr, // ✅ PAKAI ltr
+        textDirection: TextDirection.leftToRight,
       );
       timePainter.layout(maxWidth: width - 40);
       timePainter.paint(canvas, Offset(padding + 8, rect.top + 30));
@@ -140,7 +140,7 @@ class WatermarkService {
         );
         final barcodePainter = TextPainter(
           text: TextSpan(text: barcodeValue, style: barcodeStyle),
-          textDirection: TextDirection.ltr, // ✅ PAKAI ltr
+          textDirection: TextDirection.leftToRight,
         );
         barcodePainter.layout(maxWidth: width - 40);
         barcodePainter.paint(canvas, Offset(padding + 8, rect.top + 50));
@@ -176,7 +176,7 @@ class WatermarkService {
         );
         final locPainter = TextPainter(
           text: TextSpan(text: locationName, style: locStyle),
-          textDirection: TextDirection.ltr, // ✅ PAKAI ltr
+          textDirection: TextDirection.leftToRight,
         );
         locPainter.layout(maxWidth: width - 40);
         final yPosition = barcodeValue != null && barcodeValue.isNotEmpty
@@ -195,7 +195,7 @@ class WatermarkService {
         );
         final coordPainter = TextPainter(
           text: TextSpan(text: coordText, style: coordStyle),
-          textDirection: TextDirection.ltr, // ✅ PAKAI ltr
+          textDirection: TextDirection.leftToRight,
         );
         coordPainter.layout(maxWidth: width - 40);
         final hasLocation = locationName != null && locationName.isNotEmpty;
