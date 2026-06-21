@@ -145,7 +145,7 @@ class WatermarkService {
       );
       final textPainter = TextPainter(
         text: textSpan,
-        textDirection: TextDirection.ltr, // ✅ FIX: gunakan ltr
+        textDirection: TextDirection.leftToRight,
       );
       textPainter.layout(maxWidth: width - 40);
 
@@ -166,7 +166,7 @@ class WatermarkService {
       );
       final timePainter = TextPainter(
         text: timeSpan,
-        textDirection: TextDirection.ltr, // ✅ FIX
+        textDirection: TextDirection.leftToRight,
       );
       timePainter.layout(maxWidth: width - 40);
 
@@ -188,7 +188,7 @@ class WatermarkService {
         );
         final barcodePainter = TextPainter(
           text: barcodeSpan,
-          textDirection: TextDirection.ltr, // ✅ FIX
+          textDirection: TextDirection.leftToRight,
         );
         barcodePainter.layout(maxWidth: width - 40);
 
@@ -236,7 +236,7 @@ class WatermarkService {
         );
         final locPainter = TextPainter(
           text: locSpan,
-          textDirection: TextDirection.ltr, // ✅ FIX
+          textDirection: TextDirection.leftToRight,
         );
         locPainter.layout(maxWidth: width - 40);
 
@@ -264,7 +264,7 @@ class WatermarkService {
         );
         final coordPainter = TextPainter(
           text: coordSpan,
-          textDirection: TextDirection.ltr, // ✅ FIX
+          textDirection: TextDirection.leftToRight,
         );
         coordPainter.layout(maxWidth: width - 40);
 
