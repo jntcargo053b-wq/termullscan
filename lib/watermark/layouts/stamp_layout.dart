@@ -68,7 +68,6 @@ class StampLayout extends WatermarkLayout {
     final padding = metrics.padding;
     final baseSize = metrics.baseSize;
 
-    // Gambar foto
     canvas.drawImageRect(
       srcImage,
       Rect.fromLTWH(0, 0, photoWidth, photoHeight),
@@ -104,7 +103,6 @@ class StampLayout extends WatermarkLayout {
         break;
     }
 
-    // Gambar stempel
     canvas.save();
     canvas.translate(stampCenterX, stampCenterY);
     canvas.rotate(-0.08);
@@ -170,7 +168,6 @@ class StampLayout extends WatermarkLayout {
 
     canvas.restore();
 
-    // Info panel (barcode, operator, lokasi) di sisi yang sama dengan stempel
     final infoLines = <String>[];
     if (data.hasBarcode) infoLines.add(data.barcodeValue!);
     if (data.hasOperator) infoLines.add('OP: ${data.operatorName}');
@@ -183,7 +180,6 @@ class StampLayout extends WatermarkLayout {
     final panelWidth = metrics.textAvailableWidth + panelPadding * 2;
 
     double panelX, panelY;
-    // Tempatkan panel di bawah atau di samping stempel, tergantung posisi
     switch (data.position) {
       case WatermarkPosition.bottomRight:
         panelX = photoWidth - padding - panelWidth;
@@ -230,7 +226,6 @@ class StampLayout extends WatermarkLayout {
       textY2 += lineHeight;
     }
 
-    // Logo di pojok berlawanan (opsional)
     if (logoImage != null) {
       final logoSize = metrics.logoMaxSize;
       final logoW = logoImage.width.toDouble();
