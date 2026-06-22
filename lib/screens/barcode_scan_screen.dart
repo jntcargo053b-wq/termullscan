@@ -1,5 +1,3 @@
-// ==================== barcode_scan_screen.dart ====================
-
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -16,6 +14,7 @@ import '../services/location_service.dart';
 import '../services/permission_service.dart';
 import '../watermark/watermark_renderer.dart';
 import '../watermark/watermark_settings.dart';
+import '../config/app_config.dart'; // ✅ tambahan
 import 'watermark_settings_sheet.dart';
 
 // ═════════════════════════════════════════════════════════════════════════
@@ -66,7 +65,10 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   }
 
   Future<void> _requestPermissions() async {
-    await Permission.location.request();
+    // Hanya minta lokasi jika GPS diaktifkan
+    if (AppConfig.enableGps) {
+      await Permission.location.request();
+    }
     await Permission.camera.request();
     await PermissionService.requestGalleryPermission();
   }
@@ -338,19 +340,25 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     if (mounted) setState(() => _isSaving = true);
 
     try {
-      ({double? lat, double? lng}) coords;
-      try {
-        coords = await _loc.getCoordinatesOnly().timeout(
-          const Duration(seconds: 6),
-          onTimeout: () => (lat: null, lng: null),
-        );
-      } catch (_) {
-        coords = (lat: null, lng: null);
+      // ---- GPS ----
+      double? lat, lng;
+      if (AppConfig.enableGps) {
+        try {
+          final coords = await _loc.getCoordinatesOnly().timeout(
+            const Duration(seconds: 6),
+            onTimeout: () => (lat: null, lng: null),
+          );
+          lat = coords.lat;
+          lng = coords.lng;
+        } catch (_) {
+          lat = null;
+          lng = null;
+        }
       }
 
       ScanEntry updatedEntry = entry.copyWith(
-        latitude: coords.lat,
-        longitude: coords.lng,
+        latitude: lat,
+        longitude: lng,
         locationName: null,
       );
       await _storage.update(updatedEntry);
@@ -376,8 +384,9 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         }
       });
 
-      if (coords.lat != null && coords.lng != null) {
-        unawaited(_updateAddressLater(updatedEntry.id, coords.lat!, coords.lng!, stateNotifier));
+      // Reverse geocode hanya jika GPS aktif
+      if (AppConfig.enableGps && lat != null && lng != null) {
+        unawaited(_updateAddressLater(updatedEntry.id, lat!, lng!, stateNotifier));
       }
 
       String wmPath;
@@ -395,8 +404,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         type: ScanType.photo,
         value: savedPhotoPath,
         timestamp: DateTime.now(),
-        latitude: coords.lat,
-        longitude: coords.lng,
+        latitude: lat,
+        longitude: lng,
         locationName: null,
       );
       await _storage.add(photoEntry);
@@ -495,7 +504,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   // ── SAVE TO GALLERY ─────────────────────────────────────────────────────
   Future<bool> _saveToGallery(String filePath, ScanEntry entry) async {
     try {
-      // ✅ Verifikasi file exists sebelum simpan
+      // Verifikasi file exists sebelum simpan
       final file = File(filePath);
       if (!await file.exists()) {
         debugPrint('❌ File not found: $filePath');
