@@ -9,6 +9,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../models/scan_entry.dart';
 import '../services/location_service.dart';
 import '../services/storage_service.dart';
+import '../services/permission_service.dart'; // ✅ Tambahan
 import '../theme/app_theme.dart';
 import '../watermark/watermark_renderer.dart';
 import '../watermark/watermark_settings.dart';
@@ -32,16 +33,15 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   int _photoCount = 0;
   bool _locationGranted = false;
   bool _cameraGranted = false;
-  bool _settingsLoaded = false; // ✅ Tambahan
+  bool _settingsLoaded = false;
 
   @override
   void initState() {
     super.initState();
     _requestPermissions();
-    _initializeSettings(); // ✅ FIX: Panggil method async
+    _initializeSettings();
   }
 
-  // ✅ FIX: Inisialisasi settings dengan await
   Future<void> _initializeSettings() async {
     await _wmSettings.load();
     if (mounted) {
@@ -51,7 +51,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     }
   }
 
-  // ✅ FIX: Permission dengan photos untuk Android 13+
+  // ✅ PERMISSION dengan PermissionService
   Future<void> _requestPermissions() async {
     // Camera permission
     final cameraStatus = await Permission.camera.status;
@@ -85,16 +85,11 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       }
     }
 
-    // ✅ Photos permission untuk Android 13+
-    if (await _isAndroid13OrHigher()) {
-      final photosStatus = await Permission.photos.status;
-      if (!photosStatus.isGranted) {
-        await Permission.photos.request();
-      }
-    }
+    // ✅ Izin galeri (photos/storage) menggunakan PermissionService
+    await PermissionService.requestGalleryPermission();
   }
 
-  // ✅ Helper untuk deteksi Android 13+
+  // Helper deteksi Android 13+ (masih digunakan untuk fungsi lain?)
   Future<bool> _isAndroid13OrHigher() async {
     try {
       final info = await DeviceInfoPlugin().androidInfo;
@@ -140,7 +135,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     return granted;
   }
 
-  // ✅ FIX: BottomSheet dengan mounted check
   void _openWatermarkSettings() {
     showModalBottomSheet(
       context: context,
@@ -157,7 +151,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     });
   }
 
-  // ✅ FIX: Safe file deletion dengan cache check
   Future<String> _applyWatermark(String imagePath, DateTime timestamp,
       double? lat, double? lng) async {
     final outputPath =
@@ -177,7 +170,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       logoPath: _wmSettings.hasLogo ? _wmSettings.logoPath : null,
     );
 
-    // ✅ Hanya hapus jika file adalah cache internal
     if (result != null && result != imagePath) {
       final file = File(imagePath);
       try {
