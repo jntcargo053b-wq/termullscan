@@ -7,10 +7,9 @@ import 'package:image_picker/image_picker.dart';
 import 'package:gap/gap.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../models/scan_entry.dart';
-import '../services/location_service.dart';
 import '../services/storage_service.dart';
 import '../services/permission_service.dart';
-import '../config/app_config.dart'; // ✅ tambahan
+import '../config/app_config.dart';
 import '../theme/app_theme.dart';
 import '../watermark/watermark_renderer.dart';
 import '../watermark/watermark_settings.dart';
@@ -26,12 +25,11 @@ class PhotoScanScreen extends StatefulWidget {
 class _PhotoScanScreenState extends State<PhotoScanScreen> {
   final ImagePicker _picker = ImagePicker();
   final StorageService _storage = StorageService();
-  final Service _loc = Service();
+  // Service _loc tidak digunakan karena GPS nonaktif
   final WatermarkSettings _wmSettings = WatermarkSettings();
 
   bool _isSaving = false;
   int _photoCount = 0;
-  bool _locationGranted = false;
   bool _cameraGranted = false;
   bool _settingsLoaded = false;
 
@@ -51,8 +49,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     }
   }
 
+  // Hanya camera dan gallery, lokasi diabaikan
   Future<void> _requestPermissions() async {
-    // Camera
     final cameraStatus = await Permission.camera.status;
     if (!cameraStatus.isGranted) {
       final result = await Permission.camera.request();
@@ -68,30 +66,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       }
     }
 
-    // Location hanya jika diaktifkan
-    if (AppConfig.enableGps) {
-      final locStatus = await Permission.location.status;
-      if (!locStatus.isGranted) {
-        final result = await Permission.location.request();
-        if (mounted) {
-          setState(() => _locationGranted = result.isGranted);
-        }
-        if (!result.isGranted && mounted) {
-          _showError('Izin lokasi diperlukan untuk menandai foto');
-        }
-      } else {
-        if (mounted) {
-          setState(() => _locationGranted = true);
-        }
-      }
-    } else {
-      // Jika GPS dinonaktifkan, set locationGranted = false agar tidak meminta
-      if (mounted) {
-        setState(() => _locationGranted = false);
-      }
-    }
-
-    // Galeri (photos/storage) via service
     await PermissionService.requestGalleryPermission();
   }
 
@@ -113,25 +87,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     return granted;
   }
 
-  Future<bool> _ensureLocationPermission() async {
-    if (!AppConfig.enableGps) return false; // tidak perlu lokasi
-    if (_locationGranted) return true;
-    final status = await Permission.location.status;
-    if (status.isGranted) {
-      if (mounted) {
-        setState(() => _locationGranted = true);
-      }
-      return true;
-    }
-    final result = await Permission.location.request();
-    final granted = result.isGranted;
-    if (mounted) {
-      setState(() => _locationGranted = granted);
-    }
-    if (!granted) _showError('Izin lokasi ditolak, foto tetap tersimpan tanpa lokasi');
-    return granted;
-  }
-
   void _openWatermarkSettings() {
     showModalBottomSheet(
       context: context,
@@ -142,14 +97,11 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       ),
       builder: (_) => const WatermarkSettingsSheet(),
     ).then((_) {
-      if (mounted) {
-        setState(() {});
-      }
+      if (mounted) setState(() {});
     });
   }
 
-  Future<String> _applyWatermark(String imagePath, DateTime timestamp,
-      double? lat, double? lng) async {
+  Future<String> _applyWatermark(String imagePath, DateTime timestamp) async {
     final outputPath =
         '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.png';
 
@@ -161,8 +113,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       barcodeValue: null,
       barcodeFormat: null,
       timestamp: timestamp,
-      latitude: lat,
-      longitude: lng,
+      latitude: null,   // GPS dimatikan
+      longitude: null,  // GPS dimatikan
       locationName: null,
       logoPath: _wmSettings.hasLogo ? _wmSettings.logoPath : null,
     );
@@ -189,7 +141,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
   Future<void> _takePhoto() async {
     if (!await _ensureCameraPermission()) return;
-    if (AppConfig.enableGps) await _ensureLocationPermission();
 
     final XFile? xfile;
     try {
@@ -214,23 +165,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       HapticFeedback.mediumImpact();
       final timestamp = DateTime.now();
 
-      double? lat, lng;
-      if (AppConfig.enableGps) {
-        try {
-          final coords = await _loc.getCoordinatesOnly().timeout(
-            const Duration(seconds: 6),
-          );
-          lat = coords.lat;
-          lng = coords.lng;
-        } catch (e) {
-          debugPrint('Location timeout: $e');
-          lat = null;
-          lng = null;
-        }
-      }
-
       final String watermarkedPath =
-          await _applyWatermark(xfile.path, timestamp, lat, lng);
+          await _applyWatermark(xfile.path, timestamp);
 
       final String savedPath = await _storage.savePhoto(watermarkedPath);
       if (savedPath.isEmpty) {
@@ -242,28 +178,14 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         type: ScanType.photo,
         value: savedPath,
         timestamp: timestamp,
-        latitude: lat,
-        longitude: lng,
+        latitude: null,
+        longitude: null,
         locationName: null,
       );
       await _storage.add(entry);
 
       if (mounted) {
         setState(() => _photoCount++);
-      }
-
-      if (AppConfig.enableGps && lat != null && lng != null) {
-        unawaited(_updateAddressLater(entry.id, lat!, lng!));
-      } else {
-        if (mounted && AppConfig.enableGps) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('⚠️ Lokasi tidak tersedia, foto tersimpan tanpa lokasi'),
-              duration: Duration(seconds: 2),
-              backgroundColor: Colors.orange,
-            ),
-          );
-        }
       }
 
       if (mounted) _showSuccess(entry);
@@ -278,8 +200,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   }
 
   Future<void> _pickFromGallery() async {
-    if (AppConfig.enableGps) await _ensureLocationPermission();
-
     final XFile? xfile;
     try {
       xfile = await _picker.pickImage(
@@ -301,23 +221,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     try {
       final timestamp = DateTime.now();
 
-      double? lat, lng;
-      if (AppConfig.enableGps) {
-        try {
-          final coords = await _loc.getCoordinatesOnly().timeout(
-            const Duration(seconds: 6),
-          );
-          lat = coords.lat;
-          lng = coords.lng;
-        } catch (e) {
-          debugPrint('Location timeout: $e');
-          lat = null;
-          lng = null;
-        }
-      }
-
       final String watermarkedPath =
-          await _applyWatermark(xfile.path, timestamp, lat, lng);
+          await _applyWatermark(xfile.path, timestamp);
 
       final String savedPath = await _storage.savePhoto(watermarkedPath);
       final entry = ScanEntry(
@@ -325,18 +230,14 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         type: ScanType.photo,
         value: savedPath,
         timestamp: timestamp,
-        latitude: lat,
-        longitude: lng,
+        latitude: null,
+        longitude: null,
         locationName: null,
       );
       await _storage.add(entry);
 
       if (mounted) {
         setState(() => _photoCount++);
-      }
-
-      if (AppConfig.enableGps && lat != null && lng != null) {
-        unawaited(_updateAddressLater(entry.id, lat!, lng!));
       }
 
       if (mounted) _showSuccess(entry);
@@ -347,29 +248,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       if (mounted) {
         setState(() => _isSaving = false);
       }
-    }
-  }
-
-  Future<void> _updateAddressLater(
-      String entryId, double lat, double lng) async {
-    // Hanya jalankan jika GPS aktif
-    if (!AppConfig.enableGps) return;
-
-    try {
-      final address = await _loc.reverseGeocode(lat, lng).timeout(
-            const Duration(seconds: 5),
-          );
-      if (address != null && mounted) {
-        final entry = await _storage.getEntry(entryId);
-        if (entry != null) {
-          final updated = entry.copyWith(locationName: address);
-          await _storage.update(updated);
-          // Jika ingin menampilkan snackbar lokasi, aktifkan di sini
-          // tetapi untuk menghindari spam, kita nonaktifkan.
-        }
-      }
-    } catch (e) {
-      debugPrint('Reverse geocoding failed for $entryId: $e');
     }
   }
 
@@ -385,7 +263,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
             const Gap(8),
             Expanded(
               child: Text(
-                'Foto tersimpan  •  ${entry.locationName ?? entry.coordinatesString}',
+                'Foto tersimpan',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -472,7 +350,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
               ).animate().fadeIn(delay: 100.ms),
               const Gap(8),
               Text(
-                'Foto otomatis disertai timestamp, lokasi, & watermark',
+                'Foto otomatis disertai timestamp & watermark',
                 style: Theme.of(context).textTheme.bodyMedium,
                 textAlign: TextAlign.center,
               ).animate().fadeIn(delay: 200.ms),
@@ -531,7 +409,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                     Gap(10),
                     Expanded(
                       child: Text(
-                        'Setiap foto otomatis dicatat: waktu, koordinat, nama lokasi, & watermark',
+                        'Setiap foto otomatis dicatat: waktu & watermark',
                         style: TextStyle(
                             color: AppTheme.textSecondary, fontSize: 12),
                       ),
