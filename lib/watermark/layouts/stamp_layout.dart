@@ -179,7 +179,7 @@ class StampLayout extends WatermarkLayout {
     final panelHeight = infoLines.length * lineHeight + panelPadding * 2;
     final panelWidth = metrics.textAvailableWidth + panelPadding * 2;
 
-    double panelX, panelY;
+    double panelX = 0, panelY = 0;
     switch (data.position) {
       case WatermarkPosition.bottomRight:
         panelX = photoWidth - padding - panelWidth;
@@ -233,7 +233,7 @@ class StampLayout extends WatermarkLayout {
       final scale = math.min(logoSize / logoW, logoSize / logoH);
       final drawW = logoW * scale;
       final drawH = logoH * scale;
-      double logoX, logoY;
+      double logoX = 0, logoY = 0;
       switch (data.position) {
         case WatermarkPosition.bottomRight:
           logoX = padding;
