@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'models/watermark_style.dart';
-import 'models/watermark_data.dart';
 import 'layouts/base_layout.dart';
 import 'layouts/minimal_layout.dart';
 import 'layouts/professional_layout.dart';
@@ -21,7 +20,6 @@ class WatermarkFactory {
       case WatermarkStyle.stamp:
         return StampLayout();
       default:
-        // fallback ke professional
         return ProfessionalLayout();
     }
   }
