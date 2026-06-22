@@ -18,8 +18,8 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
   late WatermarkSettings _settings;
   final ImagePicker _picker = ImagePicker();
   bool _isLoading = true;
+  final TextEditingController _operatorController = TextEditingController();
 
-  // Hanya 4 layout yang didukung render asli
   final List<WatermarkStyle> _supportedStyles = [
     WatermarkStyle.minimal,
     WatermarkStyle.professional,
@@ -36,10 +36,12 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
   Future<void> _loadSettings() async {
     _settings = WatermarkSettings();
     await _settings.load();
+    _operatorController.text = _settings.operatorName;
     if (mounted) setState(() => _isLoading = false);
   }
 
   Future<void> _saveAndClose() async {
+    _settings.operatorName = _operatorController.text;
     await _settings.save();
     Navigator.pop(context);
   }
@@ -55,6 +57,12 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
       await _settings.setLogoPath(file.path);
       if (mounted) setState(() {});
     }
+  }
+
+  @override
+  void dispose() {
+    _operatorController.dispose();
+    super.dispose();
   }
 
   @override
@@ -88,7 +96,6 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Handle
               Center(
                 child: Container(
                   width: 40,
@@ -115,15 +122,14 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
               ),
               const Gap(20),
 
-              // ─── Operator ──────────────────────────────────
+              // Operator
               const Text(
                 'Nama Operator',
                 style: TextStyle(color: Colors.white70, fontSize: 13),
               ),
               const Gap(6),
               TextField(
-                initialValue: _settings.operatorName,
-                onChanged: (val) => _settings.operatorName = val,
+                controller: _operatorController,
                 style: const TextStyle(color: Colors.white),
                 decoration: InputDecoration(
                   hintText: 'Contoh: PT Maju Jaya',
@@ -139,7 +145,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
               ),
               const Gap(16),
 
-              // ─── Pilihan Layout ───────────────────────────
+              // Layout
               const Text(
                 'Gaya Layout',
                 style: TextStyle(color: Colors.white70, fontSize: 13),
@@ -208,7 +214,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
               ),
               const Gap(16),
 
-              // ─── Posisi ──────────────────────────────────
+              // Posisi
               const Text(
                 'Posisi Watermark',
                 style: TextStyle(color: Colors.white70, fontSize: 13),
@@ -241,7 +247,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
               ),
               const Gap(16),
 
-              // ─── Ukuran Font ─────────────────────────────
+              // Ukuran Font
               Row(
                 children: [
                   const Text(
@@ -276,7 +282,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
               ),
               const Gap(8),
 
-              // ─── Opacity ──────────────────────────────────
+              // Opacity
               Row(
                 children: [
                   const Text(
@@ -311,7 +317,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
               ),
               const Gap(16),
 
-              // ─── Logo ─────────────────────────────────────
+              // Logo
               Row(
                 children: [
                   const Text(
@@ -360,7 +366,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
               ),
               const Gap(24),
 
-              // ─── Tombol ──────────────────────────────────
+              // Tombol
               Row(
                 children: [
                   Expanded(
