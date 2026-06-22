@@ -298,6 +298,9 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     }
   }
 
+  // ──────────────────────────────────────────────────────────────────────
+  //  FOTO & WATERMARK
+  // ──────────────────────────────────────────────────────────────────────
   Future<void> _takePhotoAndShow(ScanEntry entry) async {
     if (_sheetOpen) {
       debugPrint('⚠️ Bottom sheet already open, skipping');
@@ -359,6 +362,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
 
       String wmPath;
       try {
+        // ✅ GUNAKAN PARAMETER YANG BENAR
         wmPath = await _addWatermarkInIsolate(file.path, updatedEntry);
       } catch (e) {
         debugPrint('Watermark error: $e');
@@ -399,26 +403,24 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     }
   }
 
+  // ──────────────────────────────────────────────────────────────────────
+  //  WATERMARK RENDER (ISOLATE)
+  // ──────────────────────────────────────────────────────────────────────
   Future<String> _addWatermarkInIsolate(String imagePath, ScanEntry entry) async {
     final outputPath =
         '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.png';
 
+    // ✅ PANGGIL RENDERER DENGAN PARAMETER settings DAN entry
     final result = await WatermarkRenderer.render(
       imagePath: imagePath,
       outputPath: outputPath,
-      operatorName: _wmSettings.operatorName,
-      style: _wmSettings.style,
-      barcodeValue: entry.value,
-      barcodeFormat: entry.barcodeFormat,
-      timestamp: entry.timestamp,
-      latitude: null,   // GPS dimatikan
-      longitude: null,  // GPS dimatikan
-      locationName: null,
-      logoPath: _wmSettings.hasLogo ? _wmSettings.logoPath : null,
+      settings: _wmSettings,
+      entry: entry,
     );
 
     if (result == null) throw Exception('Watermark isolate gagal');
 
+    // Hapus file cache jika perlu (sama seperti sebelumnya)
     if (result != imagePath) {
       final file = File(imagePath);
       try {
@@ -439,6 +441,9 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     return result;
   }
 
+  // ──────────────────────────────────────────────────────────────────────
+  //  SAVE TO GALLERY
+  // ──────────────────────────────────────────────────────────────────────
   Future<bool> _saveToGallery(String filePath, ScanEntry entry) async {
     try {
       final file = File(filePath);
@@ -470,6 +475,9 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     }
   }
 
+  // ──────────────────────────────────────────────────────────────────────
+  //  BUILD
+  // ──────────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -586,7 +594,9 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   }
 }
 
-// ── Result State ──────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────
+//  RESULT STATE
+// ──────────────────────────────────────────────────────────────────────────
 class _ResultState {
   final ScanEntry entry;
   final String? photoPath;
@@ -600,7 +610,9 @@ class _ResultState {
   });
 }
 
-// ── Result Sheet ──────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────
+//  RESULT SHEET
+// ──────────────────────────────────────────────────────────────────────────
 class _ResultSheet extends StatefulWidget {
   final ValueNotifier<_ResultState> notifier;
   final StorageService storage;
