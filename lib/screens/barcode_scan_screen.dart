@@ -1,3 +1,5 @@
+// ==================== barcode_scan_screen.dart ====================
+
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -31,7 +33,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   int _scanCount = 0;
   bool _settingsLoaded = false;
   bool _processingScan = false;
-  bool _sheetOpen = false; // ✅ Guard untuk bottom sheet
+  bool _sheetOpen = false;
 
   final StorageService _storage = StorageService();
   final Service _loc = Service();
@@ -48,7 +50,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
 
   @override
   void dispose() {
-    // ✅ Stop scanner sebelum dispose untuk stabilitas
     _scannerController.stop();
     _scannerController.dispose();
     super.dispose();
@@ -140,8 +141,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
 
       if (mounted) {
         await _scannerController.stop();
-
-        // ✅ Await dengan try-catch
         try {
           await _takePhotoAndShow(entry);
         } catch (e) {
@@ -294,9 +293,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       setState(() => _scanCount++);
 
       if (mounted) {
-        // ✅ Stop scanner sebelum proses manual
         await _scannerController.stop();
-
         try {
           await _takePhotoAndShow(entry);
         } catch (e) {
@@ -312,7 +309,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
 
   // ── FOTO & WATERMARK ─────────────────────────────────────────────────────
   Future<void> _takePhotoAndShow(ScanEntry entry) async {
-    // ✅ Guard bottom sheet ganda
     if (_sheetOpen) {
       debugPrint('⚠️ Bottom sheet already open, skipping');
       return;
@@ -342,7 +338,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     if (mounted) setState(() => _isSaving = true);
 
     try {
-      // ✅ Timeout lokasi agar tidak menggantung
       ({double? lat, double? lng}) coords;
       try {
         coords = await _loc.getCoordinatesOnly().timeout(
@@ -364,7 +359,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         _ResultState(entry: updatedEntry, photoPath: null, processing: true),
       );
 
-      // ✅ Tampilkan bottom sheet dan dispose notifier saat ditutup
       showModalBottomSheet(
         context: context,
         isDismissible: true,
@@ -376,7 +370,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         ),
       ).whenComplete(() {
         stateNotifier.dispose();
-        _sheetOpen = false; // ✅ Reset guard
+        _sheetOpen = false;
         if (mounted) {
           _resumeScanning();
         }
@@ -444,7 +438,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         if (currentEntry != null) {
           final updated = currentEntry.copyWith(locationName: address);
           await _storage.update(updated);
-          // Update notifier jika masih relevan
           final currentState = notifier.value;
           notifier.value = _ResultState(
             entry: updated,
@@ -502,7 +495,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   // ── SAVE TO GALLERY ─────────────────────────────────────────────────────
   Future<bool> _saveToGallery(String filePath, ScanEntry entry) async {
     try {
-      // ✅ Validasi file exists sebelum simpan
+      // ✅ Verifikasi file exists sebelum simpan
       final file = File(filePath);
       if (!await file.exists()) {
         debugPrint('❌ File not found: $filePath');
@@ -545,7 +538,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
             icon: Stack(
               children: [
                 const Icon(Icons.tune, color: Colors.white),
-                // ✅ Perbaiki precedence operator
                 if (_settingsLoaded &&
                     (_wmSettings.operatorName.isNotEmpty ||
                      _wmSettings.hasLogo))
