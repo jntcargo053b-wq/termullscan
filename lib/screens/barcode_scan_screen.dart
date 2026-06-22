@@ -11,6 +11,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
 import '../services/location_service.dart';
+import '../services/permission_service.dart'; // ✅ Import service izin
 import '../watermark/watermark_renderer.dart';
 import '../watermark/watermark_settings.dart';
 import 'watermark_settings_sheet.dart';
@@ -30,7 +31,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   String? _lastCode;
   int _scanCount = 0;
   bool _settingsLoaded = false;
-  bool _processingScan = false; // ✅ Tambahan untuk race condition
+  bool _processingScan = false; // ✅ Flag cegah race condition
 
   final StorageService _storage = StorageService();
   final Service _loc = Service();
@@ -51,6 +52,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     super.dispose();
   }
 
+  // ── INISIALISASI ─────────────────────────────────────────────────────────
   Future<void> _initializeSettings() async {
     await _wmSettings.load();
     if (mounted) {
@@ -83,6 +85,18 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     }
   }
 
+  // ── RESUME SCANNING ──────────────────────────────────────────────────────
+  Future<void> _resumeScanning() async {
+    await _scannerController.start();
+    if (mounted) {
+      setState(() {
+        _scanning = true;
+        _lastCode = null;
+      });
+    }
+  }
+
+  // ── WATERMARK SETTINGS ──────────────────────────────────────────────────
   void _openWatermarkSettings() {
     showModalBottomSheet(
       context: context,
@@ -99,20 +113,9 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     });
   }
 
-  // ── RESUME SCANNING ──────────────────────────────────────────────────────
-  Future<void> _resumeScanning() async {
-    await _scannerController.start();
-    if (mounted) {
-      setState(() {
-        _scanning = true;
-        _lastCode = null;
-      });
-    }
-  }
-
   // ── AUTO SCAN ────────────────────────────────────────────────────────────
   Future<void> _onDetect(BarcodeCapture capture) async {
-    // ✅ Cegah race condition dengan flag processing
+    // ✅ Cegah race condition
     if (!_scanning || _isSaving || _processingScan) return;
 
     _processingScan = true;
@@ -484,13 +487,23 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   // ── SAVE TO GALLERY ─────────────────────────────────────────────────────
   Future<bool> _saveToGallery(String filePath, ScanEntry entry) async {
     try {
+      final granted = await PermissionService.requestGalleryPermission();
+      if (!granted) {
+        debugPrint('❌ Gallery permission denied');
+        return false;
+      }
+
+      final filename = 'scan_${DateTime.now().millisecondsSinceEpoch}.jpg';
+
       final result = await SaverGallery.saveFile(
         file: filePath,
-        name: filePath.split('/').last,
+        name: filename,
         androidRelativePath: 'Pictures/TERMULScan',
         androidExistNotSave: false,
       );
-      debugPrint('✅ Berhasil menyimpan ke galeri: $filePath');
+
+      await Future.delayed(const Duration(milliseconds: 500));
+
       return result.isSuccess;
     } catch (e) {
       debugPrint('❌ Error _saveToGallery: $e');
