@@ -69,8 +69,29 @@ class MinimalLayout extends WatermarkLayout {
   }) {
     final padding = metrics.padding;
     final overlayHeight = metrics.stripHeight;
-    final overlayTop = photoHeight - overlayHeight;
+    double overlayTop;
+    TextAlign textAlign;
 
+    switch (data.position) {
+      case WatermarkPosition.bottomRight:
+        overlayTop = photoHeight - overlayHeight;
+        textAlign = TextAlign.right;
+        break;
+      case WatermarkPosition.bottomLeft:
+        overlayTop = photoHeight - overlayHeight;
+        textAlign = TextAlign.left;
+        break;
+      case WatermarkPosition.topRight:
+        overlayTop = 0;
+        textAlign = TextAlign.right;
+        break;
+      case WatermarkPosition.topLeft:
+        overlayTop = 0;
+        textAlign = TextAlign.left;
+        break;
+    }
+
+    // Gambar foto
     canvas.drawImageRect(
       srcImage,
       Rect.fromLTWH(0, 0, photoWidth, photoHeight),
@@ -80,20 +101,27 @@ class MinimalLayout extends WatermarkLayout {
         ..isAntiAlias = true,
     );
 
+    // Gradien latar
     final gradientPaint = Paint()
       ..shader = ui.Gradient.linear(
         Offset(0, overlayTop),
-        Offset(0, photoHeight),
-        [Colors.black.withOpacity(0.0), Colors.black.withOpacity(0.55)],
+        Offset(0, overlayTop + overlayHeight),
+        [
+          Colors.black.withOpacity(0.0),
+          Colors.black.withOpacity(data.backgroundOpacity),
+        ],
       );
     canvas.drawRect(
       Rect.fromLTWH(0, overlayTop, photoWidth, overlayHeight),
       gradientPaint,
     );
 
-    final textX = padding;
+    // Tentukan posisi teks
     final textContentWidth = metrics.textAvailableWidth;
-    double textY = photoHeight - padding - metrics.textRowCount * metrics.lineHeight;
+    final double textX = textAlign == TextAlign.left
+        ? padding
+        : photoWidth - padding - textContentWidth;
+    double textY = overlayTop + padding;
 
     void drawText(String text, Color color, double fontSize,
         {FontWeight fontWeight = FontWeight.w500, int maxLines = 1}) {
@@ -107,25 +135,28 @@ class MinimalLayout extends WatermarkLayout {
         fontSize: fontSize,
         fontWeight: fontWeight,
         maxLines: maxLines,
+        textAlign: textAlign,
       );
       textY += tp + fontSize * 0.25;
     }
 
+    // Data
     if (data.hasBarcode) {
-      drawText(data.barcodeValue!, Colors.white, metrics.baseSize * 0.030,
+      drawText(data.barcodeValue!, Colors.white, data.fontSize + 2,
           fontWeight: FontWeight.w700);
     }
     if (data.hasOperator) {
-      drawText(data.operatorName, Colors.white70, metrics.baseSize * 0.024);
+      drawText(data.operatorName, Colors.white70, data.fontSize);
     }
-    drawText(data.formattedTimestamp, Colors.white70, metrics.baseSize * 0.022);
-    drawText(data.displayLocation, Colors.white60, metrics.baseSize * 0.022, maxLines: 1);
+    drawText(data.formattedTimestamp, Colors.white70, data.fontSize - 1);
+    drawText(data.displayLocation, Colors.white60, data.fontSize - 1, maxLines: 1);
 
     if (data.isManual) {
-      drawText('• MANUAL ENTRY', const Color(0xFFFFB74D), metrics.baseSize * 0.020,
+      drawText('• MANUAL ENTRY', const Color(0xFFFFB74D), data.fontSize - 2,
           fontWeight: FontWeight.w700);
     }
 
+    // Logo (di pojok, berlawanan dari teks)
     if (logoImage != null) {
       final logoSize = metrics.logoMaxSize;
       final logoW = logoImage.width.toDouble();
@@ -133,8 +164,12 @@ class MinimalLayout extends WatermarkLayout {
       final scale = math.min(logoSize / logoW, logoSize / logoH);
       final drawW = logoW * scale;
       final drawH = logoH * scale;
-      final logoX = photoWidth - padding - drawW;
-      final logoY = photoHeight - padding - drawH;
+      double logoX = textAlign == TextAlign.left
+          ? photoWidth - padding - drawW
+          : padding;
+      double logoY = textAlign == TextAlign.left
+          ? photoHeight - padding - drawH
+          : padding;
 
       LogoWidget.paint(
         canvas: canvas,
