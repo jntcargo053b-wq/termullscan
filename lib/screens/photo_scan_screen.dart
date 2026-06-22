@@ -8,6 +8,7 @@ import 'package:gap/gap.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../models/scan_entry.dart';
 import '../services/location_service.dart';
+import '../services/permission_service.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 import '../watermark/watermark_renderer.dart';
@@ -95,11 +96,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   }
 
   // ✅ Helper untuk deteksi Android 13+
-  Future<bool> _isAndroid13OrHigher() async {
-    try {
-      final info = await DeviceInfoPlugin().androidInfo;
-      return info.version.sdkInt >= 33;
-    } catch (_) {
+  Future<bool> _isAndroid13OrHigher() async => PermissionService.isAndroid13OrHigher(); catch (_) {
       return false;
     }
   }

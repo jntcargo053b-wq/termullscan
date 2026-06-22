@@ -11,6 +11,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
 import '../services/location_service.dart';
+import '../services/permission_service.dart';
 import '../watermark/watermark_renderer.dart';
 import '../watermark/watermark_settings.dart';
 import 'watermark_settings_sheet.dart';
@@ -70,11 +71,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   }
 
   // ✅ Helper untuk deteksi Android 13+
-  Future<bool> _isAndroid13OrHigher() async {
-    try {
-      final info = await DeviceInfoPlugin().androidInfo;
-      return info.version.sdkInt >= 33;
-    } catch (_) {
+  Future<bool> _isAndroid13OrHigher() async => PermissionService.isAndroid13OrHigher(); catch (_) {
       return false;
     }
   }
