@@ -11,7 +11,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
 import '../services/location_service.dart';
-import '../services/permission_service.dart'; // ✅ Import service izin
+import '../services/permission_service.dart'; // ✅ Service izin
 import '../watermark/watermark_renderer.dart';
 import '../watermark/watermark_settings.dart';
 import 'watermark_settings_sheet.dart';
@@ -31,13 +31,13 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   String? _lastCode;
   int _scanCount = 0;
   bool _settingsLoaded = false;
-  bool _processingScan = false; // ✅ Flag cegah race condition
+  bool _processingScan = false; // ✅ Cegah race condition
 
   final StorageService _storage = StorageService();
   final Service _loc = Service();
   final ImagePicker _picker = ImagePicker();
   final WatermarkSettings _wmSettings = WatermarkSettings();
-  final MobileScannerController _scannerController = MobileScannerController(); // ✅ Controller kamera
+  final MobileScannerController _scannerController = MobileScannerController();
 
   @override
   void initState() {
@@ -62,27 +62,11 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     }
   }
 
+  // ✅ PERMISSIONS – menggunakan PermissionService
   Future<void> _requestPermissions() async {
-    final permissions = <Permission>[
-      Permission.location,
-      Permission.camera,
-      Permission.photos,
-    ];
-    
-    if (!await _isAndroid13OrHigher()) {
-      permissions.add(Permission.storage);
-    }
-    
-    await permissions.request();
-  }
-
-  Future<bool> _isAndroid13OrHigher() async {
-    try {
-      final info = await DeviceInfoPlugin().androidInfo;
-      return info.version.sdkInt >= 33;
-    } catch (_) {
-      return false;
-    }
+    await Permission.location.request();
+    await Permission.camera.request();
+    await PermissionService.requestGalleryPermission();
   }
 
   // ── RESUME SCANNING ──────────────────────────────────────────────────────
@@ -115,7 +99,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
 
   // ── AUTO SCAN ────────────────────────────────────────────────────────────
   Future<void> _onDetect(BarcodeCapture capture) async {
-    // ✅ Cegah race condition
+    // Cegah race condition
     if (!_scanning || _isSaving || _processingScan) return;
 
     _processingScan = true;
@@ -155,9 +139,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       setState(() => _scanCount++);
 
       if (mounted) {
-        // ✅ Hentikan kamera saat memproses
-        await _scannerController.stop();
-
+        await _scannerController.stop(); // Hentikan kamera saat proses
         _takePhotoAndShow(entry).catchError((e) {
           debugPrint('Error _takePhotoAndShow: $e');
           if (mounted) {
@@ -468,7 +450,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       final file = File(imagePath);
       try {
         final parentPath = file.parent.path.toLowerCase();
-        if (parentPath.contains('cache') || 
+        if (parentPath.contains('cache') ||
             parentPath.contains('tmp') ||
             parentPath.contains('.cache')) {
           await file.delete();
@@ -544,7 +526,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       body: Stack(
         children: [
           MobileScanner(
-            controller: _scannerController, // ✅ Gunakan controller
+            controller: _scannerController,
             onDetect: _onDetect,
           ),
 
