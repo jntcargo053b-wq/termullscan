@@ -1,390 +1,124 @@
-import 'package:flutter/material.dart';
-import 'package:gap/gap.dart';
-import 'package:image_picker/image_picker.dart';
-import '../watermark/watermark_settings.dart';
-import '../watermark/models/watermark_data.dart';
-import '../watermark/models/watermark_style.dart';
-import '../watermark/watermark_factory.dart';
-import 'dart:io';
+import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'models/watermark_style.dart';
 
-class WatermarkSettingsSheet extends StatefulWidget {
-  const WatermarkSettingsSheet({super.key});
-
-  @override
-  State<WatermarkSettingsSheet> createState() => _WatermarkSettingsSheetState();
+enum WatermarkPosition {
+  bottomRight,
+  bottomLeft,
+  topRight,
+  topLeft,
 }
 
-class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
-  late WatermarkSettings _settings;
-  final ImagePicker _picker = ImagePicker();
-  bool _isLoading = true;
+class WatermarkSettings {
+  static const String _keyOperatorName = 'watermark_operator_name';
+  static const String _keyStyle = 'watermark_style';
+  static const String _keyLogoPath = 'watermark_logo_path';
+  static const String _keyHasLogo = 'watermark_has_logo';
+  static const String _keyPosition = 'watermark_position';
+  static const String _keyFontSize = 'watermark_font_size';
+  static const String _keyBgOpacity = 'watermark_bg_opacity';
 
-  // Hanya 4 layout yang didukung render asli
-  final List<WatermarkStyle> _supportedStyles = [
-    WatermarkStyle.minimal,
-    WatermarkStyle.professional,
-    WatermarkStyle.polaroid,
-    WatermarkStyle.stamp,
-  ];
+  String operatorName = '';
+  WatermarkStyle style = WatermarkStyle.professional;
+  String? logoPath;
+  bool hasLogo = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _loadSettings();
+  // Properti baru
+  WatermarkPosition position = WatermarkPosition.bottomRight;
+  double fontSize = 14.0;
+  double backgroundOpacity = 0.55;
+
+  WatermarkSettings() {
+    load();
   }
 
-  Future<void> _loadSettings() async {
-    _settings = WatermarkSettings();
-    await _settings.load();
-    if (mounted) setState(() => _isLoading = false);
-  }
+  Future<void> load() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      operatorName = prefs.getString(_keyOperatorName) ?? '';
+      final styleIndex = prefs.getInt(_keyStyle) ?? WatermarkStyle.professional.index;
+      final values = WatermarkStyle.values;
+      if (styleIndex >= 0 && styleIndex < values.length) {
+        style = values[styleIndex];
+      } else {
+        style = WatermarkStyle.professional;
+      }
+      logoPath = prefs.getString(_keyLogoPath);
+      hasLogo = prefs.getBool(_keyHasLogo) ?? false;
 
-  Future<void> _saveAndClose() async {
-    await _settings.save();
-    Navigator.pop(context);
-  }
+      // Muat properti baru
+      final posIndex = prefs.getInt(_keyPosition) ?? WatermarkPosition.bottomRight.index;
+      final posValues = WatermarkPosition.values;
+      position = (posIndex >= 0 && posIndex < posValues.length)
+          ? posValues[posIndex]
+          : WatermarkPosition.bottomRight;
+      fontSize = prefs.getDouble(_keyFontSize) ?? 14.0;
+      backgroundOpacity = prefs.getDouble(_keyBgOpacity) ?? 0.55;
 
-  Future<void> _pickLogo() async {
-    final XFile? file = await _picker.pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 200,
-      maxHeight: 200,
-      imageQuality: 80,
-    );
-    if (file != null) {
-      await _settings.setLogoPath(file.path);
-      if (mounted) setState(() {});
+      debugPrint('✅ Watermark settings loaded: style=${style.name}, position=$position, fontSize=$fontSize');
+    } catch (e) {
+      debugPrint('⚠️ Error loading watermark settings: $e');
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
+  Future<void> save() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_keyOperatorName, operatorName);
+      await prefs.setInt(_keyStyle, style.index);
+      if (logoPath != null) {
+        await prefs.setString(_keyLogoPath, logoPath!);
+      } else {
+        await prefs.remove(_keyLogoPath);
+      }
+      await prefs.setBool(_keyHasLogo, hasLogo);
+
+      // Simpan properti baru
+      await prefs.setInt(_keyPosition, position.index);
+      await prefs.setDouble(_keyFontSize, fontSize);
+      await prefs.setDouble(_keyBgOpacity, backgroundOpacity);
+
+      debugPrint('✅ Watermark settings saved');
+    } catch (e) {
+      debugPrint('⚠️ Error saving watermark settings: $e');
     }
+  }
 
-    final previewData = WatermarkData(
-      timestamp: DateTime.now(),
-      operatorName: _settings.operatorName,
-      barcodeValue: '8991234567890',
-      barcodeFormat: 'EAN-13',
-      locationName: 'Jl. Sudirman No. 123, Jakarta',
-      position: _settings.position,
-    );
+  // Setter
+  Future<void> setOperatorName(String name) async {
+    operatorName = name;
+    await save();
+  }
 
-    return Padding(
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
-      ),
-      child: Container(
-        padding: const EdgeInsets.all(20),
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(context).size.height * 0.9,
-        ),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Handle
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[600],
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-              const Gap(16),
-              const Text(
-                'Pengaturan Watermark',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const Gap(8),
-              const Text(
-                'Pilih gaya, posisi, dan ukuran watermark',
-                style: TextStyle(color: Colors.grey, fontSize: 13),
-              ),
-              const Gap(20),
+  Future<void> setStyle(WatermarkStyle newStyle) async {
+    style = newStyle;
+    await save();
+  }
 
-              // ─── Operator ──────────────────────────────────
-              const Text(
-                'Nama Operator',
-                style: TextStyle(color: Colors.white70, fontSize: 13),
-              ),
-              const Gap(6),
-              TextField(
-                initialValue: _settings.operatorName,
-                onChanged: (val) => _settings.operatorName = val,
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  hintText: 'Contoh: PT Maju Jaya',
-                  hintStyle: const TextStyle(color: Colors.grey),
-                  filled: true,
-                  fillColor: const Color(0xFF2A2A2A),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide.none,
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                ),
-              ),
-              const Gap(16),
+  Future<void> setPosition(WatermarkPosition newPosition) async {
+    position = newPosition;
+    await save();
+  }
 
-              // ─── Pilihan Layout ───────────────────────────
-              const Text(
-                'Gaya Layout',
-                style: TextStyle(color: Colors.white70, fontSize: 13),
-              ),
-              const Gap(8),
-              SizedBox(
-                height: 160,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: _supportedStyles.length,
-                  separatorBuilder: (_, __) => const Gap(12),
-                  itemBuilder: (context, index) {
-                    final style = _supportedStyles[index];
-                    final isSelected = _settings.style == style;
-                    final layout = WatermarkFactory.create(style);
-                    return GestureDetector(
-                      onTap: () {
-                        _settings.style = style;
-                        setState(() {});
-                      },
-                      child: Container(
-                        width: 140,
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: isSelected ? Colors.amber.withOpacity(0.15) : Colors.transparent,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: isSelected ? Colors.amber : Colors.grey.withOpacity(0.3),
-                            width: isSelected ? 2 : 1,
-                          ),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(6),
-                                child: Container(
-                                  color: Colors.grey[900],
-                                  padding: const EdgeInsets.all(4),
-                                  child: layout.buildPreview(
-                                    previewData: previewData,
-                                    hasLogo: _settings.hasLogo,
-                                    logoPath: _settings.logoPath,
-                                    previewWidth: 140,
-                                    previewHeight: 100,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            const Gap(4),
-                            Text(
-                              layout.displayName,
-                              style: TextStyle(
-                                color: isSelected ? Colors.amber : Colors.white70,
-                                fontSize: 11,
-                                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w400,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-              const Gap(16),
+  Future<void> setFontSize(double size) async {
+    fontSize = size.clamp(8.0, 28.0);
+    await save();
+  }
 
-              // ─── Posisi ──────────────────────────────────
-              const Text(
-                'Posisi Watermark',
-                style: TextStyle(color: Colors.white70, fontSize: 13),
-              ),
-              const Gap(6),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: WatermarkPosition.values.map((pos) {
-                  final isSelected = _settings.position == pos;
-                  return ChoiceChip(
-                    label: Text(
-                      pos.name
-                          .replaceAllMapped(RegExp(r'([A-Z])'), (m) => ' ${m.group(1)}')
-                          .trim(),
-                      style: TextStyle(
-                        color: isSelected ? Colors.black : Colors.white70,
-                        fontSize: 12,
-                      ),
-                    ),
-                    selected: isSelected,
-                    onSelected: (_) {
-                      _settings.position = pos;
-                      setState(() {});
-                    },
-                    backgroundColor: const Color(0xFF2A2A2A),
-                    selectedColor: Colors.amber,
-                  );
-                }).toList(),
-              ),
-              const Gap(16),
+  Future<void> setBackgroundOpacity(double opacity) async {
+    backgroundOpacity = opacity.clamp(0.1, 1.0);
+    await save();
+  }
 
-              // ─── Ukuran Font ─────────────────────────────
-              Row(
-                children: [
-                  const Text(
-                    'Ukuran Font',
-                    style: TextStyle(color: Colors.white70, fontSize: 13),
-                  ),
-                  const Gap(12),
-                  Expanded(
-                    child: Slider(
-                      value: _settings.fontSize,
-                      min: 8,
-                      max: 28,
-                      divisions: 20,
-                      label: _settings.fontSize.round().toString(),
-                      onChanged: (val) {
-                        _settings.fontSize = val;
-                        setState(() {});
-                      },
-                      activeColor: Colors.amber,
-                      inactiveColor: Colors.grey[700],
-                    ),
-                  ),
-                  Container(
-                    width: 32,
-                    alignment: Alignment.center,
-                    child: Text(
-                      _settings.fontSize.round().toString(),
-                      style: const TextStyle(color: Colors.white, fontSize: 14),
-                    ),
-                  ),
-                ],
-              ),
-              const Gap(8),
+  Future<void> setLogoPath(String? path) async {
+    logoPath = path;
+    hasLogo = path != null && path.isNotEmpty;
+    await save();
+  }
 
-              // ─── Opacity ──────────────────────────────────
-              Row(
-                children: [
-                  const Text(
-                    'Opacity Latar',
-                    style: TextStyle(color: Colors.white70, fontSize: 13),
-                  ),
-                  const Gap(12),
-                  Expanded(
-                    child: Slider(
-                      value: _settings.backgroundOpacity,
-                      min: 0.1,
-                      max: 1.0,
-                      divisions: 9,
-                      label: (_settings.backgroundOpacity * 100).round().toString(),
-                      onChanged: (val) {
-                        _settings.backgroundOpacity = val;
-                        setState(() {});
-                      },
-                      activeColor: Colors.amber,
-                      inactiveColor: Colors.grey[700],
-                    ),
-                  ),
-                  Container(
-                    width: 32,
-                    alignment: Alignment.center,
-                    child: Text(
-                      (_settings.backgroundOpacity * 100).round().toString(),
-                      style: const TextStyle(color: Colors.white, fontSize: 14),
-                    ),
-                  ),
-                ],
-              ),
-              const Gap(16),
-
-              // ─── Logo ─────────────────────────────────────
-              Row(
-                children: [
-                  const Text(
-                    'Logo',
-                    style: TextStyle(color: Colors.white70, fontSize: 13),
-                  ),
-                  const Gap(12),
-                  ElevatedButton.icon(
-                    onPressed: _pickLogo,
-                    icon: const Icon(Icons.upload_file, size: 16),
-                    label: const Text('Pilih Logo'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.amber,
-                      foregroundColor: Colors.black,
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    ),
-                  ),
-                  if (_settings.hasLogo) ...[
-                    const Gap(8),
-                    Container(
-                      width: 32,
-                      height: 32,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(color: Colors.grey[700]!),
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(4),
-                        child: Image.file(
-                          File(_settings.logoPath!),
-                          fit: BoxFit.contain,
-                          errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, size: 20),
-                        ),
-                      ),
-                    ),
-                    const Gap(4),
-                    IconButton(
-                      onPressed: () {
-                        _settings.clearLogo();
-                        setState(() {});
-                      },
-                      icon: const Icon(Icons.close, size: 16, color: Colors.grey),
-                    ),
-                  ],
-                ],
-              ),
-              const Gap(24),
-
-              // ─── Tombol ──────────────────────────────────
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Batal'),
-                    ),
-                  ),
-                  const Gap(12),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: _saveAndClose,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.amber,
-                        foregroundColor: Colors.black,
-                      ),
-                      child: const Text('Simpan'),
-                    ),
-                  ),
-                ],
-              ),
-              const Gap(12),
-            ],
-          ),
-        ),
-      ),
-    );
+  Future<void> clearLogo() async {
+    logoPath = null;
+    hasLogo = false;
+    await save();
   }
 }
