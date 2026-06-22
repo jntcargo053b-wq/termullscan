@@ -2,13 +2,12 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
-
 import '../models/scan_entry.dart';
-import '../services/watermark_service.dart';
 import 'models/watermark_data.dart';
 import 'models/watermark_style.dart';
 import 'watermark_factory.dart';
 import 'watermark_settings.dart';
+import '../services/watermark_service.dart';
 
 class WatermarkRenderer {
   static const Set<WatermarkStyle> _stylesWithRealRenderer = {
@@ -20,7 +19,6 @@ class WatermarkRenderer {
 
   static final WatermarkService _legacyService = WatermarkService();
 
-  /// Render watermark untuk EXPORT. Menerima `settings` dan `entry`.
   static Future<String?> render({
     required String imagePath,
     required String outputPath,
@@ -29,8 +27,7 @@ class WatermarkRenderer {
   }) async {
     if (!_stylesWithRealRenderer.contains(settings.style)) {
       debugPrint(
-        '⚠️ WatermarkRenderer: "${settings.style.name}" belum punya render asli, '
-        'fallback ke legacy WatermarkService.',
+        '⚠️ WatermarkRenderer: "${settings.style.name}" belum punya render asli, fallback ke legacy.',
       );
       return _legacyService.addWatermark(
         imagePath: imagePath,
@@ -72,7 +69,6 @@ class WatermarkRenderer {
         logoImage = await _loadLogo(settings.logoPath!, targetWidth: targetWidth);
       }
 
-      // Buat WatermarkData dengan semua field dari settings
       final data = WatermarkData(
         timestamp: entry.timestamp,
         operatorName: settings.operatorName,
