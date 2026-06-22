@@ -96,9 +96,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   // ✅ Helper untuk deteksi Android 13+
   Future<bool> _isAndroid13OrHigher() async {
     try {
-      // TODO: Gunakan device_info_plus untuk deteksi akurat
-      // Sementara return false (kompatibel dengan semua versi)
-      return false;
+      final info = await DeviceInfoPlugin().androidInfo;
+      return info.version.sdkInt >= 33;
     } catch (_) {
       return false;
     }
