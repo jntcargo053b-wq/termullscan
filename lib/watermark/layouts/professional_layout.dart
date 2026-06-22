@@ -91,7 +91,6 @@ class ProfessionalLayout extends WatermarkLayout {
         break;
     }
 
-    // Gambar foto
     canvas.drawImageRect(
       srcImage,
       Rect.fromLTWH(0, 0, photoWidth, photoHeight),
@@ -101,7 +100,6 @@ class ProfessionalLayout extends WatermarkLayout {
         ..isAntiAlias = true,
     );
 
-    // Gradien latar
     final gradientPaint = Paint()
       ..shader = ui.Gradient.linear(
         Offset(0, overlayTop),
@@ -116,7 +114,6 @@ class ProfessionalLayout extends WatermarkLayout {
       gradientPaint,
     );
 
-    // Tentukan posisi teks
     final textContentWidth = metrics.textAvailableWidth;
     final double textX = textAlign == TextAlign.left
         ? padding
@@ -140,7 +137,6 @@ class ProfessionalLayout extends WatermarkLayout {
       textY += metrics.lineHeight;
     }
 
-    // Data
     if (data.hasBarcode) {
       drawText('🏷 ${data.barcodeValue}', Colors.white, data.fontSize + 2,
           fontWeight: FontWeight.w700);
@@ -151,7 +147,6 @@ class ProfessionalLayout extends WatermarkLayout {
     drawText('📅 ${data.formattedTimestamp}', Colors.white70, data.fontSize);
     drawText('📍 ${data.displayLocation}', Colors.white60, data.fontSize);
 
-    // Logo (di pojok atas, berlawanan dari teks)
     if (logoImage != null) {
       final logoMaxH = metrics.logoMaxSize;
       final logoW = logoImage.width.toDouble();
