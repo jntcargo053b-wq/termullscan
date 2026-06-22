@@ -11,11 +11,10 @@ import 'package:permission_handler/permission_handler.dart';
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
 import '../services/location_service.dart';
-import '../services/permission_service.dart'; // ✅ Service izin
+import '../services/permission_service.dart';
 import '../watermark/watermark_renderer.dart';
 import '../watermark/watermark_settings.dart';
 import 'watermark_settings_sheet.dart';
-import 'package:device_info_plus/device_info_plus.dart';
 
 // ═════════════════════════════════════════════════════════════════════════
 class BarcodeScanScreen extends StatefulWidget {
@@ -31,7 +30,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   String? _lastCode;
   int _scanCount = 0;
   bool _settingsLoaded = false;
-  bool _processingScan = false; // ✅ Cegah race condition
+  bool _processingScan = false;
+  bool _sheetOpen = false; // ✅ Guard untuk bottom sheet
 
   final StorageService _storage = StorageService();
   final Service _loc = Service();
@@ -48,6 +48,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
 
   @override
   void dispose() {
+    // ✅ Stop scanner sebelum dispose untuk stabilitas
+    _scannerController.stop();
     _scannerController.dispose();
     super.dispose();
   }
@@ -62,7 +64,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     }
   }
 
-  // ✅ PERMISSIONS – menggunakan PermissionService
   Future<void> _requestPermissions() async {
     await Permission.location.request();
     await Permission.camera.request();
@@ -99,7 +100,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
 
   // ── AUTO SCAN ────────────────────────────────────────────────────────────
   Future<void> _onDetect(BarcodeCapture capture) async {
-    // Cegah race condition
     if (!_scanning || _isSaving || _processingScan) return;
 
     _processingScan = true;
@@ -139,19 +139,19 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       setState(() => _scanCount++);
 
       if (mounted) {
-        await _scannerController.stop(); // Hentikan kamera saat proses
-        _takePhotoAndShow(entry).catchError((e) {
+        await _scannerController.stop();
+
+        // ✅ Await dengan try-catch
+        try {
+          await _takePhotoAndShow(entry);
+        } catch (e) {
           debugPrint('Error _takePhotoAndShow: $e');
-          if (mounted) {
-            _resumeScanning();
-          }
-        });
+          if (mounted) _resumeScanning();
+        }
       }
     } catch (e) {
       debugPrint('Error _onDetect: $e');
-      if (mounted) {
-        _resumeScanning();
-      }
+      if (mounted) _resumeScanning();
     } finally {
       _processingScan = false;
     }
@@ -294,10 +294,15 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       setState(() => _scanCount++);
 
       if (mounted) {
-        _takePhotoAndShow(entry).catchError((e) {
+        // ✅ Stop scanner sebelum proses manual
+        await _scannerController.stop();
+
+        try {
+          await _takePhotoAndShow(entry);
+        } catch (e) {
           debugPrint('Error _takePhotoAndShow: $e');
           if (mounted) _resumeScanning();
-        });
+        }
       }
     } catch (e) {
       debugPrint('Error _processManualCode: $e');
@@ -307,6 +312,13 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
 
   // ── FOTO & WATERMARK ─────────────────────────────────────────────────────
   Future<void> _takePhotoAndShow(ScanEntry entry) async {
+    // ✅ Guard bottom sheet ganda
+    if (_sheetOpen) {
+      debugPrint('⚠️ Bottom sheet already open, skipping');
+      return;
+    }
+    _sheetOpen = true;
+
     final XFile? file;
     try {
       file = await _picker.pickImage(
@@ -316,23 +328,30 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       );
     } catch (e) {
       debugPrint('Error opening camera: $e');
-      if (mounted) {
-        _resumeScanning();
-      }
+      _sheetOpen = false;
+      if (mounted) _resumeScanning();
       return;
     }
 
     if (file == null) {
-      if (mounted) {
-        _resumeScanning();
-      }
+      _sheetOpen = false;
+      if (mounted) _resumeScanning();
       return;
     }
 
     if (mounted) setState(() => _isSaving = true);
 
     try {
-      final coords = await _loc.getCoordinatesOnly();
+      // ✅ Timeout lokasi agar tidak menggantung
+      ({double? lat, double? lng}) coords;
+      try {
+        coords = await _loc.getCoordinatesOnly().timeout(
+          const Duration(seconds: 6),
+          onTimeout: () => (lat: null, lng: null),
+        );
+      } catch (_) {
+        coords = (lat: null, lng: null);
+      }
 
       ScanEntry updatedEntry = entry.copyWith(
         latitude: coords.lat,
@@ -345,6 +364,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         _ResultState(entry: updatedEntry, photoPath: null, processing: true),
       );
 
+      // ✅ Tampilkan bottom sheet dan dispose notifier saat ditutup
       showModalBottomSheet(
         context: context,
         isDismissible: true,
@@ -354,34 +374,16 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
           storage: _storage,
           onSaveToGallery: _saveToGallery,
         ),
-      ).then((_) {
+      ).whenComplete(() {
+        stateNotifier.dispose();
+        _sheetOpen = false; // ✅ Reset guard
         if (mounted) {
           _resumeScanning();
         }
       });
 
       if (coords.lat != null && coords.lng != null) {
-        // ignore: unawaited_futures
-        _loc.updateAddressForEntry(
-          entryId: updatedEntry.id,
-          lat: coords.lat!,
-          lng: coords.lng!,
-          onAddressReceived: (id, address) async {
-            final currentEntry = await _storage.getEntry(id);
-            if (currentEntry != null) {
-              final withAddress = currentEntry.copyWith(locationName: address);
-              await _storage.update(withAddress);
-              if (mounted) {
-                stateNotifier.value = _ResultState(
-                  entry: withAddress,
-                  photoPath: stateNotifier.value.photoPath,
-                  processing: stateNotifier.value.processing,
-                  error: stateNotifier.value.error,
-                );
-              }
-            }
-          },
-        );
+        unawaited(_updateAddressLater(updatedEntry.id, coords.lat!, coords.lng!, stateNotifier));
       }
 
       String wmPath;
@@ -423,6 +425,37 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       }
     } finally {
       if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  Future<void> _updateAddressLater(
+      String entryId,
+      double lat,
+      double lng,
+      ValueNotifier<_ResultState> notifier,
+  ) async {
+    try {
+      final address = await _loc.reverseGeocode(lat, lng).timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => null,
+      );
+      if (address != null && mounted) {
+        final currentEntry = await _storage.getEntry(entryId);
+        if (currentEntry != null) {
+          final updated = currentEntry.copyWith(locationName: address);
+          await _storage.update(updated);
+          // Update notifier jika masih relevan
+          final currentState = notifier.value;
+          notifier.value = _ResultState(
+            entry: updated,
+            photoPath: currentState.photoPath,
+            processing: currentState.processing,
+            error: currentState.error,
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Reverse geocoding failed for $entryId: $e');
     }
   }
 
@@ -469,6 +502,13 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   // ── SAVE TO GALLERY ─────────────────────────────────────────────────────
   Future<bool> _saveToGallery(String filePath, ScanEntry entry) async {
     try {
+      // ✅ Validasi file exists sebelum simpan
+      final file = File(filePath);
+      if (!await file.exists()) {
+        debugPrint('❌ File not found: $filePath');
+        return false;
+      }
+
       final granted = await PermissionService.requestGalleryPermission();
       if (!granted) {
         debugPrint('❌ Gallery permission denied');
@@ -505,8 +545,10 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
             icon: Stack(
               children: [
                 const Icon(Icons.tune, color: Colors.white),
-                if (_settingsLoaded && _wmSettings.operatorName.isNotEmpty ||
-                    _wmSettings.hasLogo)
+                // ✅ Perbaiki precedence operator
+                if (_settingsLoaded &&
+                    (_wmSettings.operatorName.isNotEmpty ||
+                     _wmSettings.hasLogo))
                   Positioned(
                     right: 0, top: 0,
                     child: Container(
@@ -530,7 +572,9 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
             onDetect: _onDetect,
           ),
 
-          if (_settingsLoaded && _wmSettings.operatorName.isNotEmpty && !_isSaving)
+          if (_settingsLoaded &&
+              _wmSettings.operatorName.isNotEmpty &&
+              !_isSaving)
             Positioned(
               top: 12,
               left: 0, right: 0,
