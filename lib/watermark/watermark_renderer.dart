@@ -3,71 +3,47 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 
+import '../models/scan_entry.dart';
 import '../services/watermark_service.dart';
 import 'models/watermark_data.dart';
 import 'models/watermark_style.dart';
 import 'watermark_factory.dart';
+import 'watermark_settings.dart';
 
-/// Single entry point untuk menghasilkan foto ber-watermark di EXPORT
-/// (bukan preview).
-///
-/// Sebelumnya ada dua "dunia" watermark:
-///  - `WatermarkFactory` + `WatermarkLayout` (Polaroid/Minimal/Professional/
-///    Stamp) → hanya dipakai untuk preview di settings sheet.
-///  - `WatermarkService` (legacy) → satu-satunya yang dipanggil saat export
-///    foto sungguhan, dan TIDAK peduli `style` sama sekali.
-///
-/// `WatermarkRenderer` menyatukan ini: untuk style yang sudah punya
-/// implementasi render asli (computeMetrics + paintOnCanvas), hasil export
-/// sekarang sama dengan yang ditampilkan di preview. Untuk style yang belum
-/// punya implementasi render asli (masih preview-only), kita fallback ke
-/// `WatermarkService` lama supaya tidak crash — bukan solusi akhir, tapi
-/// aman sambil layout-layout itu diimplementasikan menyusul.
 class WatermarkRenderer {
-  /// Style yang sudah punya implementasi `computeMetrics`/`paintOnCanvas`
-  /// asli di `WatermarkLayout`-nya. Style lain di luar daftar ini masih
-  /// preview-only dan akan dialihkan ke engine legacy.
   static const Set<WatermarkStyle> _stylesWithRealRenderer = {
-    WatermarkStyle.polaroid,
     WatermarkStyle.minimal,
     WatermarkStyle.professional,
+    WatermarkStyle.polaroid,
     WatermarkStyle.stamp,
   };
 
   static final WatermarkService _legacyService = WatermarkService();
 
-  /// Render watermark untuk EXPORT. Mengembalikan path file hasil, atau
-  /// null jika gagal.
+  /// Render watermark untuk EXPORT. Menerima `settings` dan `entry`.
   static Future<String?> render({
     required String imagePath,
     required String outputPath,
-    required String operatorName,
-    required WatermarkStyle style,
-    String? barcodeValue,
-    String? barcodeFormat,
-    required DateTime timestamp,
-    double? latitude,
-    double? longitude,
-    String? locationName,
-    String? logoPath,
+    required WatermarkSettings settings,
+    required ScanEntry entry,
   }) async {
-    if (!_stylesWithRealRenderer.contains(style)) {
+    if (!_stylesWithRealRenderer.contains(settings.style)) {
       debugPrint(
-        '⚠️ WatermarkRenderer: "${style.name}" belum punya render asli, '
+        '⚠️ WatermarkRenderer: "${settings.style.name}" belum punya render asli, '
         'fallback ke legacy WatermarkService.',
       );
       return _legacyService.addWatermark(
         imagePath: imagePath,
         outputPath: outputPath,
-        operatorName: operatorName,
-        style: style,
-        barcodeValue: barcodeValue,
-        barcodeFormat: barcodeFormat,
-        timestamp: timestamp,
-        latitude: latitude,
-        longitude: longitude,
-        locationName: locationName,
-        logoPath: logoPath,
+        operatorName: settings.operatorName,
+        style: settings.style,
+        barcodeValue: entry.value,
+        barcodeFormat: entry.barcodeFormat,
+        timestamp: entry.timestamp,
+        latitude: entry.latitude,
+        longitude: entry.longitude,
+        locationName: entry.locationName,
+        logoPath: settings.logoPath,
       );
     }
 
@@ -92,22 +68,26 @@ class WatermarkRenderer {
       final photoHeight = srcImage.height.toDouble();
 
       ui.Image? logoImage;
-      if (logoPath != null && logoPath.isNotEmpty) {
-        logoImage = await _loadLogo(logoPath, targetWidth: targetWidth);
+      if (settings.hasLogo && settings.logoPath != null && settings.logoPath!.isNotEmpty) {
+        logoImage = await _loadLogo(settings.logoPath!, targetWidth: targetWidth);
       }
 
+      // Buat WatermarkData dengan semua field dari settings
       final data = WatermarkData(
-        timestamp: timestamp,
-        operatorName: operatorName,
-        barcodeValue: barcodeValue,
-        barcodeFormat: barcodeFormat,
-        latitude: latitude,
-        longitude: longitude,
-        locationName: locationName,
-        logoPath: logoPath,
+        timestamp: entry.timestamp,
+        operatorName: settings.operatorName,
+        barcodeValue: entry.value,
+        barcodeFormat: entry.barcodeFormat,
+        latitude: entry.latitude,
+        longitude: entry.longitude,
+        locationName: entry.locationName,
+        logoPath: settings.logoPath,
+        position: settings.position,
+        fontSize: settings.fontSize,
+        backgroundOpacity: settings.backgroundOpacity,
       );
 
-      final layout = WatermarkFactory.create(style);
+      final layout = WatermarkFactory.create(settings.style);
       final metrics = layout.computeMetrics(
         photoWidth: photoWidth,
         photoHeight: photoHeight,
@@ -143,7 +123,7 @@ class WatermarkRenderer {
       final outputFile = File(outputPath);
       await outputFile.writeAsBytes(byteData.buffer.asUint8List());
 
-      debugPrint('✅ WatermarkRenderer: watermark (${style.name}) disimpan: $outputPath');
+      debugPrint('✅ WatermarkRenderer: watermark (${settings.style.name}) disimpan: $outputPath');
       return outputPath;
     } catch (e, stack) {
       debugPrint('❌ WatermarkRenderer: error saat render: $e\n$stack');
