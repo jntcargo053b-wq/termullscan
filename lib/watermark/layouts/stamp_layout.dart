@@ -68,6 +68,7 @@ class StampLayout extends WatermarkLayout {
     final padding = metrics.padding;
     final baseSize = metrics.baseSize;
 
+    // Gambar foto
     canvas.drawImageRect(
       srcImage,
       Rect.fromLTWH(0, 0, photoWidth, photoHeight),
@@ -82,9 +83,28 @@ class StampLayout extends WatermarkLayout {
 
     final stampW = baseSize * 0.30;
     final stampH = baseSize * 0.14;
-    final stampCenterX = photoWidth - padding - stampW / 2;
-    final stampCenterY = photoHeight - padding - stampH / 2;
+    double stampCenterX, stampCenterY;
 
+    switch (data.position) {
+      case WatermarkPosition.bottomRight:
+        stampCenterX = photoWidth - padding - stampW / 2;
+        stampCenterY = photoHeight - padding - stampH / 2;
+        break;
+      case WatermarkPosition.bottomLeft:
+        stampCenterX = padding + stampW / 2;
+        stampCenterY = photoHeight - padding - stampH / 2;
+        break;
+      case WatermarkPosition.topRight:
+        stampCenterX = photoWidth - padding - stampW / 2;
+        stampCenterY = padding + stampH / 2;
+        break;
+      case WatermarkPosition.topLeft:
+        stampCenterX = padding + stampW / 2;
+        stampCenterY = padding + stampH / 2;
+        break;
+    }
+
+    // Gambar stempel
     canvas.save();
     canvas.translate(stampCenterX, stampCenterY);
     canvas.rotate(-0.08);
@@ -150,38 +170,58 @@ class StampLayout extends WatermarkLayout {
 
     canvas.restore();
 
+    // Info panel (barcode, operator, lokasi) di sisi yang sama dengan stempel
     final infoLines = <String>[];
     if (data.hasBarcode) infoLines.add(data.barcodeValue!);
     if (data.hasOperator) infoLines.add('OP: ${data.operatorName}');
     infoLines.add(data.displayLocation);
 
-    final fontSize = metrics.fontSize;
-    final lineHeight = metrics.lineHeight;
-    final panelHeight = infoLines.length * lineHeight + padding;
-    final panelWidth = metrics.textAvailableWidth + padding * 0.8;
+    final fontSize = data.fontSize;
+    final lineHeight = fontSize * 1.4;
+    final panelPadding = 8.0;
+    final panelHeight = infoLines.length * lineHeight + panelPadding * 2;
+    final panelWidth = metrics.textAvailableWidth + panelPadding * 2;
+
+    double panelX, panelY;
+    // Tempatkan panel di bawah atau di samping stempel, tergantung posisi
+    switch (data.position) {
+      case WatermarkPosition.bottomRight:
+        panelX = photoWidth - padding - panelWidth;
+        panelY = photoHeight - padding - panelHeight - stampH - padding;
+        break;
+      case WatermarkPosition.bottomLeft:
+        panelX = padding;
+        panelY = photoHeight - padding - panelHeight - stampH - padding;
+        break;
+      case WatermarkPosition.topRight:
+        panelX = photoWidth - padding - panelWidth;
+        panelY = padding + stampH + padding;
+        break;
+      case WatermarkPosition.topLeft:
+        panelX = padding;
+        panelY = padding + stampH + padding;
+        break;
+    }
 
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-        Rect.fromLTWH(
-          padding * 0.6,
-          photoHeight - padding * 0.6 - panelHeight,
-          panelWidth,
-          panelHeight,
-        ),
-        Radius.circular(baseSize * 0.012),
+        Rect.fromLTWH(panelX, panelY, panelWidth, panelHeight),
+        Radius.circular(8),
       ),
-      Paint()..color = Colors.black.withOpacity(0.45),
+      Paint()
+        ..color = Colors.black.withOpacity(data.backgroundOpacity * 1.2)
+        ..style = PaintingStyle.fill,
     );
 
-    double textY2 = photoHeight - padding * 0.6 - panelHeight + padding * 0.4;
-    final textX = padding * 0.6 + padding * 0.4;
+    double textY2 = panelY + panelPadding;
+    final textX2 = panelX + panelPadding;
     for (final line in infoLines) {
       TextHelper.paintText(
         canvas: canvas,
         text: line,
-        x: textX,
+        x: textX2,
         y: textY2,
-        maxWidth: panelWidth - padding * 0.8,
+        maxWidth: panelWidth - panelPadding * 2,
         color: Colors.white,
         fontSize: fontSize,
         fontWeight: FontWeight.w600,
@@ -190,6 +230,7 @@ class StampLayout extends WatermarkLayout {
       textY2 += lineHeight;
     }
 
+    // Logo di pojok berlawanan (opsional)
     if (logoImage != null) {
       final logoSize = metrics.logoMaxSize;
       final logoW = logoImage.width.toDouble();
@@ -197,11 +238,30 @@ class StampLayout extends WatermarkLayout {
       final scale = math.min(logoSize / logoW, logoSize / logoH);
       final drawW = logoW * scale;
       final drawH = logoH * scale;
+      double logoX, logoY;
+      switch (data.position) {
+        case WatermarkPosition.bottomRight:
+          logoX = padding;
+          logoY = padding;
+          break;
+        case WatermarkPosition.bottomLeft:
+          logoX = photoWidth - padding - drawW;
+          logoY = padding;
+          break;
+        case WatermarkPosition.topRight:
+          logoX = padding;
+          logoY = photoHeight - padding - drawH;
+          break;
+        case WatermarkPosition.topLeft:
+          logoX = photoWidth - padding - drawW;
+          logoY = photoHeight - padding - drawH;
+          break;
+      }
       LogoWidget.paint(
         canvas: canvas,
         logoImage: logoImage,
-        x: padding,
-        y: padding,
+        x: logoX,
+        y: logoY,
         maxWidth: drawW,
         maxHeight: drawH,
         opacity: 1.0,
