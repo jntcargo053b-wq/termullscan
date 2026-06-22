@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'models/watermark_style.dart';
+import 'watermark_style.dart';
 
 enum WatermarkPosition {
   bottomRight,
@@ -23,7 +23,6 @@ class WatermarkSettings {
   String? logoPath;
   bool hasLogo = false;
 
-  // Properti baru
   WatermarkPosition position = WatermarkPosition.bottomRight;
   double fontSize = 14.0;
   double backgroundOpacity = 0.55;
@@ -46,7 +45,6 @@ class WatermarkSettings {
       logoPath = prefs.getString(_keyLogoPath);
       hasLogo = prefs.getBool(_keyHasLogo) ?? false;
 
-      // Muat properti baru
       final posIndex = prefs.getInt(_keyPosition) ?? WatermarkPosition.bottomRight.index;
       final posValues = WatermarkPosition.values;
       position = (posIndex >= 0 && posIndex < posValues.length)
@@ -73,7 +71,6 @@ class WatermarkSettings {
       }
       await prefs.setBool(_keyHasLogo, hasLogo);
 
-      // Simpan properti baru
       await prefs.setInt(_keyPosition, position.index);
       await prefs.setDouble(_keyFontSize, fontSize);
       await prefs.setDouble(_keyBgOpacity, backgroundOpacity);
@@ -84,7 +81,6 @@ class WatermarkSettings {
     }
   }
 
-  // Setter
   Future<void> setOperatorName(String name) async {
     operatorName = name;
     await save();
