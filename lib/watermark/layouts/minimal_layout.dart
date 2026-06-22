@@ -91,7 +91,6 @@ class MinimalLayout extends WatermarkLayout {
         break;
     }
 
-    // Gambar foto
     canvas.drawImageRect(
       srcImage,
       Rect.fromLTWH(0, 0, photoWidth, photoHeight),
@@ -101,7 +100,6 @@ class MinimalLayout extends WatermarkLayout {
         ..isAntiAlias = true,
     );
 
-    // Gradien latar
     final gradientPaint = Paint()
       ..shader = ui.Gradient.linear(
         Offset(0, overlayTop),
@@ -116,7 +114,6 @@ class MinimalLayout extends WatermarkLayout {
       gradientPaint,
     );
 
-    // Tentukan posisi teks
     final textContentWidth = metrics.textAvailableWidth;
     final double textX = textAlign == TextAlign.left
         ? padding
@@ -140,7 +137,6 @@ class MinimalLayout extends WatermarkLayout {
       textY += tp + fontSize * 0.25;
     }
 
-    // Data
     if (data.hasBarcode) {
       drawText(data.barcodeValue!, Colors.white, data.fontSize + 2,
           fontWeight: FontWeight.w700);
@@ -156,7 +152,6 @@ class MinimalLayout extends WatermarkLayout {
           fontWeight: FontWeight.w700);
     }
 
-    // Logo (di pojok, berlawanan dari teks)
     if (logoImage != null) {
       final logoSize = metrics.logoMaxSize;
       final logoW = logoImage.width.toDouble();
