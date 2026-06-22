@@ -101,22 +101,29 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     });
   }
 
+  // ✅ Perbaiki method ini
   Future<String> _applyWatermark(String imagePath, DateTime timestamp) async {
     final outputPath =
         '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.png';
 
+    // Buat ScanEntry sementara untuk keperluan watermark
+    // (karena renderer sekarang menerima ScanEntry)
+    final tempEntry = ScanEntry(
+      id: _storage.generateId(), // ID sementara, tidak akan disimpan
+      type: ScanType.photo,
+      value: '', // Tidak ada barcode
+      barcodeFormat: null,
+      timestamp: timestamp,
+      latitude: null,
+      longitude: null,
+      locationName: null,
+    );
+
     final result = await WatermarkRenderer.render(
       imagePath: imagePath,
       outputPath: outputPath,
-      operatorName: _wmSettings.operatorName,
-      style: _wmSettings.style,
-      barcodeValue: null,
-      barcodeFormat: null,
-      timestamp: timestamp,
-      latitude: null,   // GPS dimatikan
-      longitude: null,  // GPS dimatikan
-      locationName: null,
-      logoPath: _wmSettings.hasLogo ? _wmSettings.logoPath : null,
+      settings: _wmSettings,
+      entry: tempEntry,
     );
 
     if (result != null && result != imagePath) {
