@@ -32,28 +32,27 @@ class ProfessionalLayout extends WatermarkLayout {
     if (data.hasOperator) rowCount++;
     rowCount++; // location
 
-    final rowH = baseSize * 0.052;
+    final lineH = LayoutHelper.lineHeight(baseSize, ratio: 0.040);
     final fontSz = LayoutHelper.fontSize(baseSize, ratio: 0.026);
-    final lineH = LayoutHelper.lineHeight(baseSize, ratio: 0.052);
-    final stripHeight = rowCount * rowH + baseSize * 0.04;
+    final overlayHeight = math.max(
+      photoHeight * 0.16,
+      rowCount * lineH + padding * 1.8,
+    );
 
-    final canvasW = photoWidth;
-    final canvasH = photoHeight + stripHeight;
-
-    final logoMaxSize = stripHeight * 0.55;
+    final logoMaxSize = baseSize * 0.12;
     final rightReserved = logoMaxSize + padding;
-    final textW = canvasW - padding * 2 - rightReserved;
+    final textW = photoWidth - padding * 2 - rightReserved;
 
     return LayoutMetrics(
       baseSize: baseSize,
       padding: padding,
       fontSize: fontSz,
       lineHeight: lineH,
-      stripHeight: stripHeight,
+      stripHeight: overlayHeight,
       logoMaxSize: logoMaxSize,
       textRowCount: rowCount,
-      canvasWidth: canvasW,
-      canvasHeight: canvasH,
+      canvasWidth: photoWidth,
+      canvasHeight: photoHeight,
       textAvailableWidth: textW,
     );
   }
@@ -68,12 +67,31 @@ class ProfessionalLayout extends WatermarkLayout {
     required ui.Image? logoImage,
     required WatermarkData data,
   }) {
-    final canvasWidth = metrics.canvasWidth;
-    final canvasHeight = metrics.canvasHeight;
-    final stripHeight = metrics.stripHeight;
-    final stripTop = photoHeight;
     final padding = metrics.padding;
+    final overlayHeight = metrics.stripHeight;
+    double overlayTop;
+    TextAlign textAlign;
 
+    switch (data.position) {
+      case WatermarkPosition.bottomRight:
+        overlayTop = photoHeight - overlayHeight;
+        textAlign = TextAlign.right;
+        break;
+      case WatermarkPosition.bottomLeft:
+        overlayTop = photoHeight - overlayHeight;
+        textAlign = TextAlign.left;
+        break;
+      case WatermarkPosition.topRight:
+        overlayTop = 0;
+        textAlign = TextAlign.right;
+        break;
+      case WatermarkPosition.topLeft:
+        overlayTop = 0;
+        textAlign = TextAlign.left;
+        break;
+    }
+
+    // Gambar foto
     canvas.drawImageRect(
       srcImage,
       Rect.fromLTWH(0, 0, photoWidth, photoHeight),
@@ -83,46 +101,70 @@ class ProfessionalLayout extends WatermarkLayout {
         ..isAntiAlias = true,
     );
 
-    canvas.drawRect(
-      Rect.fromLTWH(0, stripTop, canvasWidth, stripHeight),
-      Paint()..color = Colors.white,
-    );
-    canvas.drawLine(
-      Offset(0, stripTop),
-      Offset(canvasWidth, stripTop),
-      Paint()
-        ..color = const Color(0xFF1A2A3A)
-        ..strokeWidth = math.max(2.0, metrics.baseSize * 0.003),
-    );
-
-    final logoReserve = logoImage != null ? metrics.logoMaxSize : 0.0;
-    _paintTwoColumnTable(
-      canvas: canvas,
-      data: data,
-      x: padding,
-      y: stripTop + padding * 0.6,
-      maxWidth: canvasWidth - padding * 2 - logoReserve,
-      metrics: metrics,
-    );
-
-    if (data.isManual) {
-      _paintManualBadge(
-        canvas: canvas,
-        x: canvasWidth - padding - logoReserve - metrics.baseSize * 0.13,
-        y: stripTop + padding * 0.6,
-        baseSize: metrics.baseSize,
+    // Gradien latar
+    final gradientPaint = Paint()
+      ..shader = ui.Gradient.linear(
+        Offset(0, overlayTop),
+        Offset(0, overlayTop + overlayHeight),
+        [
+          Colors.black.withOpacity(0.0),
+          Colors.black.withOpacity(data.backgroundOpacity),
+        ],
       );
+    canvas.drawRect(
+      Rect.fromLTWH(0, overlayTop, photoWidth, overlayHeight),
+      gradientPaint,
+    );
+
+    // Tentukan posisi teks
+    final textContentWidth = metrics.textAvailableWidth;
+    final double textX = textAlign == TextAlign.left
+        ? padding
+        : photoWidth - padding - textContentWidth;
+    double textY = overlayTop + padding;
+
+    void drawText(String text, Color color, double fontSize,
+        {FontWeight fontWeight = FontWeight.w500}) {
+      TextHelper.paintText(
+        canvas: canvas,
+        text: text,
+        x: textX,
+        y: textY,
+        maxWidth: textContentWidth,
+        color: color,
+        fontSize: fontSize,
+        fontWeight: fontWeight,
+        maxLines: 1,
+        textAlign: textAlign,
+      );
+      textY += metrics.lineHeight;
     }
 
+    // Data
+    if (data.hasBarcode) {
+      drawText('🏷 ${data.barcodeValue}', Colors.white, data.fontSize + 2,
+          fontWeight: FontWeight.w700);
+    }
+    if (data.hasOperator) {
+      drawText('👤 ${data.operatorName}', Colors.white70, data.fontSize);
+    }
+    drawText('📅 ${data.formattedTimestamp}', Colors.white70, data.fontSize);
+    drawText('📍 ${data.displayLocation}', Colors.white60, data.fontSize);
+
+    // Logo (di pojok atas, berlawanan dari teks)
     if (logoImage != null) {
       final logoMaxH = metrics.logoMaxSize;
       final logoW = logoImage.width.toDouble();
       final logoH = logoImage.height.toDouble();
-      final scale = logoMaxH / logoH;
+      final scale = math.min(logoMaxH / logoW, logoMaxH / logoH);
       final drawW = logoW * scale;
       final drawH = logoH * scale;
-      final logoX = canvasWidth - padding - drawW;
-      final logoY = stripTop + (stripHeight - drawH) / 2;
+      double logoX = textAlign == TextAlign.left
+          ? photoWidth - padding - drawW
+          : padding;
+      double logoY = overlayTop == 0
+          ? photoHeight - padding - drawH
+          : padding;
 
       LogoWidget.paint(
         canvas: canvas,
@@ -131,7 +173,7 @@ class ProfessionalLayout extends WatermarkLayout {
         y: logoY,
         maxWidth: drawW,
         maxHeight: drawH,
-        opacity: 1.0,
+        opacity: 0.8,
       );
     }
   }
@@ -198,79 +240,6 @@ class ProfessionalLayout extends WatermarkLayout {
           ),
         ),
       ],
-    );
-  }
-
-  void _paintTwoColumnTable({
-    required ui.Canvas canvas,
-    required WatermarkData data,
-    required double x,
-    required double y,
-    required double maxWidth,
-    required LayoutMetrics metrics,
-  }) {
-    final fontSz = metrics.fontSize;
-    final lineH = metrics.lineHeight;
-    final col1Width = maxWidth * 0.30;
-    final col2Width = maxWidth * 0.65;
-    double currentY = y;
-
-    void drawRow(String label, String value, {bool emphasize = false}) {
-      TextHelper.paintText(
-        canvas: canvas,
-        text: label,
-        x: x,
-        y: currentY,
-        maxWidth: col1Width,
-        color: const Color(0xFF8A95A5),
-        fontSize: fontSz * 0.9,
-        fontWeight: FontWeight.w600,
-        textAlign: TextAlign.right,
-      );
-      TextHelper.paintText(
-        canvas: canvas,
-        text: value,
-        x: x + col1Width + 8,
-        y: currentY,
-        maxWidth: col2Width,
-        color: const Color(0xFF1A2A3A),
-        fontSize: fontSz,
-        fontWeight: emphasize ? FontWeight.w800 : FontWeight.w600,
-      );
-      currentY += lineH;
-    }
-
-    if (data.hasBarcode) {
-      drawRow('Kode', data.barcodeValue!, emphasize: true);
-    }
-    if (data.hasOperator) {
-      drawRow('Operator', data.operatorName);
-    }
-    drawRow('Tanggal', data.formattedTimestamp);
-    drawRow('Lokasi', data.displayLocation);
-  }
-
-  void _paintManualBadge({
-    required ui.Canvas canvas,
-    required double x,
-    required double y,
-    required double baseSize,
-  }) {
-    final badgeW = baseSize * 0.13;
-    final badgeH = baseSize * 0.026;
-    canvas.drawRect(
-      Rect.fromLTWH(x, y, badgeW, badgeH),
-      Paint()..color = const Color(0xFF1A2A3A),
-    );
-    TextHelper.paintText(
-      canvas: canvas,
-      text: 'INPUT MANUAL',
-      x: x + 4,
-      y: y + 2,
-      maxWidth: badgeW - 8,
-      color: Colors.white,
-      fontSize: badgeH * 0.45,
-      fontWeight: FontWeight.w700,
     );
   }
 }
