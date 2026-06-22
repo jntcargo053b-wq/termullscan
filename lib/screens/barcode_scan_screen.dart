@@ -14,6 +14,7 @@ import '../services/location_service.dart';
 import '../watermark/watermark_renderer.dart';
 import '../watermark/watermark_settings.dart';
 import 'watermark_settings_sheet.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 
 // ═════════════════════════════════════════════════════════════════════════
 class BarcodeScanScreen extends StatefulWidget {
