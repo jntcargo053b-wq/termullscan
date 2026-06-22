@@ -29,21 +29,28 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   bool _isSaving = false;
   String? _lastCode;
   int _scanCount = 0;
-  bool _settingsLoaded = false; // ✅ Tambahan
+  bool _settingsLoaded = false;
+  bool _processingScan = false; // ✅ Tambahan untuk race condition
 
   final StorageService _storage = StorageService();
   final Service _loc = Service();
   final ImagePicker _picker = ImagePicker();
   final WatermarkSettings _wmSettings = WatermarkSettings();
+  final MobileScannerController _scannerController = MobileScannerController(); // ✅ Controller kamera
 
   @override
   void initState() {
     super.initState();
     _requestPermissions();
-    _initializeSettings(); // ✅ FIX: Panggil method async
+    _initializeSettings();
   }
 
-  // ✅ FIX: Inisialisasi settings dengan await
+  @override
+  void dispose() {
+    _scannerController.dispose();
+    super.dispose();
+  }
+
   Future<void> _initializeSettings() async {
     await _wmSettings.load();
     if (mounted) {
@@ -53,7 +60,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     }
   }
 
-  // ✅ FIX: Permission dinamis untuk Android 13+
   Future<void> _requestPermissions() async {
     final permissions = <Permission>[
       Permission.location,
@@ -61,7 +67,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       Permission.photos,
     ];
     
-    // Storage hanya untuk Android < 13
     if (!await _isAndroid13OrHigher()) {
       permissions.add(Permission.storage);
     }
@@ -69,7 +74,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     await permissions.request();
   }
 
-  // ✅ Helper untuk deteksi Android 13+
   Future<bool> _isAndroid13OrHigher() async {
     try {
       final info = await DeviceInfoPlugin().androidInfo;
@@ -79,7 +83,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     }
   }
 
-  // ✅ FIX: BottomSheet dengan mounted check
   void _openWatermarkSettings() {
     showModalBottomSheet(
       context: context,
@@ -96,16 +99,36 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     });
   }
 
+  // ── RESUME SCANNING ──────────────────────────────────────────────────────
+  Future<void> _resumeScanning() async {
+    await _scannerController.start();
+    if (mounted) {
+      setState(() {
+        _scanning = true;
+        _lastCode = null;
+      });
+    }
+  }
+
   // ── AUTO SCAN ────────────────────────────────────────────────────────────
   Future<void> _onDetect(BarcodeCapture capture) async {
-    if (!_scanning || _isSaving) return;
+    // ✅ Cegah race condition dengan flag processing
+    if (!_scanning || _isSaving || _processingScan) return;
+
+    _processingScan = true;
 
     final barcode = capture.barcodes.isNotEmpty ? capture.barcodes.first : null;
-    if (barcode == null || barcode.rawValue == null) return;
+    if (barcode == null || barcode.rawValue == null) {
+      _processingScan = false;
+      return;
+    }
 
     final code = barcode.rawValue!;
     final format = barcode.format.name;
-    if (code == _lastCode) return;
+    if (code == _lastCode) {
+      _processingScan = false;
+      return;
+    }
 
     setState(() {
       _scanning = false;
@@ -129,22 +152,23 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       setState(() => _scanCount++);
 
       if (mounted) {
+        // ✅ Hentikan kamera saat memproses
+        await _scannerController.stop();
+
         _takePhotoAndShow(entry).catchError((e) {
           debugPrint('Error _takePhotoAndShow: $e');
-          if (mounted) setState(() {
-            _isSaving = false;
-            _scanning = true;
-            _lastCode = null;
-          });
+          if (mounted) {
+            _resumeScanning();
+          }
         });
       }
     } catch (e) {
       debugPrint('Error _onDetect: $e');
-      if (mounted) setState(() {
-        _isSaving = false;
-        _scanning = true;
-        _lastCode = null;
-      });
+      if (mounted) {
+        _resumeScanning();
+      }
+    } finally {
+      _processingScan = false;
     }
   }
 
@@ -287,20 +311,12 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       if (mounted) {
         _takePhotoAndShow(entry).catchError((e) {
           debugPrint('Error _takePhotoAndShow: $e');
-          if (mounted) setState(() {
-            _isSaving = false;
-            _scanning = true;
-            _lastCode = null;
-          });
+          if (mounted) _resumeScanning();
         });
       }
     } catch (e) {
       debugPrint('Error _processManualCode: $e');
-      if (mounted) setState(() {
-        _isSaving = false;
-        _scanning = true;
-        _lastCode = null;
-      });
+      if (mounted) _resumeScanning();
     }
   }
 
@@ -316,20 +332,14 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     } catch (e) {
       debugPrint('Error opening camera: $e');
       if (mounted) {
-        setState(() {
-          _scanning = true;
-          _lastCode = null;
-        });
+        _resumeScanning();
       }
       return;
     }
 
     if (file == null) {
       if (mounted) {
-        setState(() {
-          _scanning = true;
-          _lastCode = null;
-        });
+        _resumeScanning();
       }
       return;
     }
@@ -350,7 +360,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         _ResultState(entry: updatedEntry, photoPath: null, processing: true),
       );
 
-      // ✅ FIX: BottomSheet result dengan mounted check
       showModalBottomSheet(
         context: context,
         isDismissible: true,
@@ -362,10 +371,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         ),
       ).then((_) {
         if (mounted) {
-          setState(() {
-            _scanning = true;
-            _lastCode = null;
-          });
+          _resumeScanning();
         }
       });
 
@@ -428,13 +434,13 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
             content: Text('Gagal memproses: $e'),
           ),
         );
+        _resumeScanning();
       }
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
   }
 
-  // ✅ FIX: Safe file deletion dengan cache check
   Future<String> _addWatermarkInIsolate(String imagePath, ScanEntry entry) async {
     final outputPath =
         '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.png';
@@ -455,7 +461,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
 
     if (result == null) throw Exception('Watermark isolate gagal');
 
-    // ✅ Hanya hapus jika file adalah cache internal
     if (result != imagePath) {
       final file = File(imagePath);
       try {
@@ -525,7 +530,10 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       ),
       body: Stack(
         children: [
-          MobileScanner(onDetect: _onDetect),
+          MobileScanner(
+            controller: _scannerController, // ✅ Gunakan controller
+            onDetect: _onDetect,
+          ),
 
           if (_settingsLoaded && _wmSettings.operatorName.isNotEmpty && !_isSaving)
             Positioned(
