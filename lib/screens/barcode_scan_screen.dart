@@ -12,12 +12,11 @@ import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
 import '../services/location_service.dart';
 import '../services/permission_service.dart';
+import '../config/app_config.dart';
 import '../watermark/watermark_renderer.dart';
 import '../watermark/watermark_settings.dart';
-import '../config/app_config.dart'; // ✅ tambahan
 import 'watermark_settings_sheet.dart';
 
-// ═════════════════════════════════════════════════════════════════════════
 class BarcodeScanScreen extends StatefulWidget {
   const BarcodeScanScreen({super.key});
 
@@ -35,7 +34,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   bool _sheetOpen = false;
 
   final StorageService _storage = StorageService();
-  final Service _loc = Service();
+  // Service _loc tidak digunakan karena GPS dinonaktifkan
   final ImagePicker _picker = ImagePicker();
   final WatermarkSettings _wmSettings = WatermarkSettings();
   final MobileScannerController _scannerController = MobileScannerController();
@@ -54,7 +53,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     super.dispose();
   }
 
-  // ── INISIALISASI ─────────────────────────────────────────────────────────
   Future<void> _initializeSettings() async {
     await _wmSettings.load();
     if (mounted) {
@@ -64,16 +62,12 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     }
   }
 
+  // Hanya minta izin kamera dan galeri, lokasi diabaikan
   Future<void> _requestPermissions() async {
-    // Hanya minta lokasi jika GPS diaktifkan
-    if (AppConfig.enableGps) {
-      await Permission.location.request();
-    }
     await Permission.camera.request();
     await PermissionService.requestGalleryPermission();
   }
 
-  // ── RESUME SCANNING ──────────────────────────────────────────────────────
   Future<void> _resumeScanning() async {
     await _scannerController.start();
     if (mounted) {
@@ -84,7 +78,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     }
   }
 
-  // ── WATERMARK SETTINGS ──────────────────────────────────────────────────
   void _openWatermarkSettings() {
     showModalBottomSheet(
       context: context,
@@ -95,13 +88,10 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       ),
       builder: (_) => const WatermarkSettingsSheet(),
     ).then((_) {
-      if (mounted) {
-        setState(() {});
-      }
+      if (mounted) setState(() {});
     });
   }
 
-  // ── AUTO SCAN ────────────────────────────────────────────────────────────
   Future<void> _onDetect(BarcodeCapture capture) async {
     if (!_scanning || _isSaving || _processingScan) return;
 
@@ -158,7 +148,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     }
   }
 
-  // ── INPUT MANUAL ─────────────────────────────────────────────────────────
   void _showManualInput() {
     final controller = TextEditingController();
     showModalBottomSheet(
@@ -309,7 +298,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     }
   }
 
-  // ── FOTO & WATERMARK ─────────────────────────────────────────────────────
   Future<void> _takePhotoAndShow(ScanEntry entry) async {
     if (_sheetOpen) {
       debugPrint('⚠️ Bottom sheet already open, skipping');
@@ -340,25 +328,10 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     if (mounted) setState(() => _isSaving = true);
 
     try {
-      // ---- GPS ----
-      double? lat, lng;
-      if (AppConfig.enableGps) {
-        try {
-          final coords = await _loc.getCoordinatesOnly().timeout(
-            const Duration(seconds: 6),
-            onTimeout: () => (lat: null, lng: null),
-          );
-          lat = coords.lat;
-          lng = coords.lng;
-        } catch (_) {
-          lat = null;
-          lng = null;
-        }
-      }
-
-      ScanEntry updatedEntry = entry.copyWith(
-        latitude: lat,
-        longitude: lng,
+      // GPS dimatikan: koordinat dan lokasi selalu null
+      final updatedEntry = entry.copyWith(
+        latitude: null,
+        longitude: null,
         locationName: null,
       );
       await _storage.update(updatedEntry);
@@ -379,15 +352,10 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       ).whenComplete(() {
         stateNotifier.dispose();
         _sheetOpen = false;
-        if (mounted) {
-          _resumeScanning();
-        }
+        if (mounted) _resumeScanning();
       });
 
-      // Reverse geocode hanya jika GPS aktif
-      if (AppConfig.enableGps && lat != null && lng != null) {
-        unawaited(_updateAddressLater(updatedEntry.id, lat!, lng!, stateNotifier));
-      }
+      // Tidak ada reverse geocode karena GPS nonaktif
 
       String wmPath;
       try {
@@ -404,8 +372,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         type: ScanType.photo,
         value: savedPhotoPath,
         timestamp: DateTime.now(),
-        latitude: lat,
-        longitude: lng,
+        latitude: null,
+        longitude: null,
         locationName: null,
       );
       await _storage.add(photoEntry);
@@ -431,36 +399,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     }
   }
 
-  Future<void> _updateAddressLater(
-      String entryId,
-      double lat,
-      double lng,
-      ValueNotifier<_ResultState> notifier,
-  ) async {
-    try {
-      final address = await _loc.reverseGeocode(lat, lng).timeout(
-        const Duration(seconds: 5),
-        onTimeout: () => null,
-      );
-      if (address != null && mounted) {
-        final currentEntry = await _storage.getEntry(entryId);
-        if (currentEntry != null) {
-          final updated = currentEntry.copyWith(locationName: address);
-          await _storage.update(updated);
-          final currentState = notifier.value;
-          notifier.value = _ResultState(
-            entry: updated,
-            photoPath: currentState.photoPath,
-            processing: currentState.processing,
-            error: currentState.error,
-          );
-        }
-      }
-    } catch (e) {
-      debugPrint('Reverse geocoding failed for $entryId: $e');
-    }
-  }
-
   Future<String> _addWatermarkInIsolate(String imagePath, ScanEntry entry) async {
     final outputPath =
         '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.png';
@@ -473,9 +411,9 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       barcodeValue: entry.value,
       barcodeFormat: entry.barcodeFormat,
       timestamp: entry.timestamp,
-      latitude: entry.latitude,
-      longitude: entry.longitude,
-      locationName: entry.locationName,
+      latitude: null,   // GPS dimatikan
+      longitude: null,  // GPS dimatikan
+      locationName: null,
       logoPath: _wmSettings.hasLogo ? _wmSettings.logoPath : null,
     );
 
@@ -501,10 +439,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     return result;
   }
 
-  // ── SAVE TO GALLERY ─────────────────────────────────────────────────────
   Future<bool> _saveToGallery(String filePath, ScanEntry entry) async {
     try {
-      // Verifikasi file exists sebelum simpan
       final file = File(filePath);
       if (!await file.exists()) {
         debugPrint('❌ File not found: $filePath');
@@ -527,7 +463,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       );
 
       await Future.delayed(const Duration(milliseconds: 500));
-
       return result.isSuccess;
     } catch (e) {
       debugPrint('❌ Error _saveToGallery: $e');
@@ -535,7 +470,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     }
   }
 
-  // ── BUILD ────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -572,7 +506,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
             controller: _scannerController,
             onDetect: _onDetect,
           ),
-
           if (_settingsLoaded &&
               _wmSettings.operatorName.isNotEmpty &&
               !_isSaving)
@@ -609,7 +542,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
                 ),
               ),
             ),
-
           if (!_isSaving)
             Positioned(
               bottom: 40,
@@ -633,7 +565,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
                 ),
               ),
             ),
-
           if (_isSaving)
             const ColoredBox(
               color: Color(0x88000000),
@@ -661,7 +592,6 @@ class _ResultState {
   final String? photoPath;
   final bool processing;
   final bool error;
-
   const _ResultState({
     required this.entry,
     required this.photoPath,
@@ -675,7 +605,6 @@ class _ResultSheet extends StatefulWidget {
   final ValueNotifier<_ResultState> notifier;
   final StorageService storage;
   final Future<bool> Function(String, ScanEntry) onSaveToGallery;
-
   const _ResultSheet({
     required this.notifier,
     required this.storage,
@@ -724,7 +653,6 @@ class _ResultSheetState extends State<_ResultSheet> {
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
-
               if (_isManual)
                 Container(
                   margin: const EdgeInsets.only(bottom: 10),
@@ -748,7 +676,6 @@ class _ResultSheetState extends State<_ResultSheet> {
                     ],
                   ),
                 ),
-
               if (photoPath != null)
                 ClipRRect(
                   borderRadius: BorderRadius.circular(10),
@@ -796,7 +723,6 @@ class _ResultSheetState extends State<_ResultSheet> {
                   ),
                 ),
               const Gap(12),
-
               Text(
                 entry.value,
                 style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
@@ -808,12 +734,12 @@ class _ResultSheetState extends State<_ResultSheet> {
                 style: const TextStyle(color: Colors.grey, fontSize: 13),
               ),
               const Gap(4),
+              // Koordinat selalu kosong karena GPS nonaktif
               Text(
-                entry.coordinatesString,
+                'GPS dinonaktifkan',
                 style: const TextStyle(color: Colors.grey, fontSize: 12),
               ),
               const Gap(12),
-
               if (!_isEditingNote && !_noteSaved)
                 SizedBox(
                   width: double.infinity,
@@ -827,7 +753,6 @@ class _ResultSheetState extends State<_ResultSheet> {
                     ),
                   ),
                 ),
-
               if (_isEditingNote)
                 Column(
                   children: [
@@ -883,7 +808,6 @@ class _ResultSheetState extends State<_ResultSheet> {
                     ),
                   ],
                 ),
-
               if (_noteSaved)
                 Container(
                   width: double.infinity,
@@ -913,9 +837,7 @@ class _ResultSheetState extends State<_ResultSheet> {
                     ],
                   ),
                 ),
-
               const Gap(12),
-
               Row(
                 children: [
                   Expanded(
