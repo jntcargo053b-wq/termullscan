@@ -1,3 +1,5 @@
+// ==================== photo_scan_screen.dart ====================
+
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -9,12 +11,11 @@ import 'package:permission_handler/permission_handler.dart';
 import '../models/scan_entry.dart';
 import '../services/location_service.dart';
 import '../services/storage_service.dart';
-import '../services/permission_service.dart'; // ✅ Tambahan
+import '../services/permission_service.dart'; // ✅ gunakan service
 import '../theme/app_theme.dart';
 import '../watermark/watermark_renderer.dart';
 import '../watermark/watermark_settings.dart';
 import 'watermark_settings_sheet.dart';
-import 'package:device_info_plus/device_info_plus.dart';
 
 class PhotoScanScreen extends StatefulWidget {
   const PhotoScanScreen({super.key});
@@ -51,9 +52,9 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     }
   }
 
-  // ✅ PERMISSION dengan PermissionService
+  // ✅ Permission dengan PermissionService
   Future<void> _requestPermissions() async {
-    // Camera permission
+    // Camera
     final cameraStatus = await Permission.camera.status;
     if (!cameraStatus.isGranted) {
       final result = await Permission.camera.request();
@@ -69,7 +70,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       }
     }
 
-    // Location permission
+    // Location
     final locStatus = await Permission.location.status;
     if (!locStatus.isGranted) {
       final result = await Permission.location.request();
@@ -85,19 +86,11 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       }
     }
 
-    // ✅ Izin galeri (photos/storage) menggunakan PermissionService
+    // ✅ Galeri (photos/storage) via service
     await PermissionService.requestGalleryPermission();
   }
 
-  // Helper deteksi Android 13+ (masih digunakan untuk fungsi lain?)
-  Future<bool> _isAndroid13OrHigher() async {
-    try {
-      final info = await DeviceInfoPlugin().androidInfo;
-      return info.version.sdkInt >= 33;
-    } catch (_) {
-      return false;
-    }
-  }
+  // ❌ Hapus fungsi _isAndroid13OrHigher() – tidak lagi digunakan
 
   Future<bool> _ensureCameraPermission() async {
     if (_cameraGranted) return true;
@@ -174,7 +167,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       final file = File(imagePath);
       try {
         final parentPath = file.parent.path.toLowerCase();
-        if (parentPath.contains('cache') || 
+        if (parentPath.contains('cache') ||
             parentPath.contains('tmp') ||
             parentPath.contains('.cache')) {
           await file.delete();
@@ -351,15 +344,16 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         if (entry != null) {
           final updated = entry.copyWith(locationName: address);
           await _storage.update(updated);
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('📍 Lokasi terdeteksi: $address'),
-                duration: const Duration(seconds: 2),
-                backgroundColor: Colors.green.shade700,
-              ),
-            );
-          }
+          // Jika diperlukan, bisa tampilkan snackbar, tapi untuk menghindari spam, kita komentari.
+          // if (mounted) {
+          //   ScaffoldMessenger.of(context).showSnackBar(
+          //     SnackBar(
+          //       content: Text('📍 Lokasi terdeteksi: $address'),
+          //       duration: const Duration(seconds: 2),
+          //       backgroundColor: Colors.green.shade700,
+          //     ),
+          //   );
+          // }
         }
       }
     } catch (e) {
