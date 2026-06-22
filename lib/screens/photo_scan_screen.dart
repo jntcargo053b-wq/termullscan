@@ -1,5 +1,3 @@
-// ==================== photo_scan_screen.dart ====================
-
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -11,7 +9,8 @@ import 'package:permission_handler/permission_handler.dart';
 import '../models/scan_entry.dart';
 import '../services/location_service.dart';
 import '../services/storage_service.dart';
-import '../services/permission_service.dart'; // ✅ gunakan service
+import '../services/permission_service.dart';
+import '../config/app_config.dart'; // ✅ tambahan
 import '../theme/app_theme.dart';
 import '../watermark/watermark_renderer.dart';
 import '../watermark/watermark_settings.dart';
@@ -52,7 +51,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     }
   }
 
-  // ✅ Permission dengan PermissionService
   Future<void> _requestPermissions() async {
     // Camera
     final cameraStatus = await Permission.camera.status;
@@ -70,27 +68,32 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       }
     }
 
-    // Location
-    final locStatus = await Permission.location.status;
-    if (!locStatus.isGranted) {
-      final result = await Permission.location.request();
-      if (mounted) {
-        setState(() => _locationGranted = result.isGranted);
-      }
-      if (!result.isGranted && mounted) {
-        _showError('Izin lokasi diperlukan untuk menandai foto');
+    // Location hanya jika diaktifkan
+    if (AppConfig.enableGps) {
+      final locStatus = await Permission.location.status;
+      if (!locStatus.isGranted) {
+        final result = await Permission.location.request();
+        if (mounted) {
+          setState(() => _locationGranted = result.isGranted);
+        }
+        if (!result.isGranted && mounted) {
+          _showError('Izin lokasi diperlukan untuk menandai foto');
+        }
+      } else {
+        if (mounted) {
+          setState(() => _locationGranted = true);
+        }
       }
     } else {
+      // Jika GPS dinonaktifkan, set locationGranted = false agar tidak meminta
       if (mounted) {
-        setState(() => _locationGranted = true);
+        setState(() => _locationGranted = false);
       }
     }
 
-    // ✅ Galeri (photos/storage) via service
+    // Galeri (photos/storage) via service
     await PermissionService.requestGalleryPermission();
   }
-
-  // ❌ Hapus fungsi _isAndroid13OrHigher() – tidak lagi digunakan
 
   Future<bool> _ensureCameraPermission() async {
     if (_cameraGranted) return true;
@@ -111,6 +114,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   }
 
   Future<bool> _ensureLocationPermission() async {
+    if (!AppConfig.enableGps) return false; // tidak perlu lokasi
     if (_locationGranted) return true;
     final status = await Permission.location.status;
     if (status.isGranted) {
@@ -185,7 +189,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
   Future<void> _takePhoto() async {
     if (!await _ensureCameraPermission()) return;
-    await _ensureLocationPermission();
+    if (AppConfig.enableGps) await _ensureLocationPermission();
 
     final XFile? xfile;
     try {
@@ -210,17 +214,23 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       HapticFeedback.mediumImpact();
       final timestamp = DateTime.now();
 
-      ({double? lat, double? lng}) coords;
-      try {
-        coords =
-            await _loc.getCoordinatesOnly().timeout(const Duration(seconds: 6));
-      } catch (e) {
-        debugPrint('Location timeout: $e');
-        coords = (lat: null, lng: null);
+      double? lat, lng;
+      if (AppConfig.enableGps) {
+        try {
+          final coords = await _loc.getCoordinatesOnly().timeout(
+            const Duration(seconds: 6),
+          );
+          lat = coords.lat;
+          lng = coords.lng;
+        } catch (e) {
+          debugPrint('Location timeout: $e');
+          lat = null;
+          lng = null;
+        }
       }
 
       final String watermarkedPath =
-          await _applyWatermark(xfile.path, timestamp, coords.lat, coords.lng);
+          await _applyWatermark(xfile.path, timestamp, lat, lng);
 
       final String savedPath = await _storage.savePhoto(watermarkedPath);
       if (savedPath.isEmpty) {
@@ -232,8 +242,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         type: ScanType.photo,
         value: savedPath,
         timestamp: timestamp,
-        latitude: coords.lat,
-        longitude: coords.lng,
+        latitude: lat,
+        longitude: lng,
         locationName: null,
       );
       await _storage.add(entry);
@@ -242,10 +252,10 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         setState(() => _photoCount++);
       }
 
-      if (coords.lat != null && coords.lng != null) {
-        unawaited(_updateAddressLater(entry.id, coords.lat!, coords.lng!));
+      if (AppConfig.enableGps && lat != null && lng != null) {
+        unawaited(_updateAddressLater(entry.id, lat!, lng!));
       } else {
-        if (mounted) {
+        if (mounted && AppConfig.enableGps) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('⚠️ Lokasi tidak tersedia, foto tersimpan tanpa lokasi'),
@@ -268,7 +278,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   }
 
   Future<void> _pickFromGallery() async {
-    await _ensureLocationPermission();
+    if (AppConfig.enableGps) await _ensureLocationPermission();
 
     final XFile? xfile;
     try {
@@ -291,16 +301,23 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     try {
       final timestamp = DateTime.now();
 
-      ({double? lat, double? lng}) coords;
-      try {
-        coords =
-            await _loc.getCoordinatesOnly().timeout(const Duration(seconds: 6));
-      } catch (e) {
-        coords = (lat: null, lng: null);
+      double? lat, lng;
+      if (AppConfig.enableGps) {
+        try {
+          final coords = await _loc.getCoordinatesOnly().timeout(
+            const Duration(seconds: 6),
+          );
+          lat = coords.lat;
+          lng = coords.lng;
+        } catch (e) {
+          debugPrint('Location timeout: $e');
+          lat = null;
+          lng = null;
+        }
       }
 
       final String watermarkedPath =
-          await _applyWatermark(xfile.path, timestamp, coords.lat, coords.lng);
+          await _applyWatermark(xfile.path, timestamp, lat, lng);
 
       final String savedPath = await _storage.savePhoto(watermarkedPath);
       final entry = ScanEntry(
@@ -308,8 +325,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         type: ScanType.photo,
         value: savedPath,
         timestamp: timestamp,
-        latitude: coords.lat,
-        longitude: coords.lng,
+        latitude: lat,
+        longitude: lng,
         locationName: null,
       );
       await _storage.add(entry);
@@ -318,8 +335,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         setState(() => _photoCount++);
       }
 
-      if (coords.lat != null && coords.lng != null) {
-        unawaited(_updateAddressLater(entry.id, coords.lat!, coords.lng!));
+      if (AppConfig.enableGps && lat != null && lng != null) {
+        unawaited(_updateAddressLater(entry.id, lat!, lng!));
       }
 
       if (mounted) _showSuccess(entry);
@@ -335,6 +352,9 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
   Future<void> _updateAddressLater(
       String entryId, double lat, double lng) async {
+    // Hanya jalankan jika GPS aktif
+    if (!AppConfig.enableGps) return;
+
     try {
       final address = await _loc.reverseGeocode(lat, lng).timeout(
             const Duration(seconds: 5),
@@ -344,16 +364,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         if (entry != null) {
           final updated = entry.copyWith(locationName: address);
           await _storage.update(updated);
-          // Jika diperlukan, bisa tampilkan snackbar, tapi untuk menghindari spam, kita komentari.
-          // if (mounted) {
-          //   ScaffoldMessenger.of(context).showSnackBar(
-          //     SnackBar(
-          //       content: Text('📍 Lokasi terdeteksi: $address'),
-          //       duration: const Duration(seconds: 2),
-          //       backgroundColor: Colors.green.shade700,
-          //     ),
-          //   );
-          // }
+          // Jika ingin menampilkan snackbar lokasi, aktifkan di sini
+          // tetapi untuk menghindari spam, kita nonaktifkan.
         }
       }
     } catch (e) {
