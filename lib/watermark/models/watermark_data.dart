@@ -13,6 +13,7 @@ class WatermarkData {
   final WatermarkPosition position;
   final double fontSize;
   final double backgroundOpacity;
+  final String fontFamily; // ✅ TAMBAHKAN
 
   const WatermarkData({
     required this.timestamp,
@@ -26,6 +27,7 @@ class WatermarkData {
     this.position = WatermarkPosition.bottomRight,
     this.fontSize = 14.0,
     this.backgroundOpacity = 0.55,
+    this.fontFamily = 'Roboto', // ✅ TAMBAHKAN
   });
 
   bool get hasBarcode => barcodeValue != null && barcodeValue!.isNotEmpty;
