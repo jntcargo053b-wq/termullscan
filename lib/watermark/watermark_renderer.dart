@@ -19,17 +19,21 @@ class WatermarkRenderer {
 
   static final WatermarkService _legacyService = WatermarkService();
 
+  /// ✅ VERSION FINAL: Menerima settings dan entry
   static Future<String?> render({
     required String imagePath,
     required String outputPath,
     required WatermarkSettings settings,
     required ScanEntry entry,
   }) async {
-    debugPrint('🎯 WatermarkRenderer.render() called');
-    debugPrint('  Style from settings: ${settings.style.name}');
-    debugPrint('  Position from settings: ${settings.position.name}');
+    debugPrint('🎯 ===== WATERMARK RENDER START =====');
+    debugPrint('  Style: ${settings.style.name}');
+    debugPrint('  Position: ${settings.position.name}');
     debugPrint('  FontSize: ${settings.fontSize}');
     debugPrint('  Opacity: ${settings.backgroundOpacity}');
+    debugPrint('  Operator: ${settings.operatorName}');
+    debugPrint('  Barcode: ${entry.value}');
+    debugPrint('======================================');
 
     // ✅ Cek apakah style didukung render asli
     if (!_stylesWithRealRenderer.contains(settings.style)) {
@@ -58,7 +62,7 @@ class WatermarkRenderer {
     try {
       final file = File(imagePath);
       if (!await file.exists()) {
-        debugPrint('❌ WatermarkRenderer: file tidak ditemukan: $imagePath');
+        debugPrint('❌ File tidak ditemukan: $imagePath');
         return null;
       }
 
@@ -83,7 +87,7 @@ class WatermarkRenderer {
         }
       }
 
-      // ✅ Buat WatermarkData dengan semua setting
+      // ✅ Buat WatermarkData dengan SEMUA setting
       final data = WatermarkData(
         timestamp: entry.timestamp,
         operatorName: settings.operatorName,
@@ -98,9 +102,7 @@ class WatermarkRenderer {
         backgroundOpacity: settings.backgroundOpacity,
       );
 
-      debugPrint('✅ WatermarkData created with style: ${settings.style.name}');
-
-      // ✅ Buat layout sesuai style dari settings
+      // ✅ Buat layout sesuai style
       final layout = WatermarkFactory.create(settings.style);
       debugPrint('✅ Layout created: ${layout.runtimeType}');
 
@@ -111,10 +113,7 @@ class WatermarkRenderer {
       );
 
       if (metrics.canvasWidth <= 0 || metrics.canvasHeight <= 0) {
-        throw Exception('Canvas size invalid: ${metrics.canvasWidth}x${metrics.canvasHeight}');
-      }
-      if (metrics.canvasWidth > 4096 || metrics.canvasHeight > 4096) {
-        throw Exception('Canvas terlalu besar: ${metrics.canvasWidth}x${metrics.canvasHeight}');
+        throw Exception('Canvas size invalid');
       }
 
       final recorder = ui.PictureRecorder();
@@ -147,17 +146,18 @@ class WatermarkRenderer {
       }
 
       if (byteData == null) {
-        debugPrint('❌ WatermarkRenderer: gagal encode PNG');
+        debugPrint('❌ Gagal encode PNG');
         return null;
       }
 
       final outputFile = File(outputPath);
       await outputFile.writeAsBytes(byteData.buffer.asUint8List());
 
-      debugPrint('✅ WatermarkRenderer: watermark (${settings.style.name}) disimpan: $outputPath');
+      debugPrint('✅ Watermark saved with style: ${settings.style.name}');
+      debugPrint('   Output: $outputPath');
       return outputPath;
     } catch (e, stack) {
-      debugPrint('❌ WatermarkRenderer: error saat render: $e\n$stack');
+      debugPrint('❌ Error: $e\n$stack');
       return null;
     } finally {
       codec?.dispose();
@@ -179,7 +179,7 @@ class WatermarkRenderer {
         codec.dispose();
       }
     } catch (e) {
-      debugPrint('⚠️ WatermarkRenderer: error membaca ukuran gambar: $e');
+      debugPrint('⚠️ Error membaca ukuran gambar: $e');
       return 1024;
     }
   }
@@ -199,7 +199,7 @@ class WatermarkRenderer {
         targetWidth: logoTargetWidth,
       );
     } catch (e) {
-      debugPrint('⚠️ WatermarkRenderer: error memuat logo: $e');
+      debugPrint('⚠️ Error memuat logo: $e');
       return null;
     }
   }
