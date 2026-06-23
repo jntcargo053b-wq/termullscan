@@ -28,13 +28,13 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   bool _scanning = true;
   bool _isSaving = false;
   String? _lastCode;
+  DateTime? _lastScanTime; // ✅ Bug C - untuk deteksi duplikat
   int _scanCount = 0;
   bool _settingsLoaded = false;
   bool _processingScan = false;
   bool _sheetOpen = false;
 
   final StorageService _storage = StorageService();
-  // Service _loc tidak digunakan karena GPS dinonaktifkan
   final ImagePicker _picker = ImagePicker();
   final WatermarkSettings _wmSettings = WatermarkSettings();
   final MobileScannerController _scannerController = MobileScannerController();
@@ -62,7 +62,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     }
   }
 
-  // Hanya minta izin kamera dan galeri, lokasi diabaikan
   Future<void> _requestPermissions() async {
     await Permission.camera.request();
     await PermissionService.requestGalleryPermission();
@@ -105,6 +104,16 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
 
     final code = barcode.rawValue!;
     final format = barcode.format.name;
+
+    // ✅ Bug C - Cegah duplikat beruntun
+    if (_lastCode == code &&
+        _lastScanTime != null &&
+        DateTime.now().difference(_lastScanTime!).inSeconds < 2) {
+      _processingScan = false;
+      return;
+    }
+    _lastScanTime = DateTime.now();
+
     if (code == _lastCode) {
       _processingScan = false;
       return;
@@ -129,7 +138,12 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         locationName: null,
       );
       await _storage.add(entry);
-      setState(() => _scanCount++);
+
+      // ✅ Bug A - Cek mounted sebelum setState
+      if (!mounted) return;
+      setState(() {
+        _scanCount++;
+      });
 
       if (mounted) {
         await _scannerController.stop();
@@ -145,6 +159,18 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       if (mounted) _resumeScanning();
     } finally {
       _processingScan = false;
+
+      // ✅ Bug B - Recovery scanner jika terkunci
+      if (mounted && !_scanning && !_isSaving && !_sheetOpen) {
+        Future.delayed(
+          const Duration(milliseconds: 300),
+          () {
+            if (mounted) {
+              _resumeScanning();
+            }
+          },
+        );
+      }
     }
   }
 
@@ -281,6 +307,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         locationName: null,
       );
       await _storage.add(entry);
+
+      if (!mounted) return;
       setState(() => _scanCount++);
 
       if (mounted) {
@@ -298,9 +326,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     }
   }
 
-  // ──────────────────────────────────────────────────────────────────────
-  //  FOTO & WATERMARK
-  // ──────────────────────────────────────────────────────────────────────
   Future<void> _takePhotoAndShow(ScanEntry entry) async {
     if (_sheetOpen) {
       debugPrint('⚠️ Bottom sheet already open, skipping');
@@ -331,7 +356,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     if (mounted) setState(() => _isSaving = true);
 
     try {
-      // GPS dimatikan: koordinat dan lokasi selalu null
       final updatedEntry = entry.copyWith(
         latitude: null,
         longitude: null,
@@ -358,11 +382,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         if (mounted) _resumeScanning();
       });
 
-      // Tidak ada reverse geocode karena GPS nonaktif
-
       String wmPath;
       try {
-        // ✅ GUNAKAN PARAMETER YANG BENAR
         wmPath = await _addWatermarkInIsolate(file.path, updatedEntry);
       } catch (e) {
         debugPrint('Watermark error: $e');
@@ -403,14 +424,10 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     }
   }
 
-  // ──────────────────────────────────────────────────────────────────────
-  //  WATERMARK RENDER (ISOLATE)
-  // ──────────────────────────────────────────────────────────────────────
   Future<String> _addWatermarkInIsolate(String imagePath, ScanEntry entry) async {
     final outputPath =
         '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.png';
 
-    // ✅ PANGGIL RENDERER DENGAN PARAMETER settings DAN entry
     final result = await WatermarkRenderer.render(
       imagePath: imagePath,
       outputPath: outputPath,
@@ -420,7 +437,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
 
     if (result == null) throw Exception('Watermark isolate gagal');
 
-    // Hapus file cache jika perlu (sama seperti sebelumnya)
     if (result != imagePath) {
       final file = File(imagePath);
       try {
@@ -441,9 +457,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     return result;
   }
 
-  // ──────────────────────────────────────────────────────────────────────
-  //  SAVE TO GALLERY
-  // ──────────────────────────────────────────────────────────────────────
   Future<bool> _saveToGallery(String filePath, ScanEntry entry) async {
     try {
       final file = File(filePath);
@@ -475,9 +488,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     }
   }
 
-  // ──────────────────────────────────────────────────────────────────────
-  //  BUILD
-  // ──────────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -594,9 +604,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-//  RESULT STATE
-// ──────────────────────────────────────────────────────────────────────────
+// ── Result State ──────────────────────────────────────────────────────────
 class _ResultState {
   final ScanEntry entry;
   final String? photoPath;
@@ -610,9 +618,7 @@ class _ResultState {
   });
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-//  RESULT SHEET
-// ──────────────────────────────────────────────────────────────────────────
+// ── Result Sheet ──────────────────────────────────────────────────────────
 class _ResultSheet extends StatefulWidget {
   final ValueNotifier<_ResultState> notifier;
   final StorageService storage;
@@ -746,7 +752,6 @@ class _ResultSheetState extends State<_ResultSheet> {
                 style: const TextStyle(color: Colors.grey, fontSize: 13),
               ),
               const Gap(4),
-              // Koordinat selalu kosong karena GPS nonaktif
               Text(
                 'GPS dinonaktifkan',
                 style: const TextStyle(color: Colors.grey, fontSize: 12),
