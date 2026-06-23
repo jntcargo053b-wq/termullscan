@@ -7,7 +7,7 @@ import 'package:intl/intl.dart';
 import 'base_layout.dart';
 import 'layout_metrics.dart';
 import '../models/watermark_data.dart';
-import '../watermark_style.dart'; // ✅ import yang benar
+import '../watermark_style.dart';
 import '../watermark_settings.dart';
 import '../helpers/layout_helper.dart';
 import '../helpers/text_helper.dart';
@@ -139,6 +139,7 @@ class StampLayout extends WatermarkLayout {
       fontSize: stampH * 0.28,
       fontWeight: FontWeight.w900,
       textAlign: TextAlign.center,
+      fontFamily: data.fontFamily, // ✅ TAMBAHKAN
     );
 
     textY += stampH * 0.22;
@@ -153,6 +154,7 @@ class StampLayout extends WatermarkLayout {
         fontSize: stampH * 0.16,
         fontWeight: FontWeight.w600,
         textAlign: TextAlign.center,
+        fontFamily: data.fontFamily, // ✅ TAMBAHKAN
       );
       textY += stampH * 0.20;
     }
@@ -168,6 +170,7 @@ class StampLayout extends WatermarkLayout {
       fontSize: stampH * 0.14,
       fontWeight: FontWeight.w600,
       textAlign: TextAlign.center,
+      fontFamily: data.fontFamily, // ✅ TAMBAHKAN
     );
 
     canvas.restore();
@@ -229,6 +232,7 @@ class StampLayout extends WatermarkLayout {
         fontSize: fontSize,
         fontWeight: FontWeight.w600,
         maxLines: 1,
+        fontFamily: data.fontFamily, // ✅ TAMBAHKAN
       );
       textY2 += lineHeight;
     }
