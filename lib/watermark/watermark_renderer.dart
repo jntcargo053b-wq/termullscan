@@ -4,7 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import '../models/scan_entry.dart';
 import 'models/watermark_data.dart';
-import 'models/watermark_style.dart';
+import 'watermark_style.dart'; // ✅ import yang benar
 import 'watermark_factory.dart';
 import 'watermark_settings.dart';
 import '../services/watermark_service.dart';
