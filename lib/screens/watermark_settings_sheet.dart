@@ -43,7 +43,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
   Future<void> _saveAndClose() async {
     _settings.operatorName = _operatorController.text;
     await _settings.save();
-    debugPrint('💾 SAVED: style=${_settings.style.name}, position=${_settings.position.name}, fontSize=${_settings.fontSize}');
+    debugPrint('💾 SAVED: style=${_settings.style.name}, position=${_settings.position.name}, fontSize=${_settings.fontSize}, fontFamily=${_settings.fontFamily}');
     Navigator.pop(context);
   }
 
@@ -121,7 +121,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
               ),
               const Gap(8),
               const Text(
-                'Pilih gaya, posisi, dan ukuran watermark',
+                'Pilih gaya, posisi, ukuran font, dan watermark',
                 style: TextStyle(color: Colors.grey, fontSize: 13),
               ),
               const Gap(20),
@@ -319,6 +319,41 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                     ),
                   ),
                 ],
+              ),
+              const Gap(16),
+
+              // ─── Pilihan Font ──────────────────────────────
+              const Text(
+                'Font',
+                style: TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+              const Gap(6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2A2A2A),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey.withOpacity(0.3)),
+                ),
+                child: DropdownButton<String>(
+                  value: _settings.fontFamily,
+                  isExpanded: true,
+                  underline: const SizedBox(),
+                  dropdownColor: const Color(0xFF2A2A2A),
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                  items: const [
+                    DropdownMenuItem(value: 'Roboto', child: Text('Roboto')),
+                    DropdownMenuItem(value: 'Poppins', child: Text('Poppins')),
+                    DropdownMenuItem(value: 'Montserrat', child: Text('Montserrat')),
+                    DropdownMenuItem(value: 'Inter', child: Text('Inter')),
+                  ],
+                  onChanged: (String? newFont) async {
+                    if (newFont != null) {
+                      await _settings.setFontFamily(newFont);
+                      setState(() {});
+                    }
+                  },
+                ),
               ),
               const Gap(16),
 
