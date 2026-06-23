@@ -1,3 +1,4 @@
+
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -7,7 +8,7 @@ import 'package:intl/intl.dart';
 import 'base_layout.dart';
 import 'layout_metrics.dart';
 import '../models/watermark_data.dart';
-import '../watermark_style.dart'; // ✅ import yang benar
+import '../watermark_style.dart';
 import '../watermark_settings.dart';
 import '../helpers/layout_helper.dart';
 import '../helpers/text_helper.dart';
@@ -135,7 +136,7 @@ class PolaroidLayout extends WatermarkLayout {
       y: tableY,
       maxWidth: tableWidth,
       baseSize: baseSize,
-      fontSize: metrics.fontSize,
+      fontSize: data.fontSize, // ✅ Gunakan data.fontSize, bukan metrics
       lineHeight: metrics.lineHeight,
     );
 
@@ -308,6 +309,7 @@ class PolaroidLayout extends WatermarkLayout {
         color: const Color(0xFF666666),
         fontSize: fontSize * 0.85,
         fontWeight: FontWeight.w700,
+        fontFamily: data.fontFamily, // ✅ TAMBAHKAN INI
       );
       TextHelper.paintText(
         canvas: canvas,
@@ -318,6 +320,7 @@ class PolaroidLayout extends WatermarkLayout {
         color: const Color(0xFF2C2C2C),
         fontSize: fontSize,
         fontWeight: emphasize ? FontWeight.w800 : FontWeight.w600,
+        fontFamily: data.fontFamily, // ✅ TAMBAHKAN INI
       );
       currentY += lineHeight;
     }
@@ -356,6 +359,7 @@ class PolaroidLayout extends WatermarkLayout {
       color: Colors.white,
       fontSize: badgeH * 0.45,
       fontWeight: FontWeight.w800,
+      fontFamily: data.fontFamily, // ✅ TAMBAHKAN INI
     );
   }
 }
