@@ -10,6 +10,7 @@ import '../models/watermark_style.dart';
 import '../helpers/layout_helper.dart';
 import '../helpers/text_helper.dart';
 import '../widgets/logo_widget.dart';
+import '../watermark_settings.dart'; // untuk WatermarkPosition
 
 class ProfessionalLayout extends WatermarkLayout {
   @override
