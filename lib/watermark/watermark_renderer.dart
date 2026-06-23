@@ -7,7 +7,6 @@ import 'models/watermark_data.dart';
 import 'watermark_style.dart';
 import 'watermark_factory.dart';
 import 'watermark_settings.dart';
-import '../services/watermark_service.dart';
 
 class WatermarkRenderer {
   static const Set<WatermarkStyle> _stylesWithRealRenderer = {
@@ -17,9 +16,6 @@ class WatermarkRenderer {
     WatermarkStyle.stamp,
   };
 
-  static final WatermarkService _legacyService = WatermarkService();
-
-  /// ✅ VERSION FINAL: Menerima settings dan entry
   static Future<String?> render({
     required String imagePath,
     required String outputPath,
@@ -31,28 +27,12 @@ class WatermarkRenderer {
     debugPrint('  Position: ${settings.position.name}');
     debugPrint('  FontSize: ${settings.fontSize}');
     debugPrint('  Opacity: ${settings.backgroundOpacity}');
+    debugPrint('  FontFamily: ${settings.fontFamily}'); // ✅ TAMBAHKAN
     debugPrint('  Operator: ${settings.operatorName}');
     debugPrint('  Barcode: ${entry.value}');
     debugPrint('======================================');
 
-    // ✅ Cek apakah style didukung render asli
-    if (!_stylesWithRealRenderer.contains(settings.style)) {
-      debugPrint('⚠️ Fallback ke legacy untuk style: ${settings.style.name}');
-      return _legacyService.addWatermark(
-        imagePath: imagePath,
-        outputPath: outputPath,
-        operatorName: settings.operatorName,
-        style: settings.style,
-        barcodeValue: entry.value,
-        barcodeFormat: entry.barcodeFormat,
-        timestamp: entry.timestamp,
-        latitude: entry.latitude,
-        longitude: entry.longitude,
-        locationName: entry.locationName,
-        logoPath: settings.logoPath,
-      );
-    }
-
+    // ✅ Selalu gunakan layout, tidak ada fallback ke legacy
     ui.Image? srcImage;
     ui.Image? logoImage;
     ui.Codec? codec;
@@ -87,7 +67,6 @@ class WatermarkRenderer {
         }
       }
 
-      // ✅ Buat WatermarkData dengan SEMUA setting
       final data = WatermarkData(
         timestamp: entry.timestamp,
         operatorName: settings.operatorName,
@@ -100,9 +79,9 @@ class WatermarkRenderer {
         position: settings.position,
         fontSize: settings.fontSize,
         backgroundOpacity: settings.backgroundOpacity,
+        fontFamily: settings.fontFamily, // ✅ TAMBAHKAN
       );
 
-      // ✅ Buat layout sesuai style
       final layout = WatermarkFactory.create(settings.style);
       debugPrint('✅ Layout created: ${layout.runtimeType}');
 
