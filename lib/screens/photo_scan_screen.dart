@@ -25,7 +25,6 @@ class PhotoScanScreen extends StatefulWidget {
 class _PhotoScanScreenState extends State<PhotoScanScreen> {
   final ImagePicker _picker = ImagePicker();
   final StorageService _storage = StorageService();
-  // Service _loc tidak digunakan karena GPS nonaktif
   final WatermarkSettings _wmSettings = WatermarkSettings();
 
   bool _isSaving = false;
@@ -49,7 +48,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     }
   }
 
-  // Hanya camera dan gallery, lokasi diabaikan
   Future<void> _requestPermissions() async {
     final cameraStatus = await Permission.camera.status;
     if (!cameraStatus.isGranted) {
@@ -101,17 +99,14 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     });
   }
 
-  // ✅ Perbaiki method ini
   Future<String> _applyWatermark(String imagePath, DateTime timestamp) async {
     final outputPath =
         '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.png';
 
-    // Buat ScanEntry sementara untuk keperluan watermark
-    // (karena renderer sekarang menerima ScanEntry)
     final tempEntry = ScanEntry(
-      id: _storage.generateId(), // ID sementara, tidak akan disimpan
+      id: _storage.generateId(),
       type: ScanType.photo,
-      value: '', // Tidak ada barcode
+      value: '',
       barcodeFormat: null,
       timestamp: timestamp,
       latitude: null,
@@ -147,6 +142,9 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   }
 
   Future<void> _takePhoto() async {
+    // ✅ Bug E - Cegah double tap
+    if (_isSaving) return;
+
     if (!await _ensureCameraPermission()) return;
 
     final XFile? xfile;
@@ -164,6 +162,17 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
     if (xfile == null) return;
 
+    // ✅ Bug F - Validasi ukuran file
+    try {
+      final fileSize = await File(xfile.path).length();
+      if (fileSize > 20 * 1024 * 1024) {
+        throw Exception('Ukuran foto terlalu besar (>20MB)');
+      }
+    } catch (e) {
+      _showError('Error validasi file: $e');
+      return;
+    }
+
     if (mounted) {
       setState(() => _isSaving = true);
     }
@@ -172,8 +181,12 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       HapticFeedback.mediumImpact();
       final timestamp = DateTime.now();
 
-      final String watermarkedPath =
-          await _applyWatermark(xfile.path, timestamp);
+      final String watermarkedPath = await _applyWatermark(xfile.path, timestamp);
+
+      // ✅ Bug D - Validasi file watermark ada
+      if (!await File(watermarkedPath).exists()) {
+        throw Exception('File watermark tidak ditemukan');
+      }
 
       final String savedPath = await _storage.savePhoto(watermarkedPath);
       if (savedPath.isEmpty) {
@@ -191,9 +204,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       );
       await _storage.add(entry);
 
-      if (mounted) {
-        setState(() => _photoCount++);
-      }
+      if (!mounted) return;
+      setState(() => _photoCount++);
 
       if (mounted) _showSuccess(entry);
     } catch (e, stack) {
@@ -207,6 +219,9 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   }
 
   Future<void> _pickFromGallery() async {
+    // ✅ Bug E - Cegah double tap
+    if (_isSaving) return;
+
     final XFile? xfile;
     try {
       xfile = await _picker.pickImage(
@@ -221,6 +236,17 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
     if (xfile == null) return;
 
+    // ✅ Bug F - Validasi ukuran file
+    try {
+      final fileSize = await File(xfile.path).length();
+      if (fileSize > 20 * 1024 * 1024) {
+        throw Exception('Ukuran foto terlalu besar (>20MB)');
+      }
+    } catch (e) {
+      _showError('Error validasi file: $e');
+      return;
+    }
+
     if (mounted) {
       setState(() => _isSaving = true);
     }
@@ -228,10 +254,18 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     try {
       final timestamp = DateTime.now();
 
-      final String watermarkedPath =
-          await _applyWatermark(xfile.path, timestamp);
+      final String watermarkedPath = await _applyWatermark(xfile.path, timestamp);
+
+      // ✅ Bug D - Validasi file watermark ada
+      if (!await File(watermarkedPath).exists()) {
+        throw Exception('File watermark tidak ditemukan');
+      }
 
       final String savedPath = await _storage.savePhoto(watermarkedPath);
+      if (savedPath.isEmpty) {
+        throw Exception('Gagal menyimpan file foto');
+      }
+
       final entry = ScanEntry(
         id: _storage.generateId(),
         type: ScanType.photo,
@@ -243,9 +277,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       );
       await _storage.add(entry);
 
-      if (mounted) {
-        setState(() => _photoCount++);
-      }
+      if (!mounted) return;
+      setState(() => _photoCount++);
 
       if (mounted) _showSuccess(entry);
     } catch (e, stack) {
@@ -264,10 +297,10 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       SnackBar(
         backgroundColor: Colors.green.shade700,
         duration: const Duration(seconds: 2),
-        content: Row(
+        content: const Row(
           children: [
-            const Icon(Icons.check_circle, color: Colors.white, size: 18),
-            const Gap(8),
+            Icon(Icons.check_circle, color: Colors.white, size: 18),
+            Gap(8),
             Expanded(
               child: Text(
                 'Foto tersimpan',
