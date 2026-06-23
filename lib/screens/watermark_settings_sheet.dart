@@ -41,7 +41,6 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
   }
 
   Future<void> _saveAndClose() async {
-    // ✅ Bug #1 - Ambil dari controller
     _settings.operatorName = _operatorController.text;
     await _settings.save();
     debugPrint('💾 SAVED: style=${_settings.style.name}, position=${_settings.position.name}, fontSize=${_settings.fontSize}');
@@ -73,7 +72,6 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    // ✅ Bug #1 - Preview menggunakan controller text, bukan settings
     final previewData = WatermarkData(
       timestamp: DateTime.now(),
       operatorName: _operatorController.text.isNotEmpty 
@@ -85,6 +83,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
       position: _settings.position,
       fontSize: _settings.fontSize,
       backgroundOpacity: _settings.backgroundOpacity,
+      fontFamily: _settings.fontFamily,
     );
 
     return Padding(
@@ -135,7 +134,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
               const Gap(6),
               TextField(
                 controller: _operatorController,
-                onChanged: (_) => setState(() {}), // ✅ Update preview saat mengetik
+                onChanged: (_) => setState(() {}),
                 style: const TextStyle(color: Colors.white),
                 decoration: InputDecoration(
                   hintText: 'Contoh: PT Maju Jaya',
@@ -169,7 +168,6 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                     final layout = WatermarkFactory.create(style);
                     return GestureDetector(
                       onTap: () async {
-                        // ✅ Bug #2 - Langsung simpan ke SharedPreferences
                         await _settings.setStyle(style);
                         setState(() {});
                       },
@@ -244,7 +242,6 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                     ),
                     selected: isSelected,
                     onSelected: (_) async {
-                      // ✅ Bug #3 - Langsung simpan ke SharedPreferences
                       await _settings.setPosition(pos);
                       setState(() {});
                     },
@@ -271,7 +268,6 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                       divisions: 20,
                       label: _settings.fontSize.round().toString(),
                       onChanged: (val) async {
-                        // ✅ Bug #4 - Langsung simpan ke SharedPreferences
                         await _settings.setFontSize(val);
                         setState(() {});
                       },
