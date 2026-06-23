@@ -5,10 +5,12 @@ import 'screens/home_screen.dart';
 import 'watermark/watermark_settings.dart';
 
 void main() async {
+  // ✅ Pastikan binding terinisialisasi
   WidgetsFlutterBinding.ensureInitialized();
 
   // ✅ Load WatermarkSettings sebelum runApp
-  await WatermarkSettings().load();
+  final watermarkSettings = WatermarkSettings();
+  await watermarkSettings.load();
 
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
