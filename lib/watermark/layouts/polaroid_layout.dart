@@ -1,4 +1,3 @@
-
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -136,7 +135,7 @@ class PolaroidLayout extends WatermarkLayout {
       y: tableY,
       maxWidth: tableWidth,
       baseSize: baseSize,
-      fontSize: data.fontSize, // ✅ Gunakan data.fontSize, bukan metrics
+      fontSize: data.fontSize,
       lineHeight: metrics.lineHeight,
     );
 
@@ -144,6 +143,7 @@ class PolaroidLayout extends WatermarkLayout {
     if (isManual) {
       _paintManualBadge(
         canvas: canvas,
+        data: data, // ✅ TAMBAHKAN PARAMETER data
         x: canvasWidth - padding - baseSize * 0.09 - 6,
         y: stripTop + (stripHeight * 0.10),
         baseSize: baseSize,
@@ -309,7 +309,7 @@ class PolaroidLayout extends WatermarkLayout {
         color: const Color(0xFF666666),
         fontSize: fontSize * 0.85,
         fontWeight: FontWeight.w700,
-        fontFamily: data.fontFamily, // ✅ TAMBAHKAN INI
+        fontFamily: data.fontFamily,
       );
       TextHelper.paintText(
         canvas: canvas,
@@ -320,7 +320,7 @@ class PolaroidLayout extends WatermarkLayout {
         color: const Color(0xFF2C2C2C),
         fontSize: fontSize,
         fontWeight: emphasize ? FontWeight.w800 : FontWeight.w600,
-        fontFamily: data.fontFamily, // ✅ TAMBAHKAN INI
+        fontFamily: data.fontFamily,
       );
       currentY += lineHeight;
     }
@@ -337,6 +337,7 @@ class PolaroidLayout extends WatermarkLayout {
 
   void _paintManualBadge({
     required ui.Canvas canvas,
+    required WatermarkData data, // ✅ TAMBAHKAN PARAMETER INI
     required double x,
     required double y,
     required double baseSize,
@@ -359,7 +360,7 @@ class PolaroidLayout extends WatermarkLayout {
       color: Colors.white,
       fontSize: badgeH * 0.45,
       fontWeight: FontWeight.w800,
-      fontFamily: data.fontFamily, // ✅ TAMBAHKAN INI
+      fontFamily: data.fontFamily, // ✅ SEKARANG data TERSEDIA
     );
   }
 }
