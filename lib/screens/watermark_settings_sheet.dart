@@ -3,7 +3,7 @@ import 'package:gap/gap.dart';
 import 'package:image_picker/image_picker.dart';
 import '../watermark/watermark_settings.dart';
 import '../watermark/models/watermark_data.dart';
-import '../watermark/watermark_style.dart'; // ✅ import yang benar
+import '../watermark/watermark_style.dart';
 import '../watermark/watermark_factory.dart';
 import 'dart:io';
 
@@ -41,8 +41,10 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
   }
 
   Future<void> _saveAndClose() async {
+    // ✅ Bug #1 - Ambil dari controller
     _settings.operatorName = _operatorController.text;
     await _settings.save();
+    debugPrint('💾 SAVED: style=${_settings.style.name}, position=${_settings.position.name}, fontSize=${_settings.fontSize}');
     Navigator.pop(context);
   }
 
@@ -71,9 +73,12 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
       return const Center(child: CircularProgressIndicator());
     }
 
+    // ✅ Bug #1 - Preview menggunakan controller text, bukan settings
     final previewData = WatermarkData(
       timestamp: DateTime.now(),
-      operatorName: _settings.operatorName,
+      operatorName: _operatorController.text.isNotEmpty 
+          ? _operatorController.text 
+          : _settings.operatorName,
       barcodeValue: '8991234567890',
       barcodeFormat: 'EAN-13',
       locationName: 'Jl. Sudirman No. 123, Jakarta',
@@ -130,6 +135,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
               const Gap(6),
               TextField(
                 controller: _operatorController,
+                onChanged: (_) => setState(() {}), // ✅ Update preview saat mengetik
                 style: const TextStyle(color: Colors.white),
                 decoration: InputDecoration(
                   hintText: 'Contoh: PT Maju Jaya',
@@ -162,8 +168,9 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                     final isSelected = _settings.style == style;
                     final layout = WatermarkFactory.create(style);
                     return GestureDetector(
-                      onTap: () {
-                        _settings.style = style;
+                      onTap: () async {
+                        // ✅ Bug #2 - Langsung simpan ke SharedPreferences
+                        await _settings.setStyle(style);
                         setState(() {});
                       },
                       child: Container(
@@ -236,8 +243,9 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                       ),
                     ),
                     selected: isSelected,
-                    onSelected: (_) {
-                      _settings.position = pos;
+                    onSelected: (_) async {
+                      // ✅ Bug #3 - Langsung simpan ke SharedPreferences
+                      await _settings.setPosition(pos);
                       setState(() {});
                     },
                     backgroundColor: const Color(0xFF2A2A2A),
@@ -262,8 +270,9 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                       max: 28,
                       divisions: 20,
                       label: _settings.fontSize.round().toString(),
-                      onChanged: (val) {
-                        _settings.fontSize = val;
+                      onChanged: (val) async {
+                        // ✅ Bug #4 - Langsung simpan ke SharedPreferences
+                        await _settings.setFontSize(val);
                         setState(() {});
                       },
                       activeColor: Colors.amber,
@@ -297,8 +306,8 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                       max: 1.0,
                       divisions: 9,
                       label: (_settings.backgroundOpacity * 100).round().toString(),
-                      onChanged: (val) {
-                        _settings.backgroundOpacity = val;
+                      onChanged: (val) async {
+                        await _settings.setBackgroundOpacity(val);
                         setState(() {});
                       },
                       activeColor: Colors.amber,
