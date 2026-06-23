@@ -7,6 +7,7 @@ import 'base_layout.dart';
 import 'layout_metrics.dart';
 import '../models/watermark_data.dart';
 import '../models/watermark_style.dart';
+import '../watermark_settings.dart'; // ✅ import untuk WatermarkPosition
 import '../helpers/layout_helper.dart';
 import '../helpers/text_helper.dart';
 import '../widgets/logo_widget.dart';
@@ -89,6 +90,9 @@ class MinimalLayout extends WatermarkLayout {
         overlayTop = 0;
         textAlign = TextAlign.left;
         break;
+      default:
+        overlayTop = photoHeight - overlayHeight;
+        textAlign = TextAlign.right;
     }
 
     canvas.drawImageRect(
