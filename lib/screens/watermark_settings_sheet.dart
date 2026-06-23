@@ -3,7 +3,7 @@ import 'package:gap/gap.dart';
 import 'package:image_picker/image_picker.dart';
 import '../watermark/watermark_settings.dart';
 import '../watermark/models/watermark_data.dart';
-import '../watermark/models/watermark_style.dart';
+import '../watermark/watermark_style.dart'; // ✅ import yang benar
 import '../watermark/watermark_factory.dart';
 import 'dart:io';
 
@@ -122,7 +122,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
               ),
               const Gap(20),
 
-              // Operator
+              // ─── Operator ──────────────────────────────────
               const Text(
                 'Nama Operator',
                 style: TextStyle(color: Colors.white70, fontSize: 13),
@@ -145,7 +145,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
               ),
               const Gap(16),
 
-              // Layout
+              // ─── Pilihan Layout ───────────────────────────
               const Text(
                 'Gaya Layout',
                 style: TextStyle(color: Colors.white70, fontSize: 13),
@@ -214,7 +214,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
               ),
               const Gap(16),
 
-              // Posisi
+              // ─── Posisi ──────────────────────────────────
               const Text(
                 'Posisi Watermark',
                 style: TextStyle(color: Colors.white70, fontSize: 13),
@@ -247,7 +247,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
               ),
               const Gap(16),
 
-              // Ukuran Font
+              // ─── Ukuran Font ─────────────────────────────
               Row(
                 children: [
                   const Text(
@@ -282,7 +282,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
               ),
               const Gap(8),
 
-              // Opacity
+              // ─── Opacity ──────────────────────────────────
               Row(
                 children: [
                   const Text(
@@ -317,7 +317,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
               ),
               const Gap(16),
 
-              // Logo
+              // ─── Logo ─────────────────────────────────────
               Row(
                 children: [
                   const Text(
@@ -366,7 +366,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
               ),
               const Gap(24),
 
-              // Tombol
+              // ─── Tombol ──────────────────────────────────
               Row(
                 children: [
                   Expanded(
