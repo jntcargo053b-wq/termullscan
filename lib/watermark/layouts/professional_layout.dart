@@ -7,10 +7,10 @@ import 'base_layout.dart';
 import 'layout_metrics.dart';
 import '../models/watermark_data.dart';
 import '../models/watermark_style.dart';
+import '../watermark_settings.dart'; // ✅ import
 import '../helpers/layout_helper.dart';
 import '../helpers/text_helper.dart';
 import '../widgets/logo_widget.dart';
-import '../watermark_settings.dart'; // untuk WatermarkPosition
 
 class ProfessionalLayout extends WatermarkLayout {
   @override
@@ -90,6 +90,9 @@ class ProfessionalLayout extends WatermarkLayout {
         overlayTop = 0;
         textAlign = TextAlign.left;
         break;
+      default:
+        overlayTop = photoHeight - overlayHeight;
+        textAlign = TextAlign.right;
     }
 
     canvas.drawImageRect(
