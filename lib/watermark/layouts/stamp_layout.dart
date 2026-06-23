@@ -7,8 +7,8 @@ import 'package:intl/intl.dart';
 import 'base_layout.dart';
 import 'layout_metrics.dart';
 import '../models/watermark_data.dart';
-import '../models/watermark_style.dart';
-import '../watermark_settings.dart'; // ✅ import
+import '../watermark_style.dart'; // ✅ import yang benar
+import '../watermark_settings.dart';
 import '../helpers/layout_helper.dart';
 import '../helpers/text_helper.dart';
 import '../widgets/logo_widget.dart';
