@@ -1,3 +1,4 @@
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 class TextHelper {
@@ -32,25 +33,5 @@ class TextHelper {
 
     tp.paint(canvas, Offset(x, y));
     return tp.height;
-  }
-
-  static double measureTextWidth({
-    required String text,
-    required double fontSize,
-    FontWeight fontWeight = FontWeight.normal,
-    String fontFamily = 'Roboto',
-  }) {
-    final tp = TextPainter(
-      text: TextSpan(
-        text: text,
-        style: TextStyle(
-          fontSize: fontSize,
-          fontWeight: fontWeight,
-          fontFamily: fontFamily,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    return tp.width;
   }
 }
