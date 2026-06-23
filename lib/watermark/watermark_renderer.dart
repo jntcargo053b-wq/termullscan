@@ -25,10 +25,15 @@ class WatermarkRenderer {
     required WatermarkSettings settings,
     required ScanEntry entry,
   }) async {
+    debugPrint('🎯 WatermarkRenderer.render() called');
+    debugPrint('  Style from settings: ${settings.style.name}');
+    debugPrint('  Position from settings: ${settings.position.name}');
+    debugPrint('  FontSize: ${settings.fontSize}');
+    debugPrint('  Opacity: ${settings.backgroundOpacity}');
+
+    // ✅ Cek apakah style didukung render asli
     if (!_stylesWithRealRenderer.contains(settings.style)) {
-      debugPrint(
-        '⚠️ WatermarkRenderer: "${settings.style.name}" belum punya render asli, fallback ke legacy.',
-      );
+      debugPrint('⚠️ Fallback ke legacy untuk style: ${settings.style.name}');
       return _legacyService.addWatermark(
         imagePath: imagePath,
         outputPath: outputPath,
@@ -60,7 +65,6 @@ class WatermarkRenderer {
       final imageBytes = await file.readAsBytes();
       final targetWidth = await _getOptimalTargetWidth(imageBytes);
 
-      // ✅ Bug H - Codec dispose
       codec = await ui.instantiateImageCodec(
         imageBytes,
         targetWidth: targetWidth,
@@ -79,6 +83,7 @@ class WatermarkRenderer {
         }
       }
 
+      // ✅ Buat WatermarkData dengan semua setting
       final data = WatermarkData(
         timestamp: entry.timestamp,
         operatorName: settings.operatorName,
@@ -93,14 +98,18 @@ class WatermarkRenderer {
         backgroundOpacity: settings.backgroundOpacity,
       );
 
+      debugPrint('✅ WatermarkData created with style: ${settings.style.name}');
+
+      // ✅ Buat layout sesuai style dari settings
       final layout = WatermarkFactory.create(settings.style);
+      debugPrint('✅ Layout created: ${layout.runtimeType}');
+
       final metrics = layout.computeMetrics(
         photoWidth: photoWidth,
         photoHeight: photoHeight,
         data: data,
       );
 
-      // ✅ Bug G - Validasi canvas size
       if (metrics.canvasWidth <= 0 || metrics.canvasHeight <= 0) {
         throw Exception('Canvas size invalid: ${metrics.canvasWidth}x${metrics.canvasHeight}');
       }
@@ -125,14 +134,8 @@ class WatermarkRenderer {
       final canvasWidth = metrics.canvasWidth.round();
       final canvasHeight = metrics.canvasHeight.round();
 
-      // ✅ Bug G - Validasi sebelum toImage
-      if (canvasWidth <= 0 || canvasHeight <= 0) {
-        throw Exception('Canvas size invalid after paint');
-      }
-
       outputImage = await picture.toImage(canvasWidth, canvasHeight);
 
-      // ✅ Bug I - PNG encoding dengan dispose
       final ByteData? byteData;
       try {
         byteData = await outputImage.toByteData(
@@ -157,7 +160,6 @@ class WatermarkRenderer {
       debugPrint('❌ WatermarkRenderer: error saat render: $e\n$stack');
       return null;
     } finally {
-      // ✅ Bug H - Dispose semua resource
       codec?.dispose();
       logoCodec?.dispose();
       srcImage?.dispose();
