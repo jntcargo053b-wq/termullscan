@@ -6,7 +6,7 @@ import 'package:gap/gap.dart';
 import 'base_layout.dart';
 import 'layout_metrics.dart';
 import '../models/watermark_data.dart';
-import '../watermark_style.dart'; // ✅ import yang benar
+import '../watermark_style.dart';
 import '../watermark_settings.dart';
 import '../helpers/layout_helper.dart';
 import '../helpers/text_helper.dart';
@@ -137,6 +137,7 @@ class MinimalLayout extends WatermarkLayout {
         fontWeight: fontWeight,
         maxLines: maxLines,
         textAlign: textAlign,
+        fontFamily: data.fontFamily, // ✅ TAMBAHKAN INI
       );
       textY += tp + fontSize * 0.25;
     }
