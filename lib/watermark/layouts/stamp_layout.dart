@@ -8,10 +8,10 @@ import 'base_layout.dart';
 import 'layout_metrics.dart';
 import '../models/watermark_data.dart';
 import '../models/watermark_style.dart';
+import '../watermark_settings.dart'; // ✅ import
 import '../helpers/layout_helper.dart';
 import '../helpers/text_helper.dart';
 import '../widgets/logo_widget.dart';
-import '../watermark_settings.dart'; // untuk WatermarkPosition
 
 class StampLayout extends WatermarkLayout {
   @override
@@ -102,6 +102,9 @@ class StampLayout extends WatermarkLayout {
         stampCenterX = padding + stampW / 2;
         stampCenterY = padding + stampH / 2;
         break;
+      default:
+        stampCenterX = photoWidth - padding - stampW / 2;
+        stampCenterY = photoHeight - padding - stampH / 2;
     }
 
     canvas.save();
@@ -180,7 +183,7 @@ class StampLayout extends WatermarkLayout {
     final panelHeight = infoLines.length * lineHeight + panelPadding * 2;
     final panelWidth = metrics.textAvailableWidth + panelPadding * 2;
 
-    double panelX = 0, panelY = 0;
+    double panelX, panelY;
     switch (data.position) {
       case WatermarkPosition.bottomRight:
         panelX = photoWidth - padding - panelWidth;
@@ -198,6 +201,9 @@ class StampLayout extends WatermarkLayout {
         panelX = padding;
         panelY = padding + stampH + padding;
         break;
+      default:
+        panelX = photoWidth - padding - panelWidth;
+        panelY = photoHeight - padding - panelHeight - stampH - padding;
     }
 
     canvas.drawRRect(
@@ -234,7 +240,7 @@ class StampLayout extends WatermarkLayout {
       final scale = math.min(logoSize / logoW, logoSize / logoH);
       final drawW = logoW * scale;
       final drawH = logoH * scale;
-      double logoX = 0, logoY = 0;
+      double logoX, logoY;
       switch (data.position) {
         case WatermarkPosition.bottomRight:
           logoX = padding;
@@ -252,6 +258,9 @@ class StampLayout extends WatermarkLayout {
           logoX = photoWidth - padding - drawW;
           logoY = photoHeight - padding - drawH;
           break;
+        default:
+          logoX = padding;
+          logoY = padding;
       }
       LogoWidget.paint(
         canvas: canvas,
