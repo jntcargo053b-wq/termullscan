@@ -4,7 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import '../models/scan_entry.dart';
 import 'models/watermark_data.dart';
-import 'watermark_style.dart'; // ✅ import yang benar
+import 'watermark_style.dart';
 import 'watermark_factory.dart';
 import 'watermark_settings.dart';
 import '../services/watermark_service.dart';
@@ -44,6 +44,12 @@ class WatermarkRenderer {
       );
     }
 
+    ui.Image? srcImage;
+    ui.Image? logoImage;
+    ui.Codec? codec;
+    ui.Codec? logoCodec;
+    ui.Image? outputImage;
+
     try {
       final file = File(imagePath);
       if (!await file.exists()) {
@@ -54,19 +60,23 @@ class WatermarkRenderer {
       final imageBytes = await file.readAsBytes();
       final targetWidth = await _getOptimalTargetWidth(imageBytes);
 
-      final codec = await ui.instantiateImageCodec(
+      // ✅ Bug H - Codec dispose
+      codec = await ui.instantiateImageCodec(
         imageBytes,
         targetWidth: targetWidth,
       );
       final frame = await codec.getNextFrame();
-      final srcImage = frame.image;
+      srcImage = frame.image;
 
       final photoWidth = srcImage.width.toDouble();
       final photoHeight = srcImage.height.toDouble();
 
-      ui.Image? logoImage;
       if (settings.hasLogo && settings.logoPath != null && settings.logoPath!.isNotEmpty) {
-        logoImage = await _loadLogo(settings.logoPath!, targetWidth: targetWidth);
+        logoCodec = await _loadLogoCodec(settings.logoPath!, targetWidth: targetWidth);
+        if (logoCodec != null) {
+          final logoFrame = await logoCodec.getNextFrame();
+          logoImage = logoFrame.image;
+        }
       }
 
       final data = WatermarkData(
@@ -90,6 +100,14 @@ class WatermarkRenderer {
         data: data,
       );
 
+      // ✅ Bug G - Validasi canvas size
+      if (metrics.canvasWidth <= 0 || metrics.canvasHeight <= 0) {
+        throw Exception('Canvas size invalid: ${metrics.canvasWidth}x${metrics.canvasHeight}');
+      }
+      if (metrics.canvasWidth > 4096 || metrics.canvasHeight > 4096) {
+        throw Exception('Canvas terlalu besar: ${metrics.canvasWidth}x${metrics.canvasHeight}');
+      }
+
       final recorder = ui.PictureRecorder();
       final canvas = ui.Canvas(recorder);
 
@@ -106,10 +124,24 @@ class WatermarkRenderer {
       final picture = recorder.endRecording();
       final canvasWidth = metrics.canvasWidth.round();
       final canvasHeight = metrics.canvasHeight.round();
-      final outputImage = await picture.toImage(canvasWidth, canvasHeight);
-      final byteData = await outputImage.toByteData(
-        format: ui.ImageByteFormat.png,
-      );
+
+      // ✅ Bug G - Validasi sebelum toImage
+      if (canvasWidth <= 0 || canvasHeight <= 0) {
+        throw Exception('Canvas size invalid after paint');
+      }
+
+      outputImage = await picture.toImage(canvasWidth, canvasHeight);
+
+      // ✅ Bug I - PNG encoding dengan dispose
+      final ByteData? byteData;
+      try {
+        byteData = await outputImage.toByteData(
+          format: ui.ImageByteFormat.png,
+        );
+      } finally {
+        outputImage.dispose();
+        outputImage = null;
+      }
 
       if (byteData == null) {
         debugPrint('❌ WatermarkRenderer: gagal encode PNG');
@@ -124,22 +156,33 @@ class WatermarkRenderer {
     } catch (e, stack) {
       debugPrint('❌ WatermarkRenderer: error saat render: $e\n$stack');
       return null;
+    } finally {
+      // ✅ Bug H - Dispose semua resource
+      codec?.dispose();
+      logoCodec?.dispose();
+      srcImage?.dispose();
+      logoImage?.dispose();
+      outputImage?.dispose();
     }
   }
 
   static Future<int> _getOptimalTargetWidth(Uint8List imageBytes) async {
     try {
       final codec = await ui.instantiateImageCodec(imageBytes);
-      final frame = await codec.getNextFrame();
-      final originalWidth = frame.image.width;
-      return originalWidth <= 1024 ? originalWidth : 1024;
+      try {
+        final frame = await codec.getNextFrame();
+        final originalWidth = frame.image.width;
+        return originalWidth <= 1024 ? originalWidth : 1024;
+      } finally {
+        codec.dispose();
+      }
     } catch (e) {
       debugPrint('⚠️ WatermarkRenderer: error membaca ukuran gambar: $e');
       return 1024;
     }
   }
 
-  static Future<ui.Image?> _loadLogo(
+  static Future<ui.Codec?> _loadLogoCodec(
     String logoPath, {
     required int targetWidth,
   }) async {
@@ -149,12 +192,10 @@ class WatermarkRenderer {
 
       final logoBytes = await logoFile.readAsBytes();
       final logoTargetWidth = (targetWidth * 0.15).round().clamp(40, 200);
-      final logoCodec = await ui.instantiateImageCodec(
+      return await ui.instantiateImageCodec(
         logoBytes,
         targetWidth: logoTargetWidth,
       );
-      final logoFrame = await logoCodec.getNextFrame();
-      return logoFrame.image;
     } catch (e) {
       debugPrint('⚠️ WatermarkRenderer: error memuat logo: $e');
       return null;
