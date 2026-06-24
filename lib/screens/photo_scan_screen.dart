@@ -1,3 +1,6 @@
+// ============================================================
+// 2. lib/screens/photo_scan_screen.dart
+// ============================================================
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -99,13 +102,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     });
   }
 
-  // ──────────────────────────────────────────────────────────────────────
-  //  WATERMARK RENDER (PHOTO) – DENGAN RELOAD SETTINGS
-  // ──────────────────────────────────────────────────────────────────────
   Future<String> _applyWatermark(String imagePath, DateTime timestamp) async {
-    // ✅ RELOAD SETTING TERBARU DARI SHAREDPREFERENCES
-    await _wmSettings.load();
-
+    await _wmSettings.load(); // reload terbaru
     final outputPath =
         '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.png';
 
@@ -125,8 +123,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     debugPrint('  Position: ${_wmSettings.position.name}');
     debugPrint('  FontSize: ${_wmSettings.fontSize}');
     debugPrint('  FontFamily: ${_wmSettings.fontFamily}');
-    debugPrint('  Opacity: ${_wmSettings.backgroundOpacity}');
-    debugPrint('  Operator: ${_wmSettings.operatorName}');
     debugPrint('======================================');
 
     final result = await WatermarkRenderer.render(
@@ -157,17 +153,15 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   }
 
   Future<void> _takePhoto() async {
-    // ✅ Cegah double tap
     if (_isSaving) return;
-
     if (!await _ensureCameraPermission()) return;
 
     final XFile? xfile;
     try {
       xfile = await _picker.pickImage(
         source: ImageSource.camera,
-        maxWidth: 1024,
-        imageQuality: 65,
+        maxWidth: 1600,
+        imageQuality: 80,
         preferredCameraDevice: CameraDevice.rear,
       );
     } catch (e) {
@@ -177,7 +171,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
     if (xfile == null) return;
 
-    // ✅ Validasi ukuran file
     try {
       final fileSize = await File(xfile.path).length();
       if (fileSize > 20 * 1024 * 1024) {
@@ -188,22 +181,20 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       return;
     }
 
-    if (mounted) {
-      setState(() => _isSaving = true);
-    }
+    if (mounted) setState(() => _isSaving = true);
 
+    String? watermarkedPath;
     try {
       HapticFeedback.mediumImpact();
       final timestamp = DateTime.now();
 
-      final String watermarkedPath = await _applyWatermark(xfile.path, timestamp);
+      watermarkedPath = await _applyWatermark(xfile.path, timestamp);
 
-      // ✅ Validasi file watermark ada
       if (!await File(watermarkedPath).exists()) {
         throw Exception('File watermark tidak ditemukan');
       }
 
-      final String savedPath = await _storage.savePhoto(watermarkedPath);
+      final savedPath = await _storage.savePhoto(watermarkedPath);
       if (savedPath.isEmpty) {
         throw Exception('Gagal menyimpan file foto');
       }
@@ -221,28 +212,31 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
       if (!mounted) return;
       setState(() => _photoCount++);
-
       if (mounted) _showSuccess(entry);
     } catch (e, stack) {
       debugPrint('Error in _takePhoto: $e\n$stack');
       _showError('Gagal memproses foto: ${e.toString().split(':').last}');
+      // cleanup jika ada
+      if (watermarkedPath != null && watermarkedPath != xfile.path) {
+        try { await File(watermarkedPath).delete(); } catch (_) {}
+      }
     } finally {
-      if (mounted) {
-        setState(() => _isSaving = false);
+      if (mounted) setState(() => _isSaving = false);
+      if (xfile != null) {
+        try { await File(xfile.path).delete(); } catch (_) {}
       }
     }
   }
 
   Future<void> _pickFromGallery() async {
-    // ✅ Cegah double tap
     if (_isSaving) return;
 
     final XFile? xfile;
     try {
       xfile = await _picker.pickImage(
         source: ImageSource.gallery,
-        maxWidth: 1024,
-        imageQuality: 65,
+        maxWidth: 1600,
+        imageQuality: 80,
       );
     } catch (e) {
       _showError('Gagal membuka galeri');
@@ -251,7 +245,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
     if (xfile == null) return;
 
-    // ✅ Validasi ukuran file
     try {
       final fileSize = await File(xfile.path).length();
       if (fileSize > 20 * 1024 * 1024) {
@@ -262,21 +255,19 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       return;
     }
 
-    if (mounted) {
-      setState(() => _isSaving = true);
-    }
+    if (mounted) setState(() => _isSaving = true);
 
+    String? watermarkedPath;
     try {
       final timestamp = DateTime.now();
 
-      final String watermarkedPath = await _applyWatermark(xfile.path, timestamp);
+      watermarkedPath = await _applyWatermark(xfile.path, timestamp);
 
-      // ✅ Validasi file watermark ada
       if (!await File(watermarkedPath).exists()) {
         throw Exception('File watermark tidak ditemukan');
       }
 
-      final String savedPath = await _storage.savePhoto(watermarkedPath);
+      final savedPath = await _storage.savePhoto(watermarkedPath);
       if (savedPath.isEmpty) {
         throw Exception('Gagal menyimpan file foto');
       }
@@ -294,14 +285,17 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
       if (!mounted) return;
       setState(() => _photoCount++);
-
       if (mounted) _showSuccess(entry);
     } catch (e, stack) {
       debugPrint('Error in _pickFromGallery: $e\n$stack');
       _showError('Gagal memproses foto dari galeri');
+      if (watermarkedPath != null && watermarkedPath != xfile.path) {
+        try { await File(watermarkedPath).delete(); } catch (_) {}
+      }
     } finally {
-      if (mounted) {
-        setState(() => _isSaving = false);
+      if (mounted) setState(() => _isSaving = false);
+      if (xfile != null) {
+        try { await File(xfile.path).delete(); } catch (_) {}
       }
     }
   }
