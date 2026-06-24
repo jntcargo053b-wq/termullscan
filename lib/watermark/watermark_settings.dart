@@ -1,4 +1,6 @@
-// lib/watermark/watermark_settings.dart
+// ============================================================
+// 6. lib/watermark/watermark_settings.dart
+// ============================================================
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'watermark_style.dart';
