@@ -1,6 +1,3 @@
-// ============================================================
-// 1. lib/screens/barcode_scan_screen.dart
-// ============================================================
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -36,9 +33,10 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   bool _settingsLoaded = false;
   bool _processingScan = false;
   bool _sheetOpen = false;
-  bool _resumeScheduled = false; // Lock untuk resume
+  bool _resumeScheduled = false;
 
   final StorageService _storage = StorageService();
+  final LocationService _loc = LocationService();
   final ImagePicker _picker = ImagePicker();
   final WatermarkSettings _wmSettings = WatermarkSettings();
   final MobileScannerController _scannerController = MobileScannerController();
@@ -193,7 +191,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
           children: [
             Center(
               child: Container(
-                width: 40, height: 4,
+                width: 40,
+                height: 4,
                 decoration: BoxDecoration(
                   color: Colors.grey[600],
                   borderRadius: BorderRadius.circular(2),
@@ -336,7 +335,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     try {
       file = await _picker.pickImage(
         source: ImageSource.camera,
-        maxWidth: 1600, // ditingkatkan
+        maxWidth: 1600,
         imageQuality: 80,
       );
     } catch (e) {
@@ -356,7 +355,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
 
     String? wmPath;
     try {
-      // Reload settings sebelum render
       await _wmSettings.load();
 
       final updatedEntry = entry.copyWith(
@@ -416,21 +414,23 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         );
         _resumeScanning();
       }
-      // Hapus file watermark jika gagal
       if (wmPath != null && wmPath != file.path) {
-        try { await File(wmPath).delete(); } catch (_) {}
+        try {
+          await File(wmPath).delete();
+        } catch (_) {}
       }
     } finally {
       if (mounted) setState(() => _isSaving = false);
-      // Hapus file temporary jika masih ada
       if (file != null) {
-        try { await File(file.path).delete(); } catch (_) {}
+        try {
+          await File(file.path).delete();
+        } catch (_) {}
       }
     }
   }
 
   Future<String> _addWatermarkInIsolate(String imagePath, ScanEntry entry) async {
-    await _wmSettings.load(); // reload untuk memastikan terbaru
+    await _wmSettings.load();
     final outputPath =
         '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.png';
 
@@ -481,6 +481,31 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       final granted = await PermissionService.requestGalleryPermission();
       if (!granted) {
         debugPrint('❌ Gallery permission denied');
+        if (mounted) {
+          final shouldOpenSettings = await showDialog<bool>(
+            context: context,
+            builder: (_) => AlertDialog(
+              title: const Text('Izin Diperlukan'),
+              content: const Text(
+                'Aplikasi memerlukan izin galeri untuk menyimpan foto. '
+                'Silakan berikan izin di pengaturan aplikasi.'
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Batal'),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Buka Pengaturan'),
+                ),
+              ],
+            ),
+          );
+          if (shouldOpenSettings == true) {
+            await openAppSettings();
+          }
+        }
         return false;
       }
 
@@ -494,7 +519,14 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       );
 
       await Future.delayed(const Duration(milliseconds: 500));
-      return result.isSuccess;
+
+      if (result.isSuccess) {
+        debugPrint('✅ Foto tersimpan ke galeri: $filename');
+        return true;
+      } else {
+        debugPrint('❌ Gagal simpan: ${result.errorMessage}');
+        return false;
+      }
     } catch (e) {
       debugPrint('❌ Error _saveToGallery: $e');
       return false;
@@ -516,9 +548,11 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
                     (_wmSettings.operatorName.isNotEmpty ||
                      _wmSettings.hasLogo))
                   Positioned(
-                    right: 0, top: 0,
+                    right: 0,
+                    top: 0,
                     child: Container(
-                      width: 8, height: 8,
+                      width: 8,
+                      height: 8,
                       decoration: const BoxDecoration(
                         color: Colors.amber,
                         shape: BoxShape.circle,
@@ -542,7 +576,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
               !_isSaving)
             Positioned(
               top: 12,
-              left: 0, right: 0,
+              left: 0,
+              right: 0,
               child: Center(
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -576,7 +611,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
           if (!_isSaving)
             Positioned(
               bottom: 40,
-              left: 0, right: 0,
+              left: 0,
+              right: 0,
               child: Center(
                 child: TextButton.icon(
                   onPressed: _showManualInput,
@@ -677,7 +713,8 @@ class _ResultSheetState extends State<_ResultSheet> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                width: 40, height: 4,
+                width: 40,
+                height: 4,
                 margin: const EdgeInsets.only(bottom: 16),
                 decoration: BoxDecoration(
                   color: Colors.grey[300],
@@ -730,7 +767,8 @@ class _ResultSheetState extends State<_ResultSheet> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         SizedBox(
-                          width: 24, height: 24,
+                          width: 24,
+                          height: 24,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         ),
                         Gap(8),
@@ -859,8 +897,8 @@ class _ResultSheetState extends State<_ResultSheet> {
                       ),
                       GestureDetector(
                         onTap: () => setState(() {
-          _noteSaved = false;
-          _isEditingNote = true;
+                          _noteSaved = false;
+                          _isEditingNote = true;
                         }),
                         child: const Icon(Icons.edit, size: 16, color: Colors.grey),
                       ),
@@ -894,7 +932,8 @@ class _ResultSheetState extends State<_ResultSheet> {
                             },
                       icon: _isSaving
                           ? const SizedBox(
-                              width: 16, height: 16,
+                              width: 16,
+                              height: 16,
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : Icon(_isSaved ? Icons.check : Icons.save_alt),
