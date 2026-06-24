@@ -1,5 +1,5 @@
 // ============================================================
-// 2. lib/screens/photo_scan_screen.dart
+// FILE: lib/screens/photo_scan_screen.dart
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -16,6 +16,7 @@ import '../config/app_config.dart';
 import '../theme/app_theme.dart';
 import '../watermark/watermark_renderer.dart';
 import '../watermark/watermark_settings.dart';
+import '../utils/image_compressor.dart';
 import 'watermark_settings_sheet.dart';
 
 class PhotoScanScreen extends StatefulWidget {
@@ -103,7 +104,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   }
 
   Future<String> _applyWatermark(String imagePath, DateTime timestamp) async {
-    await _wmSettings.load(); // reload terbaru
+    await _wmSettings.load();
     final outputPath =
         '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.png';
 
@@ -160,8 +161,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     try {
       xfile = await _picker.pickImage(
         source: ImageSource.camera,
-        maxWidth: 1600,
-        imageQuality: 80,
+        maxWidth: AppConfig.maxWidth,
+        imageQuality: AppConfig.imageQuality,
         preferredCameraDevice: CameraDevice.rear,
       );
     } catch (e) {
@@ -171,24 +172,16 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
     if (xfile == null) return;
 
-    try {
-      final fileSize = await File(xfile.path).length();
-      if (fileSize > 20 * 1024 * 1024) {
-        throw Exception('Ukuran foto terlalu besar (>20MB)');
-      }
-    } catch (e) {
-      _showError('Error validasi file: $e');
-      return;
-    }
+    // Kompresi adaptif
+    String compressedPath = await ImageCompressor.compressIfNeeded(xfile.path);
 
     if (mounted) setState(() => _isSaving = true);
 
     String? watermarkedPath;
     try {
-      HapticFeedback.mediumImpact();
       final timestamp = DateTime.now();
 
-      watermarkedPath = await _applyWatermark(xfile.path, timestamp);
+      watermarkedPath = await _applyWatermark(compressedPath, timestamp);
 
       if (!await File(watermarkedPath).exists()) {
         throw Exception('File watermark tidak ditemukan');
@@ -216,12 +209,14 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     } catch (e, stack) {
       debugPrint('Error in _takePhoto: $e\n$stack');
       _showError('Gagal memproses foto: ${e.toString().split(':').last}');
-      // cleanup jika ada
-      if (watermarkedPath != null && watermarkedPath != xfile.path) {
+      if (watermarkedPath != null && watermarkedPath != compressedPath) {
         try { await File(watermarkedPath).delete(); } catch (_) {}
       }
     } finally {
       if (mounted) setState(() => _isSaving = false);
+      if (compressedPath != xfile.path) {
+        try { await File(compressedPath).delete(); } catch (_) {}
+      }
       if (xfile != null) {
         try { await File(xfile.path).delete(); } catch (_) {}
       }
@@ -235,8 +230,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     try {
       xfile = await _picker.pickImage(
         source: ImageSource.gallery,
-        maxWidth: 1600,
-        imageQuality: 80,
+        maxWidth: AppConfig.maxWidth,
+        imageQuality: AppConfig.imageQuality,
       );
     } catch (e) {
       _showError('Gagal membuka galeri');
@@ -245,15 +240,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
     if (xfile == null) return;
 
-    try {
-      final fileSize = await File(xfile.path).length();
-      if (fileSize > 20 * 1024 * 1024) {
-        throw Exception('Ukuran foto terlalu besar (>20MB)');
-      }
-    } catch (e) {
-      _showError('Error validasi file: $e');
-      return;
-    }
+    // Kompresi adaptif
+    String compressedPath = await ImageCompressor.compressIfNeeded(xfile.path);
 
     if (mounted) setState(() => _isSaving = true);
 
@@ -261,7 +249,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     try {
       final timestamp = DateTime.now();
 
-      watermarkedPath = await _applyWatermark(xfile.path, timestamp);
+      watermarkedPath = await _applyWatermark(compressedPath, timestamp);
 
       if (!await File(watermarkedPath).exists()) {
         throw Exception('File watermark tidak ditemukan');
@@ -289,11 +277,14 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     } catch (e, stack) {
       debugPrint('Error in _pickFromGallery: $e\n$stack');
       _showError('Gagal memproses foto dari galeri');
-      if (watermarkedPath != null && watermarkedPath != xfile.path) {
+      if (watermarkedPath != null && watermarkedPath != compressedPath) {
         try { await File(watermarkedPath).delete(); } catch (_) {}
       }
     } finally {
       if (mounted) setState(() => _isSaving = false);
+      if (compressedPath != xfile.path) {
+        try { await File(compressedPath).delete(); } catch (_) {}
+      }
       if (xfile != null) {
         try { await File(xfile.path).delete(); } catch (_) {}
       }
