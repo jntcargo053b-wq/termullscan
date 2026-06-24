@@ -28,7 +28,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   bool _scanning = true;
   bool _isSaving = false;
   String? _lastCode;
-  DateTime? _lastScanTime; // ✅ Bug C - untuk deteksi duplikat
+  DateTime? _lastScanTime; // ✅ Cegah duplikat beruntun
   int _scanCount = 0;
   bool _settingsLoaded = false;
   bool _processingScan = false;
@@ -105,7 +105,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     final code = barcode.rawValue!;
     final format = barcode.format.name;
 
-    // ✅ Bug C - Cegah duplikat beruntun
+    // ✅ Cegah duplikat beruntun
     if (_lastCode == code &&
         _lastScanTime != null &&
         DateTime.now().difference(_lastScanTime!).inSeconds < 2) {
@@ -139,7 +139,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       );
       await _storage.add(entry);
 
-      // ✅ Bug A - Cek mounted sebelum setState
+      // ✅ Cek mounted sebelum setState
       if (!mounted) return;
       setState(() {
         _scanCount++;
@@ -160,7 +160,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     } finally {
       _processingScan = false;
 
-      // ✅ Bug B - Recovery scanner jika terkunci
+      // ✅ Recovery scanner jika terkunci
       if (mounted && !_scanning && !_isSaving && !_sheetOpen) {
         Future.delayed(
           const Duration(milliseconds: 300),
@@ -424,9 +424,25 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     }
   }
 
+  // ──────────────────────────────────────────────────────────────────────
+  //  WATERMARK RENDER (ISOLATE) – DENGAN RELOAD SETTINGS
+  // ──────────────────────────────────────────────────────────────────────
   Future<String> _addWatermarkInIsolate(String imagePath, ScanEntry entry) async {
+    // ✅ RELOAD SETTING TERBARU DARI SHAREDPREFERENCES
+    await _wmSettings.load();
+
     final outputPath =
         '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.png';
+
+    debugPrint('🔍 ===== ADD WATERMARK IN ISOLATE =====');
+    debugPrint('  Style: ${_wmSettings.style.name}');
+    debugPrint('  Position: ${_wmSettings.position.name}');
+    debugPrint('  FontSize: ${_wmSettings.fontSize}');
+    debugPrint('  FontFamily: ${_wmSettings.fontFamily}');
+    debugPrint('  Opacity: ${_wmSettings.backgroundOpacity}');
+    debugPrint('  Operator: ${_wmSettings.operatorName}');
+    debugPrint('  Barcode: ${entry.value}');
+    debugPrint('=======================================');
 
     final result = await WatermarkRenderer.render(
       imagePath: imagePath,
