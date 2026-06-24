@@ -1,39 +1,37 @@
+// ============================================================
+// 1. android/app/src/main/AndroidManifest.xml (lengkap)
+// ============================================================
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     package="com.termulscan.whscanner">
 
-    <!-- Izin Kamera (tetap) -->
+    <!-- Izin Kamera -->
     <uses-permission android:name="android.permission.CAMERA" />
 
-    <!-- Izin Lokasi (tetap) -->
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Izin Lokasi (opsional, bisa dihapus) -->
+    <!-- <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" /> -->
+    <!-- <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" /> -->
 
-    <!-- ✅ ANDROID 13+ — Izin Notifikasi -->
-    
-
-    <!-- ✅ ANDROID 13+ — Izin Media (READ_MEDIA_IMAGES + READ_MEDIA_VIDEO) -->
+    <!-- Android 13+ – Media -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
-    
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
 
-    <!-- ✅ ANDROID 12- — Izin Storage (untuk backward compatibility) -->
+    <!-- Android 14+ – Izin khusus untuk memilih media (opsional tapi disarankan) -->
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+
+    <!-- Android 12 ke bawah – Storage -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
 
-    <!-- ✅ ANDROID 14+ — Izin Media (READ_MEDIA_VISUAL_USER_SELECTED) -->
-    
-
     <application
         android:label="WH Scanner"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        
         android:usesCleartextTraffic="true"
         tools:targetApi="31">
 
-        <!-- ✅ Android 14+ — Menambahkan exported untuk activity yang menerima intent -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
