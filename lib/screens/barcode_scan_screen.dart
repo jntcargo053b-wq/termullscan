@@ -1,3 +1,6 @@
+// ============================================================
+// FILE: lib/screens/barcode_scan_screen.dart
+// ============================================================
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -15,6 +18,7 @@ import '../services/permission_service.dart';
 import '../config/app_config.dart';
 import '../watermark/watermark_renderer.dart';
 import '../watermark/watermark_settings.dart';
+import '../utils/image_compressor.dart';
 import 'watermark_settings_sheet.dart';
 
 class BarcodeScanScreen extends StatefulWidget {
@@ -335,8 +339,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     try {
       file = await _picker.pickImage(
         source: ImageSource.camera,
-        maxWidth: 1600,
-        imageQuality: 80,
+        maxWidth: AppConfig.maxWidth,
+        imageQuality: AppConfig.imageQuality,
       );
     } catch (e) {
       debugPrint('Error opening camera: $e');
@@ -350,6 +354,9 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       if (mounted) _resumeScanning();
       return;
     }
+
+    // Kompresi adaptif
+    String compressedPath = await ImageCompressor.compressIfNeeded(file.path);
 
     if (mounted) setState(() => _isSaving = true);
 
@@ -383,7 +390,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         if (mounted) _resumeScanning();
       });
 
-      wmPath = await _addWatermarkInIsolate(file.path, updatedEntry);
+      wmPath = await _addWatermarkInIsolate(compressedPath, updatedEntry);
 
       final savedPhotoPath = await _storage.savePhoto(wmPath, name: entry.value);
 
@@ -414,17 +421,16 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         );
         _resumeScanning();
       }
-      if (wmPath != null && wmPath != file.path) {
-        try {
-          await File(wmPath).delete();
-        } catch (_) {}
+      if (wmPath != null && wmPath != compressedPath) {
+        try { await File(wmPath).delete(); } catch (_) {}
       }
     } finally {
       if (mounted) setState(() => _isSaving = false);
+      if (compressedPath != file.path) {
+        try { await File(compressedPath).delete(); } catch (_) {}
+      }
       if (file != null) {
-        try {
-          await File(file.path).delete();
-        } catch (_) {}
+        try { await File(file.path).delete(); } catch (_) {}
       }
     }
   }
