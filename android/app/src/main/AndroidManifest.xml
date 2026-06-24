@@ -1,6 +1,3 @@
-// ============================================================
-// 1. android/app/src/main/AndroidManifest.xml (lengkap)
-// ============================================================
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     package="com.termulscan.whscanner">
@@ -16,7 +13,7 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
 
-    <!-- Android 14+ – Izin khusus untuk memilih media (opsional tapi disarankan) -->
+    <!-- Android 14+ – Izin khusus untuk memilih media -->
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
 
     <!-- Android 12 ke bawah – Storage -->
@@ -44,6 +41,7 @@
             <meta-data
                 android:name="io.flutter.embedding.android.NormalTheme"
                 android:resource="@style/NormalTheme" />
+
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
