@@ -1,5 +1,5 @@
 // ============================================================
-// FILE: lib/screens/barcode_scan_screen.dart
+// 3. lib/screens/barcode_scan_screen.dart
 // ============================================================
 import 'dart:async';
 import 'dart:io';
