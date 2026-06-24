@@ -1,3 +1,6 @@
+// ============================================================
+// lib/services/storage_service.dart (Lengkap dengan perbaikan share)
+// ============================================================
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -10,7 +13,7 @@ class StorageService {
   static const String _fileName = 'scan_log.json';
   List<ScanEntry> _cache = [];
   bool _initialized = false;
-  bool _isSaving = false; // lock sederhana
+  bool _isSaving = false;
 
   final Uuid _uuid = const Uuid();
 
@@ -21,7 +24,6 @@ class StorageService {
     return File('${dir.path}/$_fileName');
   }
 
-  // Lock sederhana untuk mencegah race condition
   Future<void> _withLock(Future<void> Function() action) async {
     while (_isSaving) {
       await Future.delayed(const Duration(milliseconds: 10));
@@ -87,14 +89,11 @@ class StorageService {
         final tempFile = File('${f.path}.tmp');
         await tempFile.writeAsString(jsonData);
 
-        // Backup sebelum overwrite
         if (await f.exists()) {
           await f.copy('${f.path}.bak');
         }
 
-        // Rename temp ke file utama
         await tempFile.rename(f.path);
-
         debugPrint('💾 Storage: saved ${_cache.length} entries');
       } catch (e) {
         debugPrint('⚠️ Storage: error saving cache: $e');
@@ -103,7 +102,7 @@ class StorageService {
     });
   }
 
-  // --- Method yang dibutuhkan oleh layar lain ---
+  // --- Public methods ---
 
   Future<List<ScanEntry>> loadAll() async {
     await _loadCache();
@@ -176,14 +175,15 @@ class StorageService {
   // Share file teks menggunakan share_plus
   Future<void> shareTxt(String path) async {
     try {
-      final result = await Share.shareFiles([path], text: 'Export scan log');
-      debugPrint('Share result: $result');
+      // ✅ Perbaikan: gunakan shareFiles dengan benar
+      await Share.shareFiles([path], text: 'Export scan log');
+      debugPrint('✅ Share successful');
     } catch (e) {
-      debugPrint('Share error: $e');
+      debugPrint('⚠️ Share error: $e');
     }
   }
 
-  // Simpan foto ke folder dokumen
+  // Simpan foto
   Future<String> savePhoto(String sourcePath, {String? name}) async {
     try {
       final source = File(sourcePath);
