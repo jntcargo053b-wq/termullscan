@@ -1,3 +1,6 @@
+// ============================================================
+// 7. lib/watermark/watermark_renderer.dart
+// ============================================================
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -27,12 +30,11 @@ class WatermarkRenderer {
     debugPrint('  Position: ${settings.position.name}');
     debugPrint('  FontSize: ${settings.fontSize}');
     debugPrint('  Opacity: ${settings.backgroundOpacity}');
-    debugPrint('  FontFamily: ${settings.fontFamily}'); // ✅ TAMBAHKAN
+    debugPrint('  FontFamily: ${settings.fontFamily}');
     debugPrint('  Operator: ${settings.operatorName}');
     debugPrint('  Barcode: ${entry.value}');
     debugPrint('======================================');
 
-    // ✅ Selalu gunakan layout, tidak ada fallback ke legacy
     ui.Image? srcImage;
     ui.Image? logoImage;
     ui.Codec? codec;
@@ -79,7 +81,7 @@ class WatermarkRenderer {
         position: settings.position,
         fontSize: settings.fontSize,
         backgroundOpacity: settings.backgroundOpacity,
-        fontFamily: settings.fontFamily, // ✅ TAMBAHKAN
+        fontFamily: settings.fontFamily,
       );
 
       final layout = WatermarkFactory.create(settings.style);
