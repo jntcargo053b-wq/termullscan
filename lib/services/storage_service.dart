@@ -1,5 +1,5 @@
 // ============================================================
-// lib/services/storage_service.dart (Lengkap dengan perbaikan share)
+// lib/services/storage_service.dart (FINAL - Perbaikan Share)
 // ============================================================
 import 'dart:convert';
 import 'dart:io';
@@ -172,11 +172,11 @@ class StorageService {
     return file.path;
   }
 
-  // Share file teks menggunakan share_plus
+  // ✅ PERBAIKAN SHARE - menggunakan shareXFiles (kompatibel dengan versi terbaru)
   Future<void> shareTxt(String path) async {
     try {
-      // ✅ Perbaikan: gunakan shareFiles dengan benar
-      await Share.shareFiles([path], text: 'Export scan log');
+      final xFile = XFile(path);
+      await Share.shareXFiles([xFile], text: 'Export scan log');
       debugPrint('✅ Share successful');
     } catch (e) {
       debugPrint('⚠️ Share error: $e');
