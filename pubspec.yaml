@@ -10,6 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
 
+  # ─── CORE ──────────────────────────────────────────────────────────────
   shared_preferences: ^2.2.2
   path_provider: ^2.1.1
   permission_handler: ^11.3.1
@@ -17,12 +18,24 @@ dependencies:
   intl: ^0.19.0
   uuid: ^4.3.1
   device_info_plus: ^9.1.0
+
+  # ─── UI ────────────────────────────────────────────────────────────────
   gap: ^3.0.1
   flutter_animate: ^4.5.0
+
+  # ─── SCANNER ──────────────────────────────────────────────────────────
   mobile_scanner: ^5.2.0
+
+  # ─── GALLERY ──────────────────────────────────────────────────────────
   saver_gallery: ^3.0.0
+
+  # ─── SHARE ────────────────────────────────────────────────────────────
   share_plus: ^9.0.0
+
+  # ─── IMAGE PROCESSING ────────────────────────────────────────────────
   image: ^4.1.7
+
+  # ─── SVG ──────────────────────────────────────────────────────────────
   flutter_svg: ^2.0.10+1
 
 dev_dependencies:
@@ -33,17 +46,17 @@ dev_dependencies:
 flutter:
   uses-material-design: true
 
-  # ✅ Daftarkan asset yang benar-benar ada
+  # ✅ Aset gambar (buat folder assets/images/ jika diperlukan)
   assets:
-    - assets/images/   # ← pastikan folder ini ada, atau hapus baris ini
+    - assets/images/
 
-  # ✅ Daftar font yang tersedia (termasuk Roboto)
+  # ✅ Daftar font – sesuaikan dengan file yang ada di assets/fonts/
   fonts:
     - family: Roboto
       fonts:
-        - asset: assets/fonts/Roboto-Regular.ttf
-        - asset: assets/fonts/Roboto-Bold.ttf
-          weight: 700
+        - asset: assets/fonts/Roboto-VariableFont_wdth,wght.ttf
+        - asset: assets/fonts/Roboto-Italic-VariableFont_wdth,wght.ttf
+          style: italic
 
     - family: Inter
       fonts:
