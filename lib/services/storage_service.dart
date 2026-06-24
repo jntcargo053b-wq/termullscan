@@ -1,3 +1,7 @@
+// ============================================================
+// lib/services/storage_service.dart (FINAL - no deadlock, no Completer error)
+// ============================================================
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -10,39 +14,52 @@ class StorageService {
   static const String _fileName = 'scan_log.json';
   List<ScanEntry> _cache = [];
   bool _initialized = false;
-  
-  // Lock sederhana untuk mencegah race condition
-  bool _isLocked = false;
+
+  // Simple mutex using a queue of Completers
+  bool _locked = false;
   final List<Completer<void>> _waiting = [];
-
-  Future<void> _lock() async {
-    while (_isLocked) {
-      final completer = Completer<void>();
-      _waiting.add(completer);
-      await completer.future;
-    }
-    _isLocked = true;
-  }
-
-  void _unlock() {
-    _isLocked = false;
-    if (_waiting.isNotEmpty) {
-      final completer = _waiting.removeAt(0);
-      completer.complete();
-    }
-  }
 
   final Uuid _uuid = const Uuid();
 
   String generateId() => _uuid.v4();
 
+  // --- Mutex implementation ---
+  Future<void> _lock() async {
+    if (_locked) {
+      final completer = Completer<void>();
+      _waiting.add(completer);
+      await completer.future;
+    } else {
+      _locked = true;
+    }
+  }
+
+  void _unlock() {
+    if (_waiting.isNotEmpty) {
+      final completer = _waiting.removeAt(0);
+      completer.complete();
+    } else {
+      _locked = false;
+    }
+  }
+
+  Future<T> _synchronized<T>(Future<T> Function() action) async {
+    await _lock();
+    try {
+      return await action();
+    } finally {
+      _unlock();
+    }
+  }
+
+  // --- File helpers ---
   Future<File> _getFile() async {
     final dir = await getApplicationDocumentsDirectory();
     return File('${dir.path}/$_fileName');
   }
 
-  // Inisialisasi cache - dipanggil sekali tanpa lock
-  Future<void> _initCache() async {
+  // --- Cache loading (without lock, called inside synchronized) ---
+  Future<void> _loadCacheInternal() async {
     if (_initialized) return;
     try {
       final f = await _getFile();
@@ -84,83 +101,7 @@ class StorageService {
     }
   }
 
-  // Method untuk operasi baca/tulis dengan lock
-  Future<void> _withLock(Future<void> Function() action) async {
-    await _lock();
-    try {
-      await action();
-    } finally {
-      _unlock();
-    }
-  }
-
-  // Pastikan cache sudah diinisialisasi sebelum operasi
-  Future<void> _ensureInitialized() async {
-    if (!_initialized) {
-      await _initCache();
-    }
-  }
-
-  // --- Public methods ---
-
-  Future<List<ScanEntry>> loadAll() async {
-    await _ensureInitialized();
-    return List.unmodifiable(_cache);
-  }
-
-  Future<List<ScanEntry>> getAll() async {
-    return loadAll();
-  }
-
-  Future<ScanEntry?> getEntry(String id) async {
-    await _ensureInitialized();
-    try {
-      return _cache.firstWhere((e) => e.id == id);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  Future<void> add(ScanEntry entry) async {
-    await _withLock(() async {
-      await _ensureInitialized();
-      _cache.insert(0, entry);
-      await _saveCache();
-    });
-  }
-
-  Future<void> update(ScanEntry entry) async {
-    await _withLock(() async {
-      await _ensureInitialized();
-      final index = _cache.indexWhere((e) => e.id == entry.id);
-      if (index != -1) {
-        _cache[index] = entry;
-        await _saveCache();
-      }
-    });
-  }
-
-  Future<void> delete(String id) async {
-    await _withLock(() async {
-      await _ensureInitialized();
-      _cache.removeWhere((e) => e.id == id);
-      await _saveCache();
-    });
-  }
-
-  Future<void> deleteAll() async {
-    await _withLock(() async {
-      await _ensureInitialized();
-      _cache = [];
-      await _saveCache();
-    });
-  }
-
-  Future<void> clearAll() async {
-    await deleteAll();
-  }
-
-  Future<void> _saveCache() async {
+  Future<void> _saveCacheInternal() async {
     try {
       final f = await _getFile();
       final jsonData = jsonEncode(_cache.map((e) => e.toJson()).toList());
@@ -179,6 +120,69 @@ class StorageService {
     }
   }
 
+  // --- Public methods (all synchronized) ---
+
+  Future<List<ScanEntry>> loadAll() async {
+    return await _synchronized(() async {
+      await _loadCacheInternal();
+      return List.unmodifiable(_cache);
+    });
+  }
+
+  Future<List<ScanEntry>> getAll() async {
+    return loadAll();
+  }
+
+  Future<ScanEntry?> getEntry(String id) async {
+    return await _synchronized(() async {
+      await _loadCacheInternal();
+      try {
+        return _cache.firstWhere((e) => e.id == id);
+      } catch (_) {
+        return null;
+      }
+    });
+  }
+
+  Future<void> add(ScanEntry entry) async {
+    await _synchronized(() async {
+      await _loadCacheInternal();
+      _cache.insert(0, entry);
+      await _saveCacheInternal();
+    });
+  }
+
+  Future<void> update(ScanEntry entry) async {
+    await _synchronized(() async {
+      await _loadCacheInternal();
+      final index = _cache.indexWhere((e) => e.id == entry.id);
+      if (index != -1) {
+        _cache[index] = entry;
+        await _saveCacheInternal();
+      }
+    });
+  }
+
+  Future<void> delete(String id) async {
+    await _synchronized(() async {
+      await _loadCacheInternal();
+      _cache.removeWhere((e) => e.id == id);
+      await _saveCacheInternal();
+    });
+  }
+
+  Future<void> deleteAll() async {
+    await _synchronized(() async {
+      _cache = [];
+      await _saveCacheInternal();
+    });
+  }
+
+  Future<void> clearAll() async {
+    await deleteAll();
+  }
+
+  // --- Export / Share ---
   Future<String> exportTxt(List<ScanEntry> entries) async {
     final dir = await getApplicationDocumentsDirectory();
     final file = File('${dir.path}/scan_export_${DateTime.now().millisecondsSinceEpoch}.txt');
@@ -200,6 +204,7 @@ class StorageService {
     }
   }
 
+  // --- Photo handling ---
   Future<String> savePhoto(String sourcePath, {String? name}) async {
     try {
       final source = File(sourcePath);
@@ -215,7 +220,6 @@ class StorageService {
           ? '${DateTime.now().millisecondsSinceEpoch}_$name.jpg'
           : '${DateTime.now().millisecondsSinceEpoch}.jpg';
       final destPath = '${photosDir.path}/$fileName';
-      final dest = File(destPath);
       await source.copy(destPath);
       if (sourcePath != destPath && await source.exists()) {
         await source.delete();
@@ -241,22 +245,26 @@ class StorageService {
   }
 
   Future<int> getCount() async {
-    await _ensureInitialized();
-    return _cache.length;
+    return await _synchronized(() async {
+      await _loadCacheInternal();
+      return _cache.length;
+    });
   }
 
   Future<void> restoreFromBackup() async {
-    try {
-      final f = await _getFile();
-      final backup = File('${f.path}.bak');
-      if (await backup.exists()) {
-        await backup.copy(f.path);
-        _initialized = false;
-        await _initCache();
-        debugPrint('✅ Storage: restored from backup');
+    await _synchronized(() async {
+      try {
+        final f = await _getFile();
+        final backup = File('${f.path}.bak');
+        if (await backup.exists()) {
+          await backup.copy(f.path);
+          _initialized = false;
+          await _loadCacheInternal();
+          debugPrint('✅ Storage: restored from backup');
+        }
+      } catch (e) {
+        debugPrint('⚠️ Storage: error restoring backup: $e');
       }
-    } catch (e) {
-      debugPrint('⚠️ Storage: error restoring backup: $e');
-    }
+    });
   }
 }
