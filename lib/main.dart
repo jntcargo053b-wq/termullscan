@@ -1,16 +1,22 @@
+// ============================================================
+// 5. lib/main.dart (minta izin di awal)
+// ============================================================
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'theme/app_theme.dart';
 import 'screens/home_screen.dart';
 import 'watermark/watermark_settings.dart';
+import 'services/permission_service.dart'; // import
 
 void main() async {
-  // ✅ Pastikan binding terinisialisasi
   WidgetsFlutterBinding.ensureInitialized();
 
-  // ✅ Load WatermarkSettings sebelum runApp
+  // Load settings
   final watermarkSettings = WatermarkSettings();
   await watermarkSettings.load();
+
+  // Minta izin di awal
+  await PermissionService.requestAllPermissions();
 
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
