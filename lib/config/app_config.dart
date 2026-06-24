@@ -1,4 +1,12 @@
+// ============================================================
+// 1. lib/config/app_config.dart (tambahkan konfigurasi kompresi)
+// ============================================================
 class AppConfig {
-  // Setel ke true untuk mengaktifkan GPS/lokasi, false untuk menonaktifkan.
   static const bool enableGps = false;
+
+  // Kompresi foto
+  static const int maxImageSizeMB = 5;          // Maksimal sebelum kompresi (5MB)
+  static const int targetImageSizeKB = 1024;    // Target ukuran setelah kompresi (~1MB)
+  static const int imageQuality = 80;           // Kualitas default
+  static const int maxWidth = 1600;             // Lebar maksimal
 }
