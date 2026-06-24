@@ -1,210 +1,202 @@
+// ============================================================
+// 3. lib/services/storage_service.dart (dengan lock, backup, safe save)
+// ============================================================
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/foundation.dart';  // ✅ untuk debugPrint
 import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
-import '../models/scan_entry.dart';
 import 'package:uuid/uuid.dart';
+import 'package:synchronized/synchronized.dart';
+import '../models/scan_entry.dart';
 
 class StorageService {
-  static final _i = StorageService._();
-  factory StorageService() => _i;
-  StorageService._();
+  static const String _fileName = 'scan_log.json';
+  List<ScanEntry> _cache = [];
+  bool _initialized = false;
+  final Lock _lock = Lock();
 
-  static const _fileName = 'scan_log.json';
+  final Uuid _uuid = const Uuid();
 
-  List<ScanEntry>? _cache;
-  Future<void> _writeQueue = Future.value();
+  String generateId() => _uuid.v4();
 
-  Future<Directory> get _dir async {
-    final base = await getApplicationDocumentsDirectory();
-    final d = Directory('${base.path}/WHScanner');
-    await d.create(recursive: true);
-    return d;
+  Future<File> _getFile() async {
+    final dir = await getApplicationDocumentsDirectory();
+    return File('${dir.path}/$_fileName');
   }
 
-  Future<File> get _jsonFile async {
-    final d = await _dir;
-    return File('${d.path}/$_fileName');
-  }
-
-  Future<List<ScanEntry>> loadAll() async {
-    if (_cache != null) return List.unmodifiable(_cache!);
-    try {
-      final f = await _jsonFile;
-      if (!await f.exists()) {
+  Future<void> _loadCache() async {
+    if (_initialized) return;
+    await _lock.synchronized(() async {
+      if (_initialized) return;
+      try {
+        final f = await _getFile();
+        if (!await f.exists()) {
+          _cache = [];
+          _initialized = true;
+          return;
+        }
+        final raw = await f.readAsString();
+        if (raw.trim().isEmpty) {
+          _cache = [];
+          _initialized = true;
+          return;
+        }
+        final decoded = json.decode(raw);
+        if (decoded is! List) throw FormatException('Invalid JSON');
+        _cache = decoded.map((e) => ScanEntry.fromJson(e as Map<String, dynamic>)).toList();
+        _initialized = true;
+        debugPrint('📦 Storage: loaded ${_cache.length} entries');
+      } catch (e) {
+        debugPrint('⚠️ Storage: error loading cache: $e, trying backup');
+        try {
+          final f = await _getFile();
+          final backup = File('${f.path}.bak');
+          if (await backup.exists()) {
+            await backup.copy(f.path);
+            final raw = await f.readAsString();
+            final decoded = json.decode(raw);
+            _cache = (decoded as List).map((e) => ScanEntry.fromJson(e as Map<String, dynamic>)).toList();
+            _initialized = true;
+            debugPrint('✅ Storage: restored from backup');
+            return;
+          }
+        } catch (backupError) {
+          debugPrint('⚠️ Backup restore failed: $backupError');
+        }
         _cache = [];
-        return [];
+        _initialized = true;
       }
-      final raw = await f.readAsString();
-      final list = json.decode(raw) as List;
-      _cache = list.map((e) => ScanEntry.fromJson(e)).toList()
-        ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
-      return List.unmodifiable(_cache!);
-    } catch (_) {
-      _cache = [];
-      return [];
-    }
+    });
   }
 
-  Future<void> _persist() async {
-    _writeQueue = _writeQueue.then((_) async {
-      final f = await _jsonFile;
-      final tmp = File('${f.path}.tmp');
-      await tmp.writeAsString(
-        json.encode((_cache ?? []).map((e) => e.toJson()).toList()),
-      );
-      if (await f.exists()) {
-        await f.delete();
+  Future<void> _saveCache() async {
+    await _lock.synchronized(() async {
+      try {
+        final f = await _getFile();
+        final jsonData = jsonEncode(_cache.map((e) => e.toJson()).toList());
+        final tempFile = File('${f.path}.tmp');
+        await tempFile.writeAsString(jsonData);
+
+        // Backup sebelum overwrite
+        if (await f.exists()) {
+          await f.copy('${f.path}.bak');
+        }
+
+        // Rename temp ke file utama (rename aman karena file lama masih ada)
+        await tempFile.rename(f.path);
+
+        debugPrint('💾 Storage: saved ${_cache.length} entries');
+      } catch (e) {
+        debugPrint('⚠️ Storage: error saving cache: $e');
+        rethrow;
       }
-      await tmp.rename(f.path);
     });
-    await _writeQueue;
+  }
+
+  Future<List<ScanEntry>> getAll() async {
+    await _loadCache();
+    return List.unmodifiable(_cache);
+  }
+
+  Future<ScanEntry?> getEntry(String id) async {
+    await _loadCache();
+    try {
+      return _cache.firstWhere((e) => e.id == id);
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> add(ScanEntry entry) async {
-    if (_cache == null) await loadAll();
-    _cache!.insert(0, entry);
-    await _persist();
+    await _lock.synchronized(() async {
+      await _loadCache();
+      _cache.insert(0, entry);
+      await _saveCache();
+    });
   }
 
   Future<void> update(ScanEntry entry) async {
-    if (_cache == null) await loadAll();
-    final idx = _cache!.indexWhere((e) => e.id == entry.id);
-    if (idx >= 0) _cache![idx] = entry;
-    await _persist();
+    await _lock.synchronized(() async {
+      await _loadCache();
+      final index = _cache.indexWhere((e) => e.id == entry.id);
+      if (index != -1) {
+        _cache[index] = entry;
+        await _saveCache();
+      }
+    });
   }
 
   Future<void> delete(String id) async {
-    if (_cache == null) await loadAll();
-    final idx = _cache!.indexWhere((e) => e.id == id);
-    if (idx < 0) return;
-    final entry = _cache![idx];
-
-    if (entry.isPhoto) {
-      try {
-        final f = File(entry.value);
-        if (await f.exists()) {
-          await f.delete();
-          debugPrint('🗑️ Deleted photo: ${entry.value}');
-        }
-      } catch (e) {
-        debugPrint('⚠️ Could not delete photo: $e');
-      }
-    }
-
-    _cache!.removeWhere((e) => e.id == id);
-    await _persist();
+    await _lock.synchronized(() async {
+      await _loadCache();
+      _cache.removeWhere((e) => e.id == id);
+      await _saveCache();
+    });
   }
 
-  Future<void> deleteAll() async {
-    if (_cache == null) await loadAll();
-
-    int deletedCount = 0;
-    for (final e in _cache!) {
-      if (e.isPhoto) {
-        try {
-          final f = File(e.value);
-          if (await f.exists()) {
-            await f.delete();
-            deletedCount++;
-          }
-        } catch (_) {}
-      }
-    }
-    debugPrint('🗑️ Deleted $deletedCount photo files');
-
-    _cache = [];
-    final f = await _jsonFile;
-    if (await f.exists()) await f.delete();
+  Future<void> clearAll() async {
+    await _lock.synchronized(() async {
+      _cache = [];
+      await _saveCache();
+    });
   }
 
-  void invalidateCache() => _cache = null;
-
-  Future<String> exportTxt(List<ScanEntry> entries) async {
-    final d = await _dir;
-    final now = DateTime.now();
-    final fname =
-        'laporan_${now.day.toString().padLeft(2, '0')}-${now.month.toString().padLeft(2, '0')}-${now.year}_${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}.txt';
-    final f = File('${d.path}/$fname');
-
-    final buf = StringBuffer();
-    final sep = '=' * 60;
-    final thin = '-' * 60;
-
-    buf.writeln(sep);
-    buf.writeln('  WH SCANNER — LAPORAN LOG SCAN');
-    buf.writeln('  Dicetak: ${_fmt(now)}');
-    buf.writeln(sep);
-    buf.writeln();
-    buf.writeln('Total scan  : ${entries.length} entri');
-    buf.writeln('Barcode     : ${entries.where((e) => e.isBarcode).length}');
-    buf.writeln('Foto        : ${entries.where((e) => e.isPhoto).length}');
-    buf.writeln();
-
-    for (int i = 0; i < entries.length; i++) {
-      final e = entries[i];
-      buf.writeln('[${(i + 1).toString().padLeft(3, '0')}] ${e.isBarcode ? "BARCODE" : "FOTO"}');
-      buf.writeln('    Waktu    : ${e.timestampFormatted}');
-      if (e.isBarcode) {
-        buf.writeln('    Format   : ${e.barcodeFormat ?? "-"}');
-        buf.writeln('    Nilai    : ${e.value}');
-      } else {
-        buf.writeln('    File     : ${e.value.split('/').last}');
-      }
-      buf.writeln('          : ${e.coordinatesString}');
-      if (e.locationName != null) buf.writeln('       : ${e.locationName}');
-      if (e.note != null && e.note!.isNotEmpty) buf.writeln('    Catatan  : ${e.note}');
-      buf.writeln(thin);
-    }
-
-    buf.writeln();
-    buf.writeln(sep);
-    buf.writeln('  WH Scanner Pro  |  ${_fmt(now)}');
-    buf.writeln(sep);
-
-    await f.writeAsString(buf.toString(), flush: true);
-    return f.path;
-  }
-
-  // ✅ Perbaiki: padLeft (lowercase)
-  String _fmt(DateTime d) =>
-      '${d.day.toString().padLeft(2, '0')}-${d.month.toString().padLeft(2, '0')}-${d.year} '
-      '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}:${d.second.toString().padLeft(2, '0')}';
-
-  Future<void> shareTxt(String path) async {
-    await Share.shareXFiles([XFile(path)], subject: 'Log Scan WH Scanner');
-  }
-
-  Future<String> savePhoto(String tempPath, {String? name}) async {
-    final d = await _dir;
-    final photoDir = Directory('${d.path}/photos');
-    await photoDir.create(recursive: true);
-    final id = DateTime.now().millisecondsSinceEpoch;
-    final cleanName = name != null
-        ? name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
-        : 'photo';
-    final dest = '${photoDir.path}/${cleanName}_$id.png';
-
+  Future<String> savePhoto(String sourcePath, {String? name}) async {
     try {
-      await File(tempPath).rename(dest);
-    } on FileSystemException {
-      await File(tempPath).copy(dest);
-      try {
-        await File(tempPath).delete();
-      } catch (_) {}
+      final source = File(sourcePath);
+      if (!await source.exists()) {
+        throw FileSystemException('Source file not found', sourcePath);
+      }
+      final dir = await getApplicationDocumentsDirectory();
+      final photosDir = Directory('${dir.path}/photos');
+      if (!await photosDir.exists()) {
+        await photosDir.create(recursive: true);
+      }
+      final fileName = name != null
+          ? '${DateTime.now().millisecondsSinceEpoch}_$name.jpg'
+          : '${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final destPath = '${photosDir.path}/$fileName';
+      final dest = File(destPath);
+      await source.copy(destPath);
+      if (sourcePath != destPath && await source.exists()) {
+        await source.delete();
+      }
+      debugPrint('📸 Photo saved: $destPath');
+      return destPath;
+    } catch (e) {
+      debugPrint('⚠️ Storage: error saving photo: $e');
+      rethrow;
     }
-    return dest;
   }
 
-  String generateId() => const Uuid().v4();
-
-  Future<ScanEntry?> getEntry(String id) async {
-    if (_cache == null) await loadAll();
+  Future<void> deletePhoto(String path) async {
     try {
-      return _cache!.firstWhere((e) => e.id == id);
-    } catch (_) {
-      return null;
+      final file = File(path);
+      if (await file.exists()) {
+        await file.delete();
+        debugPrint('🗑️ Photo deleted: $path');
+      }
+    } catch (e) {
+      debugPrint('⚠️ Storage: error deleting photo: $e');
+    }
+  }
+
+  Future<int> getCount() async {
+    await _loadCache();
+    return _cache.length;
+  }
+
+  Future<void> restoreFromBackup() async {
+    try {
+      final f = await _getFile();
+      final backup = File('${f.path}.bak');
+      if (await backup.exists()) {
+        await backup.copy(f.path);
+        _initialized = false;
+        await _loadCache();
+        debugPrint('✅ Storage: restored from backup');
+      }
+    } catch (e) {
+      debugPrint('⚠️ Storage: error restoring backup: $e');
     }
   }
 }
