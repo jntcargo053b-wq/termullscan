@@ -1,3 +1,6 @@
+// ============================================================
+// 1. lib/screens/barcode_scan_screen.dart
+// ============================================================
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -28,11 +31,12 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   bool _scanning = true;
   bool _isSaving = false;
   String? _lastCode;
-  DateTime? _lastScanTime; // ✅ Cegah duplikat beruntun
+  DateTime? _lastScanTime;
   int _scanCount = 0;
   bool _settingsLoaded = false;
   bool _processingScan = false;
   bool _sheetOpen = false;
+  bool _resumeScheduled = false; // Lock untuk resume
 
   final StorageService _storage = StorageService();
   final ImagePicker _picker = ImagePicker();
@@ -68,6 +72,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   }
 
   Future<void> _resumeScanning() async {
+    if (_resumeScheduled || _processingScan || _isSaving) return;
+    _resumeScheduled = true;
     await _scannerController.start();
     if (mounted) {
       setState(() {
@@ -75,6 +81,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         _lastCode = null;
       });
     }
+    _resumeScheduled = false;
   }
 
   void _openWatermarkSettings() {
@@ -105,7 +112,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     final code = barcode.rawValue!;
     final format = barcode.format.name;
 
-    // ✅ Cegah duplikat beruntun
     if (_lastCode == code &&
         _lastScanTime != null &&
         DateTime.now().difference(_lastScanTime!).inSeconds < 2) {
@@ -139,11 +145,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       );
       await _storage.add(entry);
 
-      // ✅ Cek mounted sebelum setState
       if (!mounted) return;
-      setState(() {
-        _scanCount++;
-      });
+      setState(() => _scanCount++);
 
       if (mounted) {
         await _scannerController.stop();
@@ -159,15 +162,11 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       if (mounted) _resumeScanning();
     } finally {
       _processingScan = false;
-
-      // ✅ Recovery scanner jika terkunci
-      if (mounted && !_scanning && !_isSaving && !_sheetOpen) {
+      if (mounted && !_scanning && !_isSaving && !_sheetOpen && !_resumeScheduled) {
         Future.delayed(
           const Duration(milliseconds: 300),
           () {
-            if (mounted) {
-              _resumeScanning();
-            }
+            if (mounted) _resumeScanning();
           },
         );
       }
@@ -337,8 +336,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     try {
       file = await _picker.pickImage(
         source: ImageSource.camera,
-        maxWidth: 1024,
-        imageQuality: 65,
+        maxWidth: 1600, // ditingkatkan
+        imageQuality: 80,
       );
     } catch (e) {
       debugPrint('Error opening camera: $e');
@@ -355,7 +354,11 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
 
     if (mounted) setState(() => _isSaving = true);
 
+    String? wmPath;
     try {
+      // Reload settings sebelum render
+      await _wmSettings.load();
+
       final updatedEntry = entry.copyWith(
         latitude: null,
         longitude: null,
@@ -382,13 +385,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         if (mounted) _resumeScanning();
       });
 
-      String wmPath;
-      try {
-        wmPath = await _addWatermarkInIsolate(file.path, updatedEntry);
-      } catch (e) {
-        debugPrint('Watermark error: $e');
-        wmPath = file.path;
-      }
+      wmPath = await _addWatermarkInIsolate(file.path, updatedEntry);
 
       final savedPhotoPath = await _storage.savePhoto(wmPath, name: entry.value);
 
@@ -419,18 +416,21 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         );
         _resumeScanning();
       }
+      // Hapus file watermark jika gagal
+      if (wmPath != null && wmPath != file.path) {
+        try { await File(wmPath).delete(); } catch (_) {}
+      }
     } finally {
       if (mounted) setState(() => _isSaving = false);
+      // Hapus file temporary jika masih ada
+      if (file != null) {
+        try { await File(file.path).delete(); } catch (_) {}
+      }
     }
   }
 
-  // ──────────────────────────────────────────────────────────────────────
-  //  WATERMARK RENDER (ISOLATE) – DENGAN RELOAD SETTINGS
-  // ──────────────────────────────────────────────────────────────────────
   Future<String> _addWatermarkInIsolate(String imagePath, ScanEntry entry) async {
-    // ✅ RELOAD SETTING TERBARU DARI SHAREDPREFERENCES
-    await _wmSettings.load();
-
+    await _wmSettings.load(); // reload untuk memastikan terbaru
     final outputPath =
         '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.png';
 
@@ -439,9 +439,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     debugPrint('  Position: ${_wmSettings.position.name}');
     debugPrint('  FontSize: ${_wmSettings.fontSize}');
     debugPrint('  FontFamily: ${_wmSettings.fontFamily}');
-    debugPrint('  Opacity: ${_wmSettings.backgroundOpacity}');
-    debugPrint('  Operator: ${_wmSettings.operatorName}');
-    debugPrint('  Barcode: ${entry.value}');
     debugPrint('=======================================');
 
     final result = await WatermarkRenderer.render(
@@ -862,8 +859,8 @@ class _ResultSheetState extends State<_ResultSheet> {
                       ),
                       GestureDetector(
                         onTap: () => setState(() {
-                          _noteSaved = false;
-                          _isEditingNote = true;
+          _noteSaved = false;
+          _isEditingNote = true;
                         }),
                         child: const Icon(Icons.edit, size: 16, color: Colors.grey),
                       ),
