@@ -99,7 +99,13 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     });
   }
 
+  // ──────────────────────────────────────────────────────────────────────
+  //  WATERMARK RENDER (PHOTO) – DENGAN RELOAD SETTINGS
+  // ──────────────────────────────────────────────────────────────────────
   Future<String> _applyWatermark(String imagePath, DateTime timestamp) async {
+    // ✅ RELOAD SETTING TERBARU DARI SHAREDPREFERENCES
+    await _wmSettings.load();
+
     final outputPath =
         '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.png';
 
@@ -113,6 +119,15 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       longitude: null,
       locationName: null,
     );
+
+    debugPrint('🔍 ===== APPLY WATERMARK (PHOTO) =====');
+    debugPrint('  Style: ${_wmSettings.style.name}');
+    debugPrint('  Position: ${_wmSettings.position.name}');
+    debugPrint('  FontSize: ${_wmSettings.fontSize}');
+    debugPrint('  FontFamily: ${_wmSettings.fontFamily}');
+    debugPrint('  Opacity: ${_wmSettings.backgroundOpacity}');
+    debugPrint('  Operator: ${_wmSettings.operatorName}');
+    debugPrint('======================================');
 
     final result = await WatermarkRenderer.render(
       imagePath: imagePath,
@@ -142,7 +157,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   }
 
   Future<void> _takePhoto() async {
-    // ✅ Bug E - Cegah double tap
+    // ✅ Cegah double tap
     if (_isSaving) return;
 
     if (!await _ensureCameraPermission()) return;
@@ -162,7 +177,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
     if (xfile == null) return;
 
-    // ✅ Bug F - Validasi ukuran file
+    // ✅ Validasi ukuran file
     try {
       final fileSize = await File(xfile.path).length();
       if (fileSize > 20 * 1024 * 1024) {
@@ -183,7 +198,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
       final String watermarkedPath = await _applyWatermark(xfile.path, timestamp);
 
-      // ✅ Bug D - Validasi file watermark ada
+      // ✅ Validasi file watermark ada
       if (!await File(watermarkedPath).exists()) {
         throw Exception('File watermark tidak ditemukan');
       }
@@ -219,7 +234,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   }
 
   Future<void> _pickFromGallery() async {
-    // ✅ Bug E - Cegah double tap
+    // ✅ Cegah double tap
     if (_isSaving) return;
 
     final XFile? xfile;
@@ -236,7 +251,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
     if (xfile == null) return;
 
-    // ✅ Bug F - Validasi ukuran file
+    // ✅ Validasi ukuran file
     try {
       final fileSize = await File(xfile.path).length();
       if (fileSize > 20 * 1024 * 1024) {
@@ -256,7 +271,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
       final String watermarkedPath = await _applyWatermark(xfile.path, timestamp);
 
-      // ✅ Bug D - Validasi file watermark ada
+      // ✅ Validasi file watermark ada
       if (!await File(watermarkedPath).exists()) {
         throw Exception('File watermark tidak ditemukan');
       }
