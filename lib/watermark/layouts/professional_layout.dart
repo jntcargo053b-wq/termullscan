@@ -33,11 +33,13 @@ class ProfessionalLayout extends WatermarkLayout {
     if (data.hasOperator) rowCount++;
     rowCount++; // location
 
-    final lineH = LayoutHelper.lineHeight(baseSize, ratio: 0.040);
-    final fontSz = LayoutHelper.fontSize(baseSize, ratio: 0.026);
+    // ✅ Gunakan data.fontSize, bukan auto-calc
+    final fontSz = data.fontSize;
+    final lineH = fontSz * 1.4; // spasi antar baris proporsional
+
     final overlayHeight = math.max(
-      photoHeight * 0.16,
-      rowCount * lineH + padding * 1.8,
+      photoHeight * 0.12, // minimal 12% dari foto
+      rowCount * lineH + padding * 1.6,
     );
 
     final logoMaxSize = baseSize * 0.12;
@@ -52,8 +54,8 @@ class ProfessionalLayout extends WatermarkLayout {
       stripHeight: overlayHeight,
       logoMaxSize: logoMaxSize,
       textRowCount: rowCount,
-      canvasWidth: photoWidth,
-      canvasHeight: photoHeight,
+      canvasWidth: photoWidth,   // ✅ TETAP
+      canvasHeight: photoHeight, // ✅ TIDAK DIUBAH
       textAvailableWidth: textW,
     );
   }
@@ -95,6 +97,7 @@ class ProfessionalLayout extends WatermarkLayout {
         textAlign = TextAlign.right;
     }
 
+    // ✅ Gambar foto full
     canvas.drawImageRect(
       srcImage,
       Rect.fromLTWH(0, 0, photoWidth, photoHeight),
@@ -104,6 +107,7 @@ class ProfessionalLayout extends WatermarkLayout {
         ..isAntiAlias = true,
     );
 
+    // ✅ Overlay transparan di atas foto
     final gradientPaint = Paint()
       ..shader = ui.Gradient.linear(
         Offset(0, overlayTop),
@@ -137,7 +141,7 @@ class ProfessionalLayout extends WatermarkLayout {
         fontWeight: fontWeight,
         maxLines: 1,
         textAlign: textAlign,
-        fontFamily: data.fontFamily, // ✅ TAMBAHKAN INI
+        fontFamily: data.fontFamily,
       );
       textY += metrics.lineHeight;
     }
