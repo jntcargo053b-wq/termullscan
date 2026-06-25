@@ -1,5 +1,5 @@
 // ============================================================
-// 6. lib/watermark/watermark_settings.dart
+// lib/watermark/watermark_settings.dart (Tambah konstanta)
 // ============================================================
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -22,14 +22,22 @@ class WatermarkSettings {
   static const String _keyBgOpacity = 'watermark_bg_opacity';
   static const String _keyFontFamily = 'watermark_font_family';
 
+  // Konstanta default
+  static const double defaultFontSize = 14.0;
+  static const double defaultBackgroundOpacity = 0.85;
+  static const double minFontSize = 8.0;
+  static const double maxFontSize = 48.0;
+  static const double minOpacity = 0.1;
+  static const double maxOpacity = 1.0;
+
   String operatorName = '';
   WatermarkStyle style = WatermarkStyle.professional;
   String? logoPath;
   bool hasLogo = false;
 
   WatermarkPosition position = WatermarkPosition.bottomRight;
-  double fontSize = 14.0;
-  double backgroundOpacity = 0.55;
+  double fontSize = defaultFontSize;
+  double backgroundOpacity = defaultBackgroundOpacity;
   String fontFamily = 'Roboto';
 
   WatermarkSettings() {
@@ -55,8 +63,8 @@ class WatermarkSettings {
       position = (posIndex >= 0 && posIndex < posValues.length)
           ? posValues[posIndex]
           : WatermarkPosition.bottomRight;
-      fontSize = prefs.getDouble(_keyFontSize) ?? 14.0;
-      backgroundOpacity = prefs.getDouble(_keyBgOpacity) ?? 0.55;
+      fontSize = prefs.getDouble(_keyFontSize) ?? defaultFontSize;
+      backgroundOpacity = prefs.getDouble(_keyBgOpacity) ?? defaultBackgroundOpacity;
       fontFamily = prefs.getString(_keyFontFamily) ?? 'Roboto';
 
       debugPrint('✅ Watermark settings loaded: style=${style.name}, position=$position, fontSize=$fontSize, fontFamily=$fontFamily');
@@ -104,12 +112,12 @@ class WatermarkSettings {
   }
 
   Future<void> setFontSize(double size) async {
-    fontSize = size.clamp(8.0, 28.0);
+    fontSize = size.clamp(minFontSize, maxFontSize);
     await save();
   }
 
   Future<void> setBackgroundOpacity(double opacity) async {
-    backgroundOpacity = opacity.clamp(0.1, 1.0);
+    backgroundOpacity = opacity.clamp(minOpacity, maxOpacity);
     await save();
   }
 
@@ -127,6 +135,15 @@ class WatermarkSettings {
   Future<void> clearLogo() async {
     logoPath = null;
     hasLogo = false;
+    await save();
+  }
+
+  Future<void> resetToDefaults() async {
+    style = WatermarkStyle.professional;
+    position = WatermarkPosition.bottomRight;
+    fontSize = defaultFontSize;
+    backgroundOpacity = defaultBackgroundOpacity;
+    fontFamily = 'Roboto';
     await save();
   }
 }
