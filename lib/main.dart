@@ -1,3 +1,6 @@
+// ============================================================
+// lib/main.dart (dengan migrasi JSON ke SQLite)
+// ============================================================
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
