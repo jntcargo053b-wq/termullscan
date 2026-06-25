@@ -1,5 +1,5 @@
 // ============================================================
-// FILE: lib/screens/photo_scan_screen.dart
+// lib/screens/photo_scan_screen.dart (FIXED - Debounce & Double Tap Protection)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -36,11 +36,20 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   bool _cameraGranted = false;
   bool _settingsLoaded = false;
 
+  // Debounce timer
+  Timer? _debounceTimer;
+
   @override
   void initState() {
     super.initState();
     _requestPermissions();
     _initializeSettings();
+  }
+
+  @override
+  void dispose() {
+    _debounceTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _initializeSettings() async {
@@ -153,9 +162,19 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     return result ?? imagePath;
   }
 
+  // ─── TAKE PHOTO ──────────────────────────────────────────────────
   Future<void> _takePhoto() async {
+    // ✅ Guard: cegah double tap
     if (_isSaving) return;
+
+    // Debounce: cegah tap terlalu cepat (misal 500ms)
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 500), () {});
+
     if (!await _ensureCameraPermission()) return;
+
+    // Set status saving SEBELUM mengambil foto untuk mencegah tap kedua
+    if (mounted) setState(() => _isSaving = true);
 
     final XFile? xfile;
     try {
@@ -167,64 +186,27 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       );
     } catch (e) {
       _showError('Gagal membuka kamera');
+      if (mounted) setState(() => _isSaving = false);
       return;
     }
 
-    if (xfile == null) return;
-
-    // Kompresi adaptif
-    String compressedPath = await ImageCompressor.compressIfNeeded(xfile.path);
-
-    if (mounted) setState(() => _isSaving = true);
-
-    String? watermarkedPath;
-    try {
-      final timestamp = DateTime.now();
-
-      watermarkedPath = await _applyWatermark(compressedPath, timestamp);
-
-      if (!await File(watermarkedPath).exists()) {
-        throw Exception('File watermark tidak ditemukan');
-      }
-
-      final savedPath = await _storage.savePhoto(watermarkedPath);
-      if (savedPath.isEmpty) {
-        throw Exception('Gagal menyimpan file foto');
-      }
-
-      final entry = ScanEntry(
-        id: _storage.generateId(),
-        type: ScanType.photo,
-        value: savedPath,
-        timestamp: timestamp,
-        latitude: null,
-        longitude: null,
-        locationName: null,
-      );
-      await _storage.add(entry);
-
-      if (!mounted) return;
-      setState(() => _photoCount++);
-      if (mounted) _showSuccess(entry);
-    } catch (e, stack) {
-      debugPrint('Error in _takePhoto: $e\n$stack');
-      _showError('Gagal memproses foto: ${e.toString().split(':').last}');
-      if (watermarkedPath != null && watermarkedPath != compressedPath) {
-        try { await File(watermarkedPath).delete(); } catch (_) {}
-      }
-    } finally {
+    if (xfile == null) {
       if (mounted) setState(() => _isSaving = false);
-      if (compressedPath != xfile.path) {
-        try { await File(compressedPath).delete(); } catch (_) {}
-      }
-      if (xfile != null) {
-        try { await File(xfile.path).delete(); } catch (_) {}
-      }
+      return;
     }
+
+    // Proses foto
+    await _processPhoto(xfile);
   }
 
+  // ─── PICK FROM GALLERY ──────────────────────────────────────────
   Future<void> _pickFromGallery() async {
     if (_isSaving) return;
+
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 500), () {});
+
+    if (mounted) setState(() => _isSaving = true);
 
     final XFile? xfile;
     try {
@@ -235,18 +217,33 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       );
     } catch (e) {
       _showError('Gagal membuka galeri');
+      if (mounted) setState(() => _isSaving = false);
       return;
     }
 
-    if (xfile == null) return;
+    if (xfile == null) {
+      if (mounted) setState(() => _isSaving = false);
+      return;
+    }
 
-    // Kompresi adaptif
-    String compressedPath = await ImageCompressor.compressIfNeeded(xfile.path);
+    await _processPhoto(xfile);
+  }
 
-    if (mounted) setState(() => _isSaving = true);
-
+  // ─── SHARED PROCESS ─────────────────────────────────────────────
+  Future<void> _processPhoto(XFile xfile) async {
     String? watermarkedPath;
+    String compressedPath = xfile.path;
+
     try {
+      // Validasi ukuran file
+      final fileSize = await File(xfile.path).length();
+      if (fileSize > 20 * 1024 * 1024) {
+        throw Exception('Ukuran foto terlalu besar (>20MB)');
+      }
+
+      // Kompresi adaptif
+      compressedPath = await ImageCompressor.compressIfNeeded(xfile.path);
+
       final timestamp = DateTime.now();
 
       watermarkedPath = await _applyWatermark(compressedPath, timestamp);
@@ -273,20 +270,22 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
       if (!mounted) return;
       setState(() => _photoCount++);
-      if (mounted) _showSuccess(entry);
+      _showSuccess(entry);
     } catch (e, stack) {
-      debugPrint('Error in _pickFromGallery: $e\n$stack');
-      _showError('Gagal memproses foto dari galeri');
+      debugPrint('Error processing photo: $e\n$stack');
+      _showError('Gagal memproses foto: ${e.toString().split(':').last}');
       if (watermarkedPath != null && watermarkedPath != compressedPath) {
         try { await File(watermarkedPath).delete(); } catch (_) {}
       }
     } finally {
-      if (mounted) setState(() => _isSaving = false);
+      // Cleanup temporary files
       if (compressedPath != xfile.path) {
         try { await File(compressedPath).delete(); } catch (_) {}
       }
-      if (xfile != null) {
-        try { await File(xfile.path).delete(); } catch (_) {}
+      try { await File(xfile.path).delete(); } catch (_) {}
+
+      if (mounted) {
+        setState(() => _isSaving = false);
       }
     }
   }
@@ -398,6 +397,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
+                  // ✅ Tombol dinonaktifkan saat _isSaving
                   onPressed: _isSaving ? null : _takePhoto,
                   icon: _isSaving
                       ? const SizedBox(
