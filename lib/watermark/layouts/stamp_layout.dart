@@ -34,12 +34,14 @@ class StampLayout extends WatermarkLayout {
     if (data.hasOperator) lineCount++;
     lineCount++; // location
 
-    final lineH = LayoutHelper.lineHeight(baseSize, ratio: 0.035);
-    final fontSz = LayoutHelper.fontSize(baseSize, ratio: 0.024);
+    // ✅ Gunakan data.fontSize, bukan auto-calc
+    final fontSz = data.fontSize;
+    final lineH = fontSz * 1.4;
+
+    final panelHeight = lineCount * lineH + padding * 1.2;
 
     final logoMaxSize = baseSize * 0.12;
     final panelWidth = baseSize * 0.46;
-    final panelHeight = lineCount * lineH + padding;
     final textW = panelWidth - padding * 0.8;
 
     return LayoutMetrics(
@@ -50,8 +52,8 @@ class StampLayout extends WatermarkLayout {
       stripHeight: panelHeight,
       logoMaxSize: logoMaxSize,
       textRowCount: lineCount,
-      canvasWidth: photoWidth,
-      canvasHeight: photoHeight,
+      canvasWidth: photoWidth,   // ✅ TETAP
+      canvasHeight: photoHeight, // ✅ TIDAK DIUBAH
       textAvailableWidth: textW,
     );
   }
@@ -69,6 +71,7 @@ class StampLayout extends WatermarkLayout {
     final padding = metrics.padding;
     final baseSize = metrics.baseSize;
 
+    // ✅ Gambar foto full
     canvas.drawImageRect(
       srcImage,
       Rect.fromLTWH(0, 0, photoWidth, photoHeight),
@@ -139,7 +142,7 @@ class StampLayout extends WatermarkLayout {
       fontSize: stampH * 0.28,
       fontWeight: FontWeight.w900,
       textAlign: TextAlign.center,
-      fontFamily: data.fontFamily, // ✅ TAMBAHKAN
+      fontFamily: data.fontFamily,
     );
 
     textY += stampH * 0.22;
@@ -154,7 +157,7 @@ class StampLayout extends WatermarkLayout {
         fontSize: stampH * 0.16,
         fontWeight: FontWeight.w600,
         textAlign: TextAlign.center,
-        fontFamily: data.fontFamily, // ✅ TAMBAHKAN
+        fontFamily: data.fontFamily,
       );
       textY += stampH * 0.20;
     }
@@ -170,7 +173,7 @@ class StampLayout extends WatermarkLayout {
       fontSize: stampH * 0.14,
       fontWeight: FontWeight.w600,
       textAlign: TextAlign.center,
-      fontFamily: data.fontFamily, // ✅ TAMBAHKAN
+      fontFamily: data.fontFamily,
     );
 
     canvas.restore();
@@ -209,6 +212,7 @@ class StampLayout extends WatermarkLayout {
         panelY = photoHeight - padding - panelHeight - stampH - padding;
     }
 
+    // ✅ Overlay panel di atas foto (transparan)
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromLTWH(panelX, panelY, panelWidth, panelHeight),
@@ -232,7 +236,7 @@ class StampLayout extends WatermarkLayout {
         fontSize: fontSize,
         fontWeight: FontWeight.w600,
         maxLines: 1,
-        fontFamily: data.fontFamily, // ✅ TAMBAHKAN
+        fontFamily: data.fontFamily,
       );
       textY2 += lineHeight;
     }
