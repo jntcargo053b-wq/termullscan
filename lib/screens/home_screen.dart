@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:gap/gap.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import '../services/storage_service.dart';
-import '../services/location_service.dart'; // import location service
+import '../services/location_service.dart';
 import '../theme/app_theme.dart';
 import 'barcode_scan_screen.dart';
 import 'photo_scan_screen.dart';
@@ -17,7 +17,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final StorageService _storage = StorageService();
-  final LocationService _loc = LocationService(); // ← perbaiki
+  final LocationService _loc = LocationService();
 
   int _scanCount = 0;
 
@@ -28,10 +28,11 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadCount() async {
-    final entries = await _storage.loadAll();
+    // ✅ Gunakan getCount() untuk menghitung total tanpa load semua data
+    final count = await _storage.getCount();
     if (mounted) {
       setState(() {
-        _scanCount = entries.length;
+        _scanCount = count;
       });
     }
   }
