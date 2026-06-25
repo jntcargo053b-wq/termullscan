@@ -1,5 +1,5 @@
 // ============================================================
-// 3. lib/screens/barcode_scan_screen.dart
+// lib/screens/barcode_scan_screen.dart (LENGKAP)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -19,6 +19,7 @@ import '../config/app_config.dart';
 import '../watermark/watermark_renderer.dart';
 import '../watermark/watermark_settings.dart';
 import '../utils/image_compressor.dart';
+import '../utils/file_helper.dart';
 import 'watermark_settings_sheet.dart';
 
 class BarcodeScanScreen extends StatefulWidget {
@@ -426,10 +427,15 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       }
     } finally {
       if (mounted) setState(() => _isSaving = false);
-      if (compressedPath != file.path) {
+
+      // ✅ HANYA hapus file jika temporary (AMAN)
+      if (compressedPath != file.path &&
+          await FileHelper.isTemporaryFile(compressedPath)) {
         try { await File(compressedPath).delete(); } catch (_) {}
       }
-      if (file != null) {
+
+      if (file != null &&
+          await FileHelper.isTemporaryFile(file.path)) {
         try { await File(file.path).delete(); } catch (_) {}
       }
     }
