@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/photo_scan_screen.dart (FIXED - Debounce & Double Tap Protection)
+// lib/screens/photo_scan_screen.dart (LENGKAP)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -17,6 +17,7 @@ import '../theme/app_theme.dart';
 import '../watermark/watermark_renderer.dart';
 import '../watermark/watermark_settings.dart';
 import '../utils/image_compressor.dart';
+import '../utils/file_helper.dart';
 import 'watermark_settings_sheet.dart';
 
 class PhotoScanScreen extends StatefulWidget {
@@ -36,7 +37,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   bool _cameraGranted = false;
   bool _settingsLoaded = false;
 
-  // Debounce timer
   Timer? _debounceTimer;
 
   @override
@@ -142,6 +142,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       entry: tempEntry,
     );
 
+    // Hapus file temporary jika hasil berbeda
     if (result != null && result != imagePath) {
       final file = File(imagePath);
       try {
@@ -162,18 +163,14 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     return result ?? imagePath;
   }
 
-  // ─── TAKE PHOTO ──────────────────────────────────────────────────
   Future<void> _takePhoto() async {
-    // ✅ Guard: cegah double tap
     if (_isSaving) return;
 
-    // Debounce: cegah tap terlalu cepat (misal 500ms)
     _debounceTimer?.cancel();
     _debounceTimer = Timer(const Duration(milliseconds: 500), () {});
 
     if (!await _ensureCameraPermission()) return;
 
-    // Set status saving SEBELUM mengambil foto untuk mencegah tap kedua
     if (mounted) setState(() => _isSaving = true);
 
     final XFile? xfile;
@@ -195,11 +192,9 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       return;
     }
 
-    // Proses foto
     await _processPhoto(xfile);
   }
 
-  // ─── PICK FROM GALLERY ──────────────────────────────────────────
   Future<void> _pickFromGallery() async {
     if (_isSaving) return;
 
@@ -229,13 +224,12 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     await _processPhoto(xfile);
   }
 
-  // ─── SHARED PROCESS ─────────────────────────────────────────────
   Future<void> _processPhoto(XFile xfile) async {
     String? watermarkedPath;
     String compressedPath = xfile.path;
 
     try {
-      // Validasi ukuran file
+      // Validasi ukuran
       final fileSize = await File(xfile.path).length();
       if (fileSize > 20 * 1024 * 1024) {
         throw Exception('Ukuran foto terlalu besar (>20MB)');
@@ -278,11 +272,15 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         try { await File(watermarkedPath).delete(); } catch (_) {}
       }
     } finally {
-      // Cleanup temporary files
-      if (compressedPath != xfile.path) {
+      // ✅ HANYA hapus file jika temporary (AMAN)
+      if (compressedPath != xfile.path &&
+          await FileHelper.isTemporaryFile(compressedPath)) {
         try { await File(compressedPath).delete(); } catch (_) {}
       }
-      try { await File(xfile.path).delete(); } catch (_) {}
+
+      if (await FileHelper.isTemporaryFile(xfile.path)) {
+        try { await File(xfile.path).delete(); } catch (_) {}
+      }
 
       if (mounted) {
         setState(() => _isSaving = false);
@@ -397,7 +395,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
-                  // ✅ Tombol dinonaktifkan saat _isSaving
                   onPressed: _isSaving ? null : _takePhoto,
                   icon: _isSaving
                       ? const SizedBox(
