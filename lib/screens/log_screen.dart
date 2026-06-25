@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/log_screen.dart (SQLite + Pagination)
+// lib/screens/log_screen.dart (FINAL - Pencarian Lengkap + Filter)
 // ============================================================
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -19,26 +19,26 @@ class LogScreen extends StatefulWidget {
 
 class _LogScreenState extends State<LogScreen> {
   final StorageService _storage = StorageService();
-
-  // Data
-  List<ScanEntry> _entries = [];
+  List<ScanEntry> _filteredEntries = [];
   bool _isLoading = true;
-  bool _hasMore = true;
   bool _isLoadingMore = false;
-  int _page = 0;
-  final int _pageSize = 20;
 
-  // Selection
+  // Selection state
   bool _isSelectionMode = false;
   final Set<String> _selectedIds = {};
 
-  // Filter
+  // Filter state
   String _searchQuery = '';
   String _filterPeriod = 'Semua';
 
+  // Pagination
+  int _currentPage = 0;
+  final int _pageSize = 20;
+  bool _hasMore = true;
+
   final TextEditingController _searchController = TextEditingController();
-  final DateFormat _dateFormat = DateFormat('dd/MM/yyyy HH:mm:ss');
   final ScrollController _scrollController = ScrollController();
+  final DateFormat _dateFormat = DateFormat('dd/MM/yyyy HH:mm:ss');
 
   @override
   void initState() {
@@ -57,25 +57,24 @@ class _LogScreenState extends State<LogScreen> {
   void _onScroll() {
     if (_scrollController.position.pixels >=
         _scrollController.position.maxScrollExtent - 200) {
-      _loadEntries();
+      if (_hasMore && !_isLoadingMore && !_isLoading) {
+        _loadEntries();
+      }
     }
   }
 
-  // ─── LOAD DATA ──────────────────────────────────────────────────
   Future<void> _loadEntries({bool refresh = false}) async {
     if (refresh) {
-      _page = 0;
-      _entries.clear();
+      _currentPage = 0;
+      _filteredEntries.clear();
       _hasMore = true;
-      setState(() => _isLoading = true);
     }
-
     if (!_hasMore || _isLoadingMore) return;
 
     setState(() => _isLoadingMore = true);
 
     try {
-      final offset = _page * _pageSize;
+      final offset = _currentPage * _pageSize;
       final newEntries = await _storage.getEntries(
         limit: _pageSize,
         offset: offset,
@@ -89,37 +88,46 @@ class _LogScreenState extends State<LogScreen> {
       );
 
       if (refresh) {
-        _entries = newEntries;
+        _filteredEntries = newEntries;
       } else {
-        _entries.addAll(newEntries);
+        _filteredEntries.addAll(newEntries);
       }
 
-      _hasMore = _entries.length < totalCount;
-      _page++;
+      _hasMore = _filteredEntries.length < totalCount;
+      _currentPage++;
     } catch (e) {
       debugPrint('Error loading entries: $e');
+      if (refresh) {
+        _filteredEntries = [];
+      }
     } finally {
-      setState(() {
-        _isLoading = false;
-        _isLoadingMore = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _isLoadingMore = false;
+        });
+      }
     }
   }
 
-  // ─── FILTER ──────────────────────────────────────────────────
   void _onSearchChanged(String value) {
     _searchQuery = value.trim();
-    if (_isSelectionMode) _toggleSelectionMode();
+    _currentPage = 0;
+    _filteredEntries.clear();
+    _hasMore = true;
     _loadEntries(refresh: true);
+    if (_isSelectionMode) _toggleSelectionMode();
   }
 
   void _setFilterPeriod(String period) {
     setState(() => _filterPeriod = period);
-    if (_isSelectionMode) _toggleSelectionMode();
+    _currentPage = 0;
+    _filteredEntries.clear();
+    _hasMore = true;
     _loadEntries(refresh: true);
+    if (_isSelectionMode) _toggleSelectionMode();
   }
 
-  // ─── SELECTION ──────────────────────────────────────────────
   void _toggleSelectionMode() {
     setState(() {
       _isSelectionMode = !_isSelectionMode;
@@ -129,7 +137,7 @@ class _LogScreenState extends State<LogScreen> {
 
   void _toggleSelectAll() {
     setState(() {
-      final allIds = _entries.map((e) => e.id).toSet();
+      final allIds = _filteredEntries.map((e) => e.id).toSet();
       if (_selectedIds.length == allIds.length) {
         _selectedIds.clear();
       } else {
@@ -139,11 +147,11 @@ class _LogScreenState extends State<LogScreen> {
   }
 
   bool _isAllSelected() {
-    if (_entries.isEmpty) return false;
-    return _selectedIds.length == _entries.length;
+    if (_filteredEntries.isEmpty) return false;
+    return _selectedIds.length == _filteredEntries.length;
   }
 
-  // ─── SHARE ──────────────────────────────────────────────────
+  // ─── SHARE FOTO ──────────────────────────────────────────────────
   Future<void> _shareSelectedPhotos() async {
     if (_selectedIds.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -152,7 +160,7 @@ class _LogScreenState extends State<LogScreen> {
       return;
     }
 
-    final selectedEntries = _entries
+    final selectedEntries = _filteredEntries
         .where((e) => _selectedIds.contains(e.id) && e.type == ScanType.photo)
         .toList();
 
@@ -166,9 +174,7 @@ class _LogScreenState extends State<LogScreen> {
     final List<XFile> files = [];
     for (final entry in selectedEntries) {
       final file = File(entry.value);
-      if (await file.exists()) {
-        files.add(XFile(file.path));
-      }
+      if (await file.exists()) files.add(XFile(file.path));
     }
 
     if (files.isEmpty) {
@@ -180,7 +186,7 @@ class _LogScreenState extends State<LogScreen> {
 
     try {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Menyiapkan foto...')),
+        const SnackBar(content: Text('Menyiapkan foto untuk dibagikan...')),
       );
 
       if (files.length == 1) {
@@ -196,7 +202,6 @@ class _LogScreenState extends State<LogScreen> {
               'Waktu: ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now())}',
         );
       }
-
       _toggleSelectionMode();
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -205,16 +210,16 @@ class _LogScreenState extends State<LogScreen> {
     }
   }
 
-  // ─── EXPORT ──────────────────────────────────────────────────
+  // ─── EXPORT TEXT ─────────────────────────────────────────────────
   Future<void> _exportAndShare() async {
-    if (_entries.isEmpty) {
+    if (_filteredEntries.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Tidak ada data untuk diexport')),
       );
       return;
     }
     try {
-      final path = await _storage.exportTxt(_entries);
+      final path = await _storage.exportTxt(_filteredEntries);
       await _storage.shareTxt(path);
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -223,7 +228,7 @@ class _LogScreenState extends State<LogScreen> {
     }
   }
 
-  // ─── DELETE ──────────────────────────────────────────────────
+  // ─── DELETE ──────────────────────────────────────────────────────
   Future<void> _deleteEntry(ScanEntry entry) async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -262,7 +267,7 @@ class _LogScreenState extends State<LogScreen> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Hapus Terpilih'),
-        content: Text('Hapus ${_selectedIds.length} item?'),
+        content: Text('Hapus ${_selectedIds.length} item yang dipilih?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -278,7 +283,7 @@ class _LogScreenState extends State<LogScreen> {
     );
     if (confirm == true) {
       for (final id in _selectedIds) {
-        final entry = _entries.firstWhere((e) => e.id == id);
+        final entry = _filteredEntries.firstWhere((e) => e.id == id);
         if (entry.type == ScanType.photo && entry.value.isNotEmpty) {
           try {
             final file = File(entry.value);
@@ -336,7 +341,7 @@ class _LogScreenState extends State<LogScreen> {
             IconButton(
               icon: const Icon(Icons.select_all),
               onPressed: () {
-                if (_entries.isNotEmpty) _toggleSelectionMode();
+                if (_filteredEntries.isNotEmpty) _toggleSelectionMode();
               },
               tooltip: 'Pilih foto untuk dibagikan',
             ),
@@ -350,7 +355,7 @@ class _LogScreenState extends State<LogScreen> {
       ),
       body: Column(
         children: [
-          // Search & Filter
+          // ─── Search & Filter ──────────────────────────────────
           Padding(
             padding: const EdgeInsets.all(12),
             child: Column(
@@ -360,7 +365,7 @@ class _LogScreenState extends State<LogScreen> {
                   onChanged: _onSearchChanged,
                   style: const TextStyle(color: Colors.white),
                   decoration: InputDecoration(
-                    hintText: 'Cari barcode, tanggal, atau nama file...',
+                    hintText: '🔍 Cari barcode atau tanggal (DD/MM/YYYY)...',
                     hintStyle: const TextStyle(color: Colors.grey),
                     prefixIcon: const Icon(Icons.search, color: Colors.grey),
                     suffixIcon: _searchController.text.isNotEmpty
@@ -413,7 +418,7 @@ class _LogScreenState extends State<LogScreen> {
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Text(
-                          '${_entries.length} item',
+                          '${_filteredEntries.length} item',
                           style: const TextStyle(
                             color: Colors.white70,
                             fontSize: 12,
@@ -426,11 +431,11 @@ class _LogScreenState extends State<LogScreen> {
               ],
             ),
           ),
-          // List
+          // ─── List ──────────────────────────────────────────────
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
-                : _entries.isEmpty
+                : _filteredEntries.isEmpty
                     ? Center(
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
@@ -443,14 +448,24 @@ class _LogScreenState extends State<LogScreen> {
                                   : 'Belum ada scan',
                               style: const TextStyle(color: Colors.grey),
                             ),
+                            if (_searchQuery.isNotEmpty) ...[
+                              const Gap(8),
+                              TextButton(
+                                onPressed: () {
+                                  _searchController.clear();
+                                  _onSearchChanged('');
+                                },
+                                child: const Text('Clear filter'),
+                              ),
+                            ],
                           ],
                         ),
                       )
                     : ListView.builder(
                         controller: _scrollController,
-                        itemCount: _entries.length + (_hasMore ? 1 : 0),
+                        itemCount: _filteredEntries.length + (_hasMore ? 1 : 0),
                         itemBuilder: (context, index) {
-                          if (index == _entries.length && _hasMore) {
+                          if (index == _filteredEntries.length) {
                             return const Padding(
                               padding: EdgeInsets.all(8.0),
                               child: Center(
@@ -462,7 +477,7 @@ class _LogScreenState extends State<LogScreen> {
                               ),
                             );
                           }
-                          final entry = _entries[index];
+                          final entry = _filteredEntries[index];
                           return _LogItem(
                             entry: entry,
                             isSelected: _isSelectionMode && _selectedIds.contains(entry.id),
