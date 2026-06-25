@@ -1,3 +1,6 @@
+// ============================================================
+// lib/screens/watermark_settings_sheet.dart (FINAL)
+// ============================================================
 import 'package:flutter/material.dart';
 import 'package:gap/gap.dart';
 import 'package:image_picker/image_picker.dart';
@@ -60,6 +63,16 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
     }
   }
 
+  void _resetDefaults() {
+    setState(() {
+      _settings.fontSize = 14.0;
+      _settings.backgroundOpacity = 0.85;
+      _settings.position = WatermarkPosition.bottomRight;
+      _settings.style = WatermarkStyle.professional;
+    });
+    _settings.save();
+  }
+
   @override
   void dispose() {
     _operatorController.dispose();
@@ -72,6 +85,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
       return const Center(child: CircularProgressIndicator());
     }
 
+    // Preview data dengan nilai realtime
     final previewData = WatermarkData(
       timestamp: DateTime.now(),
       operatorName: _operatorController.text.isNotEmpty 
@@ -100,6 +114,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Handle
               Center(
                 child: Container(
                   width: 40,
@@ -121,7 +136,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
               ),
               const Gap(8),
               const Text(
-                'Pilih gaya, posisi, ukuran font, dan watermark',
+                'Pilih gaya, posisi, ukuran font, dan opacity',
                 style: TextStyle(color: Colors.grey, fontSize: 13),
               ),
               const Gap(20),
@@ -255,18 +270,20 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
               // ─── Ukuran Font ─────────────────────────────
               Row(
                 children: [
-                  const Text(
-                    'Ukuran Font',
-                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                  SizedBox(
+                    width: 100,
+                    child: Text(
+                      'Ukuran Font: ${(_settings.fontSize / 14 * 100).round()}%',
+                      style: const TextStyle(color: Colors.white70, fontSize: 13),
+                    ),
                   ),
-                  const Gap(12),
+                  const Gap(8),
                   Expanded(
                     child: Slider(
                       value: _settings.fontSize,
-                      min: 8,
-                      max: 28,
-                      divisions: 20,
-                      label: _settings.fontSize.round().toString(),
+                      min: 8.0,
+                      max: 48.0,
+                      divisions: 40,
                       onChanged: (val) async {
                         await _settings.setFontSize(val);
                         setState(() {});
@@ -276,7 +293,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                     ),
                   ),
                   Container(
-                    width: 32,
+                    width: 36,
                     alignment: Alignment.center,
                     child: Text(
                       _settings.fontSize.round().toString(),
@@ -290,18 +307,20 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
               // ─── Opacity ──────────────────────────────────
               Row(
                 children: [
-                  const Text(
-                    'Opacity Latar',
-                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                  SizedBox(
+                    width: 100,
+                    child: Text(
+                      'Opacity: ${(_settings.backgroundOpacity * 100).round()}%',
+                      style: const TextStyle(color: Colors.white70, fontSize: 13),
+                    ),
                   ),
-                  const Gap(12),
+                  const Gap(8),
                   Expanded(
                     child: Slider(
                       value: _settings.backgroundOpacity,
                       min: 0.1,
                       max: 1.0,
-                      divisions: 9,
-                      label: (_settings.backgroundOpacity * 100).round().toString(),
+                      divisions: 18,
                       onChanged: (val) async {
                         await _settings.setBackgroundOpacity(val);
                         setState(() {});
@@ -311,7 +330,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                     ),
                   ),
                   Container(
-                    width: 32,
+                    width: 36,
                     alignment: Alignment.center,
                     child: Text(
                       (_settings.backgroundOpacity * 100).round().toString(),
@@ -343,9 +362,9 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                   style: const TextStyle(color: Colors.white, fontSize: 14),
                   items: const [
                     DropdownMenuItem(value: 'Roboto', child: Text('Roboto')),
-                    DropdownMenuItem(value: 'Poppins', child: Text('Poppins')),
-                    DropdownMenuItem(value: 'Montserrat', child: Text('Montserrat')),
                     DropdownMenuItem(value: 'Inter', child: Text('Inter')),
+                    DropdownMenuItem(value: 'Montserrat', child: Text('Montserrat')),
+                    DropdownMenuItem(value: 'Poppins', child: Text('Poppins')),
                   ],
                   onChanged: (String? newFont) async {
                     if (newFont != null) {
@@ -406,13 +425,17 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
               ),
               const Gap(24),
 
-              // ─── Tombol ──────────────────────────────────
+              // ─── Reset & Tombol ──────────────────────────
               Row(
                 children: [
                   Expanded(
                     child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Batal'),
+                      onPressed: _resetDefaults,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.grey,
+                        side: BorderSide(color: Colors.grey.withOpacity(0.3)),
+                      ),
+                      child: const Text('Reset Default'),
                     ),
                   ),
                   const Gap(12),
