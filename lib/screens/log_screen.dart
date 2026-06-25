@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/log_screen.dart (FINAL - Pencarian Lengkap + Filter)
+// lib/screens/log_screen.dart (PAGINATION + FILTER + SHARE)
 // ============================================================
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -97,9 +97,7 @@ class _LogScreenState extends State<LogScreen> {
       _currentPage++;
     } catch (e) {
       debugPrint('Error loading entries: $e');
-      if (refresh) {
-        _filteredEntries = [];
-      }
+      if (refresh) _filteredEntries = [];
     } finally {
       if (mounted) {
         setState(() {
@@ -151,11 +149,11 @@ class _LogScreenState extends State<LogScreen> {
     return _selectedIds.length == _filteredEntries.length;
   }
 
-  // ─── SHARE FOTO ──────────────────────────────────────────────────
+  // ─── SHARE FOTO ────────────────────────────────────────────────
   Future<void> _shareSelectedPhotos() async {
     if (_selectedIds.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Pilih minimal satu foto untuk dibagikan')),
+        const SnackBar(content: Text('Pilih minimal satu foto')),
       );
       return;
     }
@@ -185,10 +183,6 @@ class _LogScreenState extends State<LogScreen> {
     }
 
     try {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Menyiapkan foto untuk dibagikan...')),
-      );
-
       if (files.length == 1) {
         await Share.shareXFiles(
           files,
@@ -210,11 +204,11 @@ class _LogScreenState extends State<LogScreen> {
     }
   }
 
-  // ─── EXPORT TEXT ─────────────────────────────────────────────────
+  // ─── EXPORT ──────────────────────────────────────────────────────
   Future<void> _exportAndShare() async {
     if (_filteredEntries.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Tidak ada data untuk diexport')),
+        const SnackBar(content: Text('Tidak ada data')),
       );
       return;
     }
@@ -234,7 +228,7 @@ class _LogScreenState extends State<LogScreen> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Hapus Data'),
-        content: Text('Hapus scan barcode "${entry.value}"?'),
+        content: Text('Hapus scan "${entry.value}"?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -267,7 +261,7 @@ class _LogScreenState extends State<LogScreen> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Hapus Terpilih'),
-        content: Text('Hapus ${_selectedIds.length} item yang dipilih?'),
+        content: Text('Hapus ${_selectedIds.length} item?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -444,7 +438,7 @@ class _LogScreenState extends State<LogScreen> {
                             const Gap(12),
                             Text(
                               _searchQuery.isNotEmpty || _filterPeriod != 'Semua'
-                                  ? 'Tidak ada hasil untuk filter ini'
+                                  ? 'Tidak ada hasil'
                                   : 'Belum ada scan',
                               style: const TextStyle(color: Colors.grey),
                             ),
