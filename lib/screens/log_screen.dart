@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/log_screen.dart (PAGINATION + FILTER + SHARE)
+// lib/screens/log_screen.dart (FIXED - Share Photo)
 // ============================================================
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -151,38 +151,65 @@ class _LogScreenState extends State<LogScreen> {
 
   // ─── SHARE FOTO ────────────────────────────────────────────────
   Future<void> _shareSelectedPhotos() async {
+    // ✅ CEK APAKAH ADA YANG DIPILIH
     if (_selectedIds.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Pilih minimal satu foto')),
+        const SnackBar(
+          content: Text('Pilih minimal satu foto untuk dibagikan'),
+          backgroundColor: Colors.orange,
+        ),
       );
       return;
     }
 
+    // Ambil entry yang dipilih dan hanya yang bertipe photo
     final selectedEntries = _filteredEntries
         .where((e) => _selectedIds.contains(e.id) && e.type == ScanType.photo)
         .toList();
 
+    // ✅ CEK APAKAH ADA FOTO YANG DIPILIH
     if (selectedEntries.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Tidak ada foto yang dipilih')),
+        const SnackBar(
+          content: Text('Item yang dipilih bukan foto. Pilih item dengan ikon kamera.'),
+          backgroundColor: Colors.orange,
+        ),
       );
       return;
     }
 
+    // Kumpulkan file foto yang valid
     final List<XFile> files = [];
     for (final entry in selectedEntries) {
       final file = File(entry.value);
-      if (await file.exists()) files.add(XFile(file.path));
+      if (await file.exists()) {
+        files.add(XFile(file.path));
+      } else {
+        debugPrint('⚠️ File not found: ${entry.value}');
+      }
     }
 
+    // ✅ CEK APAKAH ADA FILE YANG VALID
     if (files.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('File foto tidak ditemukan')),
+        const SnackBar(
+          content: Text('File foto tidak ditemukan atau sudah dihapus.'),
+          backgroundColor: Colors.red,
+        ),
       );
       return;
     }
 
     try {
+      // Tampilkan loading
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Menyiapkan ${files.length} foto untuk dibagikan...'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+
+      // Share menggunakan share_plus
       if (files.length == 1) {
         await Share.shareXFiles(
           files,
@@ -196,10 +223,24 @@ class _LogScreenState extends State<LogScreen> {
               'Waktu: ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now())}',
         );
       }
+
+      // Reset selection setelah share sukses
       _toggleSelectionMode();
-    } catch (e) {
+
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Gagal share: $e')),
+        const SnackBar(
+          content: Text('✅ Berhasil share ${files.length} foto'),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      debugPrint('❌ Share error: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Gagal share: ${e.toString().split(':').last}'),
+          backgroundColor: Colors.red,
+        ),
       );
     }
   }
@@ -208,7 +249,7 @@ class _LogScreenState extends State<LogScreen> {
   Future<void> _exportAndShare() async {
     if (_filteredEntries.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Tidak ada data')),
+        const SnackBar(content: Text('Tidak ada data untuk diexport')),
       );
       return;
     }
@@ -261,7 +302,7 @@ class _LogScreenState extends State<LogScreen> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Hapus Terpilih'),
-        content: Text('Hapus ${_selectedIds.length} item?'),
+        content: Text('Hapus ${_selectedIds.length} item yang dipilih?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
