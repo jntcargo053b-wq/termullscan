@@ -1,46 +1,25 @@
-// ============================================================
-// 5. lib/main.dart (minta izin di awal)
-// ============================================================
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'theme/app_theme.dart';
-import 'screens/home_screen.dart';
-import 'watermark/watermark_settings.dart';
-import 'services/permission_service.dart'; // import
+import 'dart:convert';
+import 'dart:io';
+import 'package:path_provider/path_provider.dart';
+import 'services/storage_service.dart';
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-
-  // Load settings
-  final watermarkSettings = WatermarkSettings();
-  await watermarkSettings.load();
-
-  // Minta izin di awal
-  await PermissionService.requestAllPermissions();
-
-  SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.portraitDown,
-  ]);
-  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-    statusBarColor: Colors.transparent,
-    statusBarIconBrightness: Brightness.light,
-    systemNavigationBarColor: AppTheme.bg,
-  ));
-
-  runApp(const WHScannerApp());
-}
-
-class WHScannerApp extends StatelessWidget {
-  const WHScannerApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'WH Scanner',
-      debugShowCheckedModeBanner: false,
-      theme: AppTheme.dark,
-      home: const HomeScreen(),
-    );
+// Di dalam main() setelah watermarkSettings.load():
+final storage = StorageService();
+try {
+  final dir = await getApplicationDocumentsDirectory();
+  final jsonFile = File('${dir.path}/scan_log.json');
+  if (await jsonFile.exists()) {
+    final content = await jsonFile.readAsString();
+    if (content.isNotEmpty) {
+      final decoded = json.decode(content);
+      if (decoded is List) {
+        final entries = decoded.map((e) => ScanEntry.fromJson(e)).toList();
+        await storage.migrateFromJson(entries);
+        await jsonFile.rename('${jsonFile.path}.migrated');
+        debugPrint('✅ Migrated ${entries.length} entries from JSON to SQLite');
+      }
+    }
   }
+} catch (e) {
+  debugPrint('⚠️ Migration error: $e');
 }
