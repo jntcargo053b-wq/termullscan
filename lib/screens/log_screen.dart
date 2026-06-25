@@ -1,8 +1,10 @@
+// ============================================================
+// lib/screens/log_screen.dart (FULL - dengan Selection & Share Foto)
+// ============================================================
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:gap/gap.dart';
+import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
@@ -10,123 +12,291 @@ import '../theme/app_theme.dart';
 
 class LogScreen extends StatefulWidget {
   const LogScreen({super.key});
+
   @override
   State<LogScreen> createState() => _LogScreenState();
 }
 
 class _LogScreenState extends State<LogScreen> {
-  final _storage = StorageService();
+  final StorageService _storage = StorageService();
   List<ScanEntry> _entries = [];
-  List<ScanEntry> _filtered = [];
-  bool _loading = true;
-  String _search = '';
-  String _filter = 'all';
-  bool _exporting = false;
+  List<ScanEntry> _filteredEntries = [];
+  bool _isLoading = true;
+
+  // Selection state
+  bool _isSelectionMode = false;
+  final Set<String> _selectedIds = {};
+
+  // Filter state
+  String _searchQuery = '';
+  String _filterPeriod = 'Semua'; // 'Semua', 'Hari ini', 'Minggu ini', 'Bulan ini'
+
+  final TextEditingController _searchController = TextEditingController();
+  final DateFormat _dateFormat = DateFormat('dd/MM/yyyy HH:mm:ss');
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _loadEntries();
   }
 
-  Future<void> _load() async {
-    if (!mounted) return;
-    setState(() => _loading = true);
-    final data = await _storage.loadAll();
-    if (!mounted) return;
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadEntries() async {
+    setState(() => _isLoading = true);
+    try {
+      _entries = await _storage.loadAll();
+      _applyFilters();
+    } catch (e) {
+      debugPrint('Error loading entries: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  void _applyFilters() {
+    List<ScanEntry> result = List.from(_entries);
+
+    // Filter periode
+    if (_filterPeriod != 'Semua') {
+      final now = DateTime.now();
+      DateTime start;
+      switch (_filterPeriod) {
+        case 'Hari ini':
+          start = DateTime(now.year, now.month, now.day);
+          break;
+        case 'Minggu ini':
+          start = now.subtract(Duration(days: now.weekday - 1));
+          start = DateTime(start.year, start.month, start.day);
+          break;
+        case 'Bulan ini':
+          start = DateTime(now.year, now.month, 1);
+          break;
+        default:
+          start = DateTime(0);
+      }
+      result = result.where((e) => e.timestamp.isAfter(start)).toList();
+    }
+
+    // Search
+    if (_searchQuery.isNotEmpty) {
+      final query = _searchQuery.toLowerCase();
+      result = result.where((e) {
+        final matchesBarcode = e.value.toLowerCase().contains(query);
+        final matchesFileName = e.value.toLowerCase().contains(query);
+        final matchesDate = _dateFormat.format(e.timestamp).contains(query);
+        return matchesBarcode || matchesFileName || matchesDate;
+      }).toList();
+    }
+
+    result.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+
     setState(() {
-      _entries = data;
-      _loading = false;
-      _applyFilter();
+      _filteredEntries = result;
     });
   }
 
-  void _applyFilter() {
-    var list = _entries;
-    if (_filter == 'barcode') list = list.where((e) => e.isBarcode).toList();
-    if (_filter == 'photo') list = list.where((e) => e.isPhoto).toList();
-    if (_search.isNotEmpty) {
-      final q = _search.toLowerCase();
-      list = list.where((e) =>
-          e.value.toLowerCase().contains(q) ||
-          (e.locationName?.toLowerCase().contains(q) ?? false) ||
-          (e.note?.toLowerCase().contains(q) ?? false)).toList();
-    }
-    setState(() => _filtered = list);
+  void _onSearchChanged(String value) {
+    _searchQuery = value.trim();
+    _applyFilters();
+    // Jika keluar dari mode seleksi saat mencari
+    if (_isSelectionMode) _toggleSelectionMode();
   }
 
-  Future<void> _delete(ScanEntry entry) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: AppTheme.surface,
-        title: const Text('Hapus Entri?'),
-        content: Text(
-          entry.isBarcode
-              ? 'Hapus barcode "${entry.value.length > 30 ? entry.value.substring(0, 30) + "..." : entry.value}"?'
-              : 'Hapus foto ini?',
-          style: const TextStyle(color: AppTheme.textSecondary),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Batal')),
-          TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              style: TextButton.styleFrom(foregroundColor: AppTheme.error),
-              child: const Text('Hapus')),
-        ],
-      ),
-    );
-    if (ok == true) {
-      await _storage.delete(entry.id);
-      _load();
-    }
+  void _setFilterPeriod(String period) {
+    setState(() {
+      _filterPeriod = period;
+    });
+    _applyFilters();
+    if (_isSelectionMode) _toggleSelectionMode();
   }
 
-  Future<void> _exportTxt() async {
-    if (_entries.isEmpty) return;
-    setState(() => _exporting = true);
+  void _toggleSelectionMode() {
+    setState(() {
+      _isSelectionMode = !_isSelectionMode;
+      if (!_isSelectionMode) {
+        _selectedIds.clear();
+      }
+    });
+  }
+
+  void _toggleSelectAll() {
+    setState(() {
+      final allIds = _filteredEntries.map((e) => e.id).toSet();
+      if (_selectedIds.length == allIds.length) {
+        _selectedIds.clear();
+      } else {
+        _selectedIds.addAll(allIds);
+      }
+    });
+  }
+
+  bool _isAllSelected() {
+    if (_filteredEntries.isEmpty) return false;
+    return _selectedIds.length == _filteredEntries.length;
+  }
+
+  // ── SHARE FOTO ──────────────────────────────────────────────────
+  Future<void> _shareSelectedPhotos() async {
+    if (_selectedIds.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Pilih minimal satu foto untuk dibagikan')),
+      );
+      return;
+    }
+
+    // Ambil entry yang dipilih dan hanya yang bertipe photo
+    final selectedEntries = _filteredEntries
+        .where((e) => _selectedIds.contains(e.id) && e.type == ScanType.photo)
+        .toList();
+
+    if (selectedEntries.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Tidak ada foto yang dipilih')),
+      );
+      return;
+    }
+
+    // Kumpulkan file foto
+    final List<XFile> files = [];
+    for (final entry in selectedEntries) {
+      final file = File(entry.value);
+      if (await file.exists()) {
+        files.add(XFile(file.path));
+      }
+    }
+
+    if (files.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('File foto tidak ditemukan')),
+      );
+      return;
+    }
+
     try {
-      final path = await _storage.exportTxt(_entries);
-      await _storage.shareTxt(path);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              backgroundColor: AppTheme.error,
-              content: Text('Gagal export: $e')),
+      // Tampilkan loading
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Menyiapkan foto untuk dibagikan...')),
+      );
+
+      // Share menggunakan share_plus
+      if (files.length == 1) {
+        // Share satu foto dengan caption
+        await Share.shareXFiles(
+          files,
+          text: '📸 Hasil scan dari WH Scanner\n'
+              'Total: ${files.length} foto\n'
+              'Waktu: ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now())}',
+        );
+      } else {
+        // Share multiple foto
+        await Share.shareXFiles(
+          files,
+          text: '📸 ${files.length} foto hasil scan dari WH Scanner\n'
+              'Waktu: ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now())}',
         );
       }
-    } finally {
-      if (mounted) setState(() => _exporting = false);
+
+      // Reset selection setelah share
+      _toggleSelectionMode();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Gagal share: $e')),
+      );
     }
   }
 
-  Future<void> _deleteAll() async {
-    final ok = await showDialog<bool>(
+  // ── EXPORT TEXT ──────────────────────────────────────────────────
+  Future<void> _exportAndShare() async {
+    if (_filteredEntries.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Tidak ada data untuk diexport')),
+      );
+      return;
+    }
+    try {
+      final path = await _storage.exportTxt(_filteredEntries);
+      await _storage.shareTxt(path);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Gagal export: $e')),
+      );
+    }
+  }
+
+  Future<void> _deleteEntry(ScanEntry entry) async {
+    final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        backgroundColor: AppTheme.surface,
-        title: const Text('Hapus Semua?'),
-        content: Text(
-          'Semua ${_entries.length} entri akan dihapus permanen.',
-          style: const TextStyle(color: AppTheme.textSecondary),
-        ),
+        title: const Text('Hapus Data'),
+        content: Text('Hapus scan barcode "${entry.value}"?'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Batal')),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Batal'),
+          ),
           TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              style: TextButton.styleFrom(foregroundColor: AppTheme.error),
-              child: const Text('Hapus Semua')),
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Hapus'),
+          ),
         ],
       ),
     );
-    if (ok == true) {
-      await _storage.deleteAll();
-      _load();
+    if (confirm == true) {
+      await _storage.delete(entry.id);
+      if (entry.type == ScanType.photo && entry.value.isNotEmpty) {
+        try {
+          final file = File(entry.value);
+          if (await file.exists()) await file.delete();
+        } catch (_) {}
+      }
+      // Hapus dari selection jika ada
+      _selectedIds.remove(entry.id);
+      await _loadEntries();
+    }
+  }
+
+  Future<void> _deleteSelected() async {
+    if (_selectedIds.isEmpty) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Hapus Terpilih'),
+        content: Text('Hapus ${_selectedIds.length} item yang dipilih?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Batal'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Hapus Semua'),
+          ),
+        ],
+      ),
+    );
+    if (confirm == true) {
+      for (final id in _selectedIds) {
+        final entry = _filteredEntries.firstWhere((e) => e.id == id);
+        if (entry.type == ScanType.photo && entry.value.isNotEmpty) {
+          try {
+            final file = File(entry.value);
+            if (await file.exists()) await file.delete();
+          } catch (_) {}
+        }
+        await _storage.delete(id);
+      }
+      _selectedIds.clear();
+      await _loadEntries();
+      _toggleSelectionMode();
     }
   }
 
@@ -135,516 +305,327 @@ class _LogScreenState extends State<LogScreen> {
     return Scaffold(
       backgroundColor: AppTheme.bg,
       appBar: AppBar(
-        title: Text('Log Scan (${_entries.length})'),
+        title: _isSelectionMode
+            ? Text('Pilih ${_selectedIds.length} item')
+            : const Text('Riwayat Scan'),
+        leading: _isSelectionMode
+            ? IconButton(
+                icon: const Icon(Icons.close),
+                onPressed: _toggleSelectionMode,
+              )
+            : null,
         actions: [
-          if (_entries.isNotEmpty) ...[
+          if (_isSelectionMode) ...[
             IconButton(
-              icon: _exporting
-                  ? const SizedBox(
-                      width: 18, height: 18,
-                      child: CircularProgressIndicator(
-                          color: AppTheme.accent, strokeWidth: 2))
-                  : const Icon(Icons.share_outlined),
-              tooltip: 'Export & Share TXT',
-              onPressed: _exporting ? null : _exportTxt,
+              icon: Icon(
+                _isAllSelected() ? Icons.deselect : Icons.select_all,
+                color: Colors.white,
+              ),
+              onPressed: _toggleSelectAll,
+              tooltip: 'Pilih semua',
             ),
             IconButton(
-              icon: const Icon(Icons.delete_outline, color: AppTheme.error),
-              tooltip: 'Hapus Semua',
-              onPressed: _deleteAll,
+              icon: const Icon(Icons.share, color: Colors.green),
+              onPressed: _shareSelectedPhotos,
+              tooltip: 'Share foto terpilih',
+            ),
+            IconButton(
+              icon: const Icon(Icons.delete_outline, color: Colors.red),
+              onPressed: _deleteSelected,
+              tooltip: 'Hapus terpilih',
+            ),
+          ] else ...[
+            IconButton(
+              icon: const Icon(Icons.share),
+              onPressed: _exportAndShare,
+              tooltip: 'Export & Share (Teks)',
+            ),
+            IconButton(
+              icon: const Icon(Icons.select_all),
+              onPressed: () {
+                if (_filteredEntries.isNotEmpty) {
+                  _toggleSelectionMode();
+                }
+              },
+              tooltip: 'Pilih foto untuk dibagikan',
+            ),
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              onPressed: _loadEntries,
+              tooltip: 'Refresh',
             ),
           ],
         ],
       ),
       body: Column(
         children: [
-          _buildSearchAndFilter(),
-          Expanded(child: _buildList()),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSearchAndFilter() {
-    return Container(
-      color: AppTheme.surface,
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-      child: Column(
-        children: [
-          TextField(
-            onChanged: (v) {
-              _search = v;
-              _applyFilter();
-            },
-            style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14),
-            decoration: const InputDecoration(
-              hintText: 'Cari barcode, lokasi, catatan...',
-              prefixIcon:
-                  Icon(Icons.search, color: AppTheme.textSecondary, size: 18),
-              isDense: true,
-              contentPadding:
-                  EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          // Search & Filter bar
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              children: [
+                // Search field
+                TextField(
+                  controller: _searchController,
+                  onChanged: _onSearchChanged,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    hintText: 'Cari barcode, tanggal, atau nama file...',
+                    hintStyle: const TextStyle(color: Colors.grey),
+                    prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                    suffixIcon: _searchController.text.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear, color: Colors.grey),
+                            onPressed: () {
+                              _searchController.clear();
+                              _onSearchChanged('');
+                            },
+                          )
+                        : null,
+                    filled: true,
+                    fillColor: const Color(0xFF2A2A2A),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+                const Gap(8),
+                // Filter chips
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      _FilterChip(
+                        label: 'Semua',
+                        selected: _filterPeriod == 'Semua',
+                        onSelected: () => _setFilterPeriod('Semua'),
+                      ),
+                      _FilterChip(
+                        label: '📅 Hari ini',
+                        selected: _filterPeriod == 'Hari ini',
+                        onSelected: () => _setFilterPeriod('Hari ini'),
+                      ),
+                      _FilterChip(
+                        label: '📅 Minggu ini',
+                        selected: _filterPeriod == 'Minggu ini',
+                        onSelected: () => _setFilterPeriod('Minggu ini'),
+                      ),
+                      _FilterChip(
+                        label: '📅 Bulan ini',
+                        selected: _filterPeriod == 'Bulan ini',
+                        onSelected: () => _setFilterPeriod('Bulan ini'),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade800,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          '${_filteredEntries.length} item',
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
-          const Gap(10),
-          Row(
-            children: [
-              _FilterChip(
-                  label: 'Semua',
-                  count: _entries.length,
-                  selected: _filter == 'all',
-                  onTap: () { _filter = 'all'; _applyFilter(); }),
-              const Gap(8),
-              _FilterChip(
-                  label: 'Barcode',
-                  count: _entries.where((e) => e.isBarcode).length,
-                  selected: _filter == 'barcode',
-                  color: AppTheme.accent,
-                  onTap: () { _filter = 'barcode'; _applyFilter(); }),
-              const Gap(8),
-              _FilterChip(
-                  label: 'Foto',
-                  count: _entries.where((e) => e.isPhoto).length,
-                  selected: _filter == 'photo',
-                  color: AppTheme.accentOrange,
-                  onTap: () { _filter = 'photo'; _applyFilter(); }),
-            ],
+          // List
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _filteredEntries.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.history, size: 48, color: Colors.grey.shade600),
+                            const Gap(12),
+                            Text(
+                              _searchQuery.isNotEmpty || _filterPeriod != 'Semua'
+                                  ? 'Tidak ada hasil untuk filter ini'
+                                  : 'Belum ada scan',
+                              style: const TextStyle(color: Colors.grey),
+                            ),
+                          ],
+                        ),
+                      )
+                    : ListView.builder(
+                        itemCount: _filteredEntries.length,
+                        itemBuilder: (context, index) {
+                          final entry = _filteredEntries[index];
+                          return _LogItem(
+                            entry: entry,
+                            isSelected: _isSelectionMode && _selectedIds.contains(entry.id),
+                            onTap: _isSelectionMode
+                                ? () {
+                                    setState(() {
+                                      if (_selectedIds.contains(entry.id)) {
+                                        _selectedIds.remove(entry.id);
+                                      } else {
+                                        _selectedIds.add(entry.id);
+                                      }
+                                    });
+                                  }
+                                : null,
+                            onDelete: () => _deleteEntry(entry),
+                            dateFormat: _dateFormat,
+                          );
+                        },
+                      ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildList() {
-    if (_loading) {
-      return const Center(
-          child: CircularProgressIndicator(color: AppTheme.accent));
-    }
-    if (_filtered.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.inbox_outlined,
-                size: 64, color: AppTheme.textSecondary),
-            const Gap(16),
-            Text(
-              _entries.isEmpty ? 'Belum ada scan' : 'Tidak ada hasil',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const Gap(8),
-            Text(
-              _entries.isEmpty
-                  ? 'Mulai scan barcode atau ambil foto'
-                  : 'Coba kata kunci lain',
-              style: Theme.of(context).textTheme.bodyMedium,
-            ),
-          ],
-        ),
-      );
-    }
-
-    return RefreshIndicator(
-      onRefresh: _load,
-      color: AppTheme.accent,
-      backgroundColor: AppTheme.surface,
-      child: ListView.builder(
-        padding: const EdgeInsets.all(12),
-        itemCount: _filtered.length,
-        itemBuilder: (ctx, i) => _EntryCard(
-          entry: _filtered[i],
-          onDelete: () => _delete(_filtered[i]),
-        ).animate().fadeIn(
-              delay: Duration(milliseconds: i * 40),
-              duration: 250.ms,
-            ),
       ),
     );
   }
 }
 
+// ── Filter Chip widget ──────────────────────────────────────
 class _FilterChip extends StatelessWidget {
   final String label;
-  final int count;
   final bool selected;
-  final Color color;
-  final VoidCallback onTap;
+  final VoidCallback onSelected;
 
   const _FilterChip({
     required this.label,
-    required this.count,
     required this.selected,
-    this.color = AppTheme.accentBlue,
-    required this.onTap,
+    required this.onSelected,
   });
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: selected ? color.withOpacity(0.2) : AppTheme.surfaceLight,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: selected ? color : AppTheme.border),
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: ChoiceChip(
+        label: Text(label),
+        selected: selected,
+        onPressed: onSelected,
+        selectedColor: AppTheme.accentOrange,
+        backgroundColor: Colors.grey.shade800,
+        labelStyle: TextStyle(
+          color: selected ? Colors.black : Colors.white70,
+          fontSize: 12,
+          fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(label,
-                style: TextStyle(
-                  color: selected ? color : AppTheme.textSecondary,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                )),
-            const Gap(5),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-              decoration: BoxDecoration(
-                color: selected ? color : AppTheme.border,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Text('$count',
-                  style: TextStyle(
-                    color: selected ? Colors.black : AppTheme.textSecondary,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                  )),
-            ),
-          ],
-        ),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       ),
     );
   }
 }
 
-class _EntryCard extends StatelessWidget {
+// ── Log Item ────────────────────────────────────────────────
+class _LogItem extends StatelessWidget {
   final ScanEntry entry;
+  final bool isSelected;
+  final VoidCallback? onTap;
   final VoidCallback onDelete;
+  final DateFormat dateFormat;
 
-  const _EntryCard({required this.entry, required this.onDelete});
+  const _LogItem({
+    required this.entry,
+    required this.isSelected,
+    this.onTap,
+    required this.onDelete,
+    required this.dateFormat,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final isBarcode = entry.isBarcode;
-    final color = isBarcode ? AppTheme.accent : AppTheme.accentOrange;
+    final isPhoto = entry.type == ScanType.photo;
+    final icon = isPhoto ? Icons.photo_camera : Icons.qr_code;
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
-        color: AppTheme.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppTheme.border),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () => _showDetail(context),
-        onLongPress: onDelete,
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: isBarcode
-                    ? Icon(Icons.qr_code_scanner, color: color, size: 22)
-                    : (File(entry.value).existsSync()
-                        ? ClipRRect(
-                            borderRadius: BorderRadius.circular(10),
-                            child: Image.file(File(entry.value),
-                                width: 44, height: 44, fit: BoxFit.cover))
-                        : Icon(Icons.broken_image, color: color, size: 22)),
-              ),
-              const Gap(12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: color.withOpacity(0.15),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            isBarcode
-                                ? (entry.barcodeFormat ?? 'BARCODE')
-                                : 'FOTO',
-                            style: TextStyle(
-                                color: color,
-                                fontSize: 9,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 0.5),
-                          ),
-                        ),
-                        const Gap(8),
-                        Text(entry.timestampShort,
-                            style: const TextStyle(
-                                color: AppTheme.textSecondary, fontSize: 11)),
-                      ],
-                    ),
-                    const Gap(4),
-                    Text(
-                      isBarcode
-                          ? entry.value
-                          : 'Foto: ${entry.value.split('/').last}',
-                      style: const TextStyle(
-                          color: AppTheme.textPrimary,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const Gap(2),
-                    Text(
-                      entry.locationName ?? entry.coordinatesString,
-                      style: const TextStyle(
-                          color: AppTheme.textSecondary, fontSize: 11),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-              ),
-              // Tombol share cepat di card
-              IconButton(
-                icon: const Icon(Icons.share,
-                    size: 18, color: AppTheme.textSecondary),
-                onPressed: () => _shareEntry(context),
-                padding: EdgeInsets.zero,
-                constraints:
-                    const BoxConstraints(minWidth: 32, minHeight: 32),
-              ),
-              IconButton(
-                icon: const Icon(Icons.delete_outline,
-                    size: 18, color: AppTheme.textSecondary),
-                onPressed: onDelete,
-                padding: EdgeInsets.zero,
-                constraints:
-                    const BoxConstraints(minWidth: 32, minHeight: 32),
-              ),
-            ],
-          ),
+        color: isSelected ? Colors.amber.withOpacity(0.1) : const Color(0xFF1E1E1E),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: isSelected ? Colors.amber : Colors.grey.shade800,
+          width: isSelected ? 2 : 1,
         ),
       ),
-    );
-  }
-
-  void _shareEntry(BuildContext context) {
-    if (entry.isBarcode) {
-      final text = 'Barcode: ${entry.value}\n'
-          'Format: ${entry.barcodeFormat ?? "-"}\n'
-          'Waktu: ${entry.timestampFormatted}\n'
-          ': ${entry.coordinatesString}';
-      Share.share(text, subject: 'Hasil Scan WH Scanner');
-    } else if (entry.isPhoto && File(entry.value).existsSync()) {
-      Share.shareXFiles(
-        [XFile(entry.value)],
-        subject: 'Foto WH Scanner',
-        text: 'Waktu: ${entry.timestampFormatted}\n'
-            ': ${entry.coordinatesString}',
-      );
-    }
-  }
-
-  void _showDetail(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: AppTheme.surface,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (_) => _DetailSheet(entry: entry),
-    );
-  }
-}
-
-class _DetailSheet extends StatelessWidget {
-  final ScanEntry entry;
-  const _DetailSheet({required this.entry});
-
-  @override
-  Widget build(BuildContext context) {
-    return DraggableScrollableSheet(
-      expand: false,
-      initialChildSize: 0.6,
-      maxChildSize: 0.92,
-      builder: (_, scroll) => SingleChildScrollView(
-        controller: scroll,
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+      child: ListTile(
+        onTap: onTap,
+        leading: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Center(
-              child: Container(
-                width: 40, height: 4,
-                margin: const EdgeInsets.only(bottom: 20),
-                decoration: BoxDecoration(
-                    color: AppTheme.border,
-                    borderRadius: BorderRadius.circular(2)),
+            if (onTap != null)
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Icon(
+                  isSelected ? Icons.check_circle : Icons.circle_outlined,
+                  color: isSelected ? Colors.amber : Colors.grey,
+                  size: 22,
+                ),
               ),
+            CircleAvatar(
+              backgroundColor: isPhoto ? Colors.blue.shade900 : Colors.amber.shade900,
+              child: Icon(icon, color: Colors.white),
             ),
-
-            if (entry.isPhoto && File(entry.value).existsSync()) ...[
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Image.file(File(entry.value),
-                    width: double.infinity, height: 220, fit: BoxFit.cover),
-              ),
-              const Gap(20),
-            ],
-
-            Text(
-              entry.isBarcode ? 'Detail Barcode' : 'Detail Foto',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const Gap(16),
-
-            _Row(icon: Icons.schedule, label: 'Timestamp',
-                value: entry.timestampFormatted),
-            const Gap(10),
-            if (entry.isBarcode) ...[
-              _Row(icon: Icons.qr_code, label: 'Format',
-                  value: entry.barcodeFormat ?? '-'),
-              const Gap(10),
-              _Row(icon: Icons.data_object, label: 'Nilai Barcode',
-                  value: entry.value, canCopy: true),
-              const Gap(10),
-            ],
-            _Row(icon: Icons.location_on, label: 'Koordinat ',
-                value: entry.coordinatesString),
-            if (entry.locationName != null) ...[
-              const Gap(10),
-              _Row(icon: Icons.place, label: 'Nama ',
-                  value: entry.locationName!),
-            ],
-            if (entry.note != null && entry.note!.isNotEmpty) ...[
-              const Gap(10),
-              _Row(icon: Icons.note, label: 'Catatan', value: entry.note!),
-            ],
-            const Gap(24),
-
-            // Tombol untuk barcode
-            if (entry.isBarcode) ...[
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: () {
-                    Clipboard.setData(ClipboardData(text: entry.value));
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                          content: Text('Barcode disalin ke clipboard'),
-                          duration: Duration(seconds: 1)),
-                    );
-                  },
-                  icon: const Icon(Icons.copy, size: 18),
-                  label: const Text('Salin Barcode'),
-                ),
-              ),
-              const Gap(10),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: () {
-                    final text = 'Barcode: ${entry.value}\n'
-                        'Format: ${entry.barcodeFormat ?? "-"}\n'
-                        'Waktu: ${entry.timestampFormatted}\n'
-                        ': ${entry.coordinatesString}';
-                    Share.share(text, subject: 'Hasil Scan WH Scanner');
-                  },
-                  icon: const Icon(Icons.share, size: 18),
-                  label: const Text('Share Barcode'),
-                ),
-              ),
-            ],
-
-            // Tombol untuk foto
-            if (entry.isPhoto && File(entry.value).existsSync()) ...[
-              const Gap(10),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: () {
-                    Share.shareXFiles(
-                      [XFile(entry.value)],
-                      subject: 'Foto WH Scanner',
-                      text: 'Waktu: ${entry.timestampFormatted}\n'
-                          ': ${entry.coordinatesString}',
-                    );
-                  },
-                  icon: const Icon(Icons.share, size: 18),
-                  label: const Text('Share Foto'),
-                ),
-              ),
-            ],
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _Row extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String value;
-  final bool canCopy;
-
-  const _Row({
-    required this.icon,
-    required this.label,
-    required this.value,
-    this.canCopy = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, size: 16, color: AppTheme.accentBlue),
-        const Gap(10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label,
-                  style: const TextStyle(
-                      color: AppTheme.textSecondary, fontSize: 11)),
-              const Gap(2),
-              Text(value,
-                  style: const TextStyle(
-                      color: AppTheme.textPrimary, fontSize: 13)),
-            ],
+        title: Text(
+          entry.value,
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w600,
           ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
-        if (canCopy)
-          GestureDetector(
-            onTap: () {
-              Clipboard.setData(ClipboardData(text: value));
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                    content: Text('Disalin'),
-                    duration: Duration(seconds: 1)),
-              );
-            },
-            child: const Padding(
-              padding: EdgeInsets.only(left: 8),
-              child: Icon(Icons.copy,
-                  size: 16, color: AppTheme.textSecondary),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              dateFormat.format(entry.timestamp),
+              style: const TextStyle(color: Colors.grey, fontSize: 12),
             ),
-          ),
-      ],
+            if (entry.locationName != null && entry.locationName!.isNotEmpty)
+              Text(
+                entry.locationName!,
+                style: const TextStyle(color: Colors.grey, fontSize: 11),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+          ],
+        ),
+        trailing: onTap == null
+            ? Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (entry.barcodeFormat == 'MANUAL')
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: Colors.amber.withOpacity(0.4)),
+                      ),
+                      child: const Text(
+                        'Manual',
+                        style: TextStyle(
+                          color: Colors.amber,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline, color: Colors.grey, size: 18),
+                    onPressed: onDelete,
+                    tooltip: 'Hapus',
+                  ),
+                ],
+              )
+            : null,
+      ),
     );
   }
 }
