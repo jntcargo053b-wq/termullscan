@@ -75,6 +75,7 @@ class _LogScreenState extends State<LogScreen> {
 
     try {
       final offset = _currentPage * _pageSize;
+      
       final newEntries = await _storage.getEntries(
         limit: _pageSize,
         offset: offset,
@@ -95,6 +96,8 @@ class _LogScreenState extends State<LogScreen> {
 
       _hasMore = _filteredEntries.length < totalCount;
       _currentPage++;
+      
+      debugPrint('📊 Loaded ${newEntries.length} entries, total: $totalCount, hasMore: $_hasMore');
     } catch (e) {
       debugPrint('Error loading entries: $e');
       if (refresh) _filteredEntries = [];
@@ -110,15 +113,20 @@ class _LogScreenState extends State<LogScreen> {
 
   void _onSearchChanged(String value) {
     _searchQuery = value.trim();
+    debugPrint('🔍 Search query: "$_searchQuery"');
+    
     _currentPage = 0;
     _filteredEntries.clear();
     _hasMore = true;
     _loadEntries(refresh: true);
+    
     if (_isSelectionMode) _toggleSelectionMode();
   }
 
   void _setFilterPeriod(String period) {
     setState(() => _filterPeriod = period);
+    debugPrint('📅 Filter period: $period');
+    
     _currentPage = 0;
     _filteredEntries.clear();
     _hasMore = true;
@@ -151,7 +159,6 @@ class _LogScreenState extends State<LogScreen> {
 
   // ─── SHARE FOTO ────────────────────────────────────────────────
   Future<void> _shareSelectedPhotos() async {
-    // ✅ CEK APAKAH ADA YANG DIPILIH
     if (_selectedIds.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -162,12 +169,10 @@ class _LogScreenState extends State<LogScreen> {
       return;
     }
 
-    // Ambil entry yang dipilih dan hanya yang bertipe photo
     final selectedEntries = _filteredEntries
         .where((e) => _selectedIds.contains(e.id) && e.type == ScanType.photo)
         .toList();
 
-    // ✅ CEK APAKAH ADA FOTO YANG DIPILIH
     if (selectedEntries.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -178,7 +183,6 @@ class _LogScreenState extends State<LogScreen> {
       return;
     }
 
-    // Kumpulkan file foto yang valid
     final List<XFile> files = [];
     for (final entry in selectedEntries) {
       final file = File(entry.value);
@@ -189,7 +193,6 @@ class _LogScreenState extends State<LogScreen> {
       }
     }
 
-    // ✅ CEK APAKAH ADA FILE YANG VALID
     if (files.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -201,15 +204,14 @@ class _LogScreenState extends State<LogScreen> {
     }
 
     try {
-      // Tampilkan loading
+      // ✅ FIX: Gunakan non-constant untuk snackbar
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text('Menyiapkan ${files.length} foto untuk dibagikan...'),
-          duration: Duration(seconds: 1),
+          duration: const Duration(seconds: 1),
         ),
       );
 
-      // Share menggunakan share_plus
       if (files.length == 1) {
         await Share.shareXFiles(
           files,
@@ -224,14 +226,14 @@ class _LogScreenState extends State<LogScreen> {
         );
       }
 
-      // Reset selection setelah share sukses
       _toggleSelectionMode();
 
+      // ✅ FIX: Gunakan SnackBar biasa (bukan const)
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text('✅ Berhasil share ${files.length} foto'),
           backgroundColor: Colors.green,
-          duration: Duration(seconds: 2),
+          duration: const Duration(seconds: 2),
         ),
       );
     } catch (e) {
@@ -395,6 +397,7 @@ class _LogScreenState extends State<LogScreen> {
             padding: const EdgeInsets.all(12),
             child: Column(
               children: [
+                // Search Field
                 TextField(
                   controller: _searchController,
                   onChanged: _onSearchChanged,
@@ -422,6 +425,7 @@ class _LogScreenState extends State<LogScreen> {
                   ),
                 ),
                 const Gap(8),
+                // Filter Chips
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
@@ -479,7 +483,7 @@ class _LogScreenState extends State<LogScreen> {
                             const Gap(12),
                             Text(
                               _searchQuery.isNotEmpty || _filterPeriod != 'Semua'
-                                  ? 'Tidak ada hasil'
+                                  ? 'Tidak ada hasil untuk filter ini'
                                   : 'Belum ada scan',
                               style: const TextStyle(color: Colors.grey),
                             ),
