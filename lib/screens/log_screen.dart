@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/log_screen.dart (FIXED - ChoiceChip onSelected)
+// lib/screens/log_screen.dart (SQLite + Pagination)
 // ============================================================
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -19,113 +19,117 @@ class LogScreen extends StatefulWidget {
 
 class _LogScreenState extends State<LogScreen> {
   final StorageService _storage = StorageService();
-  List<ScanEntry> _entries = [];
-  List<ScanEntry> _filteredEntries = [];
-  bool _isLoading = true;
 
-  // Selection state
+  // Data
+  List<ScanEntry> _entries = [];
+  bool _isLoading = true;
+  bool _hasMore = true;
+  bool _isLoadingMore = false;
+  int _page = 0;
+  final int _pageSize = 20;
+
+  // Selection
   bool _isSelectionMode = false;
   final Set<String> _selectedIds = {};
 
-  // Filter state
+  // Filter
   String _searchQuery = '';
   String _filterPeriod = 'Semua';
 
   final TextEditingController _searchController = TextEditingController();
   final DateFormat _dateFormat = DateFormat('dd/MM/yyyy HH:mm:ss');
+  final ScrollController _scrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
-    _loadEntries();
+    _loadEntries(refresh: true);
+    _scrollController.addListener(_onScroll);
   }
 
   @override
   void dispose() {
     _searchController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
-  Future<void> _loadEntries() async {
-    setState(() => _isLoading = true);
+  void _onScroll() {
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 200) {
+      _loadEntries();
+    }
+  }
+
+  // ─── LOAD DATA ──────────────────────────────────────────────────
+  Future<void> _loadEntries({bool refresh = false}) async {
+    if (refresh) {
+      _page = 0;
+      _entries.clear();
+      _hasMore = true;
+      setState(() => _isLoading = true);
+    }
+
+    if (!_hasMore || _isLoadingMore) return;
+
+    setState(() => _isLoadingMore = true);
+
     try {
-      _entries = await _storage.loadAll();
-      _applyFilters();
+      final offset = _page * _pageSize;
+      final newEntries = await _storage.getEntries(
+        limit: _pageSize,
+        offset: offset,
+        searchQuery: _searchQuery.isNotEmpty ? _searchQuery : null,
+        period: _filterPeriod != 'Semua' ? _filterPeriod : null,
+      );
+
+      final totalCount = await _storage.getCount(
+        searchQuery: _searchQuery.isNotEmpty ? _searchQuery : null,
+        period: _filterPeriod != 'Semua' ? _filterPeriod : null,
+      );
+
+      if (refresh) {
+        _entries = newEntries;
+      } else {
+        _entries.addAll(newEntries);
+      }
+
+      _hasMore = _entries.length < totalCount;
+      _page++;
     } catch (e) {
       debugPrint('Error loading entries: $e');
     } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      setState(() {
+        _isLoading = false;
+        _isLoadingMore = false;
+      });
     }
   }
 
-  void _applyFilters() {
-    List<ScanEntry> result = List.from(_entries);
-
-    if (_filterPeriod != 'Semua') {
-      final now = DateTime.now();
-      DateTime start;
-      switch (_filterPeriod) {
-        case 'Hari ini':
-          start = DateTime(now.year, now.month, now.day);
-          break;
-        case 'Minggu ini':
-          start = now.subtract(Duration(days: now.weekday - 1));
-          start = DateTime(start.year, start.month, start.day);
-          break;
-        case 'Bulan ini':
-          start = DateTime(now.year, now.month, 1);
-          break;
-        default:
-          start = DateTime(0);
-      }
-      result = result.where((e) => e.timestamp.isAfter(start)).toList();
-    }
-
-    if (_searchQuery.isNotEmpty) {
-      final query = _searchQuery.toLowerCase();
-      result = result.where((e) {
-        final matchesBarcode = e.value.toLowerCase().contains(query);
-        final matchesFileName = e.value.toLowerCase().contains(query);
-        final matchesDate = _dateFormat.format(e.timestamp).contains(query);
-        return matchesBarcode || matchesFileName || matchesDate;
-      }).toList();
-    }
-
-    result.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-
-    setState(() {
-      _filteredEntries = result;
-    });
-  }
-
+  // ─── FILTER ──────────────────────────────────────────────────
   void _onSearchChanged(String value) {
     _searchQuery = value.trim();
-    _applyFilters();
     if (_isSelectionMode) _toggleSelectionMode();
+    _loadEntries(refresh: true);
   }
 
   void _setFilterPeriod(String period) {
-    setState(() {
-      _filterPeriod = period;
-    });
-    _applyFilters();
+    setState(() => _filterPeriod = period);
     if (_isSelectionMode) _toggleSelectionMode();
+    _loadEntries(refresh: true);
   }
 
+  // ─── SELECTION ──────────────────────────────────────────────
   void _toggleSelectionMode() {
     setState(() {
       _isSelectionMode = !_isSelectionMode;
-      if (!_isSelectionMode) {
-        _selectedIds.clear();
-      }
+      if (!_isSelectionMode) _selectedIds.clear();
     });
   }
 
   void _toggleSelectAll() {
     setState(() {
-      final allIds = _filteredEntries.map((e) => e.id).toSet();
+      final allIds = _entries.map((e) => e.id).toSet();
       if (_selectedIds.length == allIds.length) {
         _selectedIds.clear();
       } else {
@@ -135,10 +139,11 @@ class _LogScreenState extends State<LogScreen> {
   }
 
   bool _isAllSelected() {
-    if (_filteredEntries.isEmpty) return false;
-    return _selectedIds.length == _filteredEntries.length;
+    if (_entries.isEmpty) return false;
+    return _selectedIds.length == _entries.length;
   }
 
+  // ─── SHARE ──────────────────────────────────────────────────
   Future<void> _shareSelectedPhotos() async {
     if (_selectedIds.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -147,7 +152,7 @@ class _LogScreenState extends State<LogScreen> {
       return;
     }
 
-    final selectedEntries = _filteredEntries
+    final selectedEntries = _entries
         .where((e) => _selectedIds.contains(e.id) && e.type == ScanType.photo)
         .toList();
 
@@ -175,7 +180,7 @@ class _LogScreenState extends State<LogScreen> {
 
     try {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Menyiapkan foto untuk dibagikan...')),
+        const SnackBar(content: Text('Menyiapkan foto...')),
       );
 
       if (files.length == 1) {
@@ -200,15 +205,16 @@ class _LogScreenState extends State<LogScreen> {
     }
   }
 
+  // ─── EXPORT ──────────────────────────────────────────────────
   Future<void> _exportAndShare() async {
-    if (_filteredEntries.isEmpty) {
+    if (_entries.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Tidak ada data untuk diexport')),
       );
       return;
     }
     try {
-      final path = await _storage.exportTxt(_filteredEntries);
+      final path = await _storage.exportTxt(_entries);
       await _storage.shareTxt(path);
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -217,6 +223,7 @@ class _LogScreenState extends State<LogScreen> {
     }
   }
 
+  // ─── DELETE ──────────────────────────────────────────────────
   Future<void> _deleteEntry(ScanEntry entry) async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -245,7 +252,7 @@ class _LogScreenState extends State<LogScreen> {
         } catch (_) {}
       }
       _selectedIds.remove(entry.id);
-      await _loadEntries();
+      _loadEntries(refresh: true);
     }
   }
 
@@ -255,7 +262,7 @@ class _LogScreenState extends State<LogScreen> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Hapus Terpilih'),
-        content: Text('Hapus ${_selectedIds.length} item yang dipilih?'),
+        content: Text('Hapus ${_selectedIds.length} item?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -271,7 +278,7 @@ class _LogScreenState extends State<LogScreen> {
     );
     if (confirm == true) {
       for (final id in _selectedIds) {
-        final entry = _filteredEntries.firstWhere((e) => e.id == id);
+        final entry = _entries.firstWhere((e) => e.id == id);
         if (entry.type == ScanType.photo && entry.value.isNotEmpty) {
           try {
             final file = File(entry.value);
@@ -281,7 +288,7 @@ class _LogScreenState extends State<LogScreen> {
         await _storage.delete(id);
       }
       _selectedIds.clear();
-      await _loadEntries();
+      _loadEntries(refresh: true);
       _toggleSelectionMode();
     }
   }
@@ -329,15 +336,13 @@ class _LogScreenState extends State<LogScreen> {
             IconButton(
               icon: const Icon(Icons.select_all),
               onPressed: () {
-                if (_filteredEntries.isNotEmpty) {
-                  _toggleSelectionMode();
-                }
+                if (_entries.isNotEmpty) _toggleSelectionMode();
               },
               tooltip: 'Pilih foto untuk dibagikan',
             ),
             IconButton(
               icon: const Icon(Icons.refresh),
-              onPressed: _loadEntries,
+              onPressed: () => _loadEntries(refresh: true),
               tooltip: 'Refresh',
             ),
           ],
@@ -345,7 +350,7 @@ class _LogScreenState extends State<LogScreen> {
       ),
       body: Column(
         children: [
-          // Search & Filter bar
+          // Search & Filter
           Padding(
             padding: const EdgeInsets.all(12),
             child: Column(
@@ -408,7 +413,7 @@ class _LogScreenState extends State<LogScreen> {
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Text(
-                          '${_filteredEntries.length} item',
+                          '${_entries.length} item',
                           style: const TextStyle(
                             color: Colors.white70,
                             fontSize: 12,
@@ -425,7 +430,7 @@ class _LogScreenState extends State<LogScreen> {
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
-                : _filteredEntries.isEmpty
+                : _entries.isEmpty
                     ? Center(
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
@@ -442,9 +447,22 @@ class _LogScreenState extends State<LogScreen> {
                         ),
                       )
                     : ListView.builder(
-                        itemCount: _filteredEntries.length,
+                        controller: _scrollController,
+                        itemCount: _entries.length + (_hasMore ? 1 : 0),
                         itemBuilder: (context, index) {
-                          final entry = _filteredEntries[index];
+                          if (index == _entries.length && _hasMore) {
+                            return const Padding(
+                              padding: EdgeInsets.all(8.0),
+                              child: Center(
+                                child: SizedBox(
+                                  width: 24,
+                                  height: 24,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                ),
+                              ),
+                            );
+                          }
+                          final entry = _entries[index];
                           return _LogItem(
                             entry: entry,
                             isSelected: _isSelectionMode && _selectedIds.contains(entry.id),
@@ -490,7 +508,7 @@ class _FilterChip extends StatelessWidget {
       child: ChoiceChip(
         label: Text(label),
         selected: selected,
-        onSelected: (_) => onSelected(), // ✅ FIX: onSelected, not onPressed
+        onSelected: (_) => onSelected(),
         selectedColor: AppTheme.accentOrange,
         backgroundColor: Colors.grey.shade800,
         labelStyle: TextStyle(
