@@ -39,6 +39,7 @@ class ScanEntry {
   bool get isBarcode => type == ScanType.barcode;
   bool get isPhoto => type == ScanType.photo;
 
+  // ─── JSON (legacy) ──────────────────────────────────────────────
   Map<String, dynamic> toJson() => {
     'id': id,
     'type': type.name,
@@ -69,6 +70,32 @@ class ScanEntry {
     note: j['note'],
   );
 
+  // ─── SQLite (toMap / fromMap) ──────────────────────────────────
+  Map<String, dynamic> toMap() => {
+    'id': id,
+    'type': type.name,
+    'value': value,
+    'barcodeFormat': barcodeFormat,
+    'timestamp': timestamp.millisecondsSinceEpoch,
+    'latitude': latitude,
+    'longitude': longitude,
+    'locationName': locationName,
+    'note': note,
+  };
+
+  factory ScanEntry.fromMap(Map<String, dynamic> map) => ScanEntry(
+    id: map['id'],
+    type: ScanType.values.firstWhere((e) => e.name == map['type']),
+    value: map['value'],
+    barcodeFormat: map['barcodeFormat'],
+    timestamp: DateTime.fromMillisecondsSinceEpoch(map['timestamp']),
+    latitude: map['latitude'] as double?,
+    longitude: map['longitude'] as double?,
+    locationName: map['locationName'],
+    note: map['note'],
+  );
+
+  // ─── Copy ───────────────────────────────────────────────────────
   ScanEntry copyWith({
     String? value,
     double? latitude,
@@ -76,7 +103,10 @@ class ScanEntry {
     String? locationName,
     String? note,
   }) => ScanEntry(
-    id: id, type: type, value: value ?? this.value, barcodeFormat: barcodeFormat,
+    id: id,
+    type: type,
+    value: value ?? this.value,
+    barcodeFormat: barcodeFormat,
     timestamp: timestamp,
     latitude: latitude ?? this.latitude,
     longitude: longitude ?? this.longitude,
