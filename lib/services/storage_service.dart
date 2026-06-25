@@ -1,9 +1,10 @@
 // ============================================================
-// lib/services/storage_service.dart (LENGKAP - JSON + backup + lock)
+// lib/services/storage_service.dart (FINAL - dengan getEntries & getCount)
 // ============================================================
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:uuid/uuid.dart';
@@ -24,7 +25,6 @@ class StorageService {
     return File('${dir.path}/$_fileName');
   }
 
-  // ─── Lock sederhana ──────────────────────────────────────────────
   Future<void> _withLock(Future<void> Function() action) async {
     while (_isSaving) {
       await Future.delayed(const Duration(milliseconds: 10));
@@ -37,7 +37,6 @@ class StorageService {
     }
   }
 
-  // ─── Load cache ──────────────────────────────────────────────────
   Future<void> _loadCache() async {
     if (_initialized) return;
     await _withLock(() async {
@@ -83,7 +82,6 @@ class StorageService {
     });
   }
 
-  // ─── Save cache ──────────────────────────────────────────────────
   Future<void> _saveCache() async {
     await _withLock(() async {
       try {
@@ -153,6 +151,97 @@ class StorageService {
       _cache = [];
       await _saveCache();
     });
+  }
+
+  // ─── PAGINATION & FILTER (berbasis memory) ──────────────────────
+  Future<List<ScanEntry>> getEntries({
+    int limit = 20,
+    int offset = 0,
+    String? searchQuery,
+    String? period,
+  }) async {
+    await _loadCache();
+    List<ScanEntry> result = List.from(_cache);
+
+    // Filter period
+    if (period != null && period != 'Semua') {
+      final now = DateTime.now();
+      DateTime start;
+      switch (period) {
+        case 'Hari ini':
+          start = DateTime(now.year, now.month, now.day);
+          break;
+        case 'Minggu ini':
+          start = now.subtract(Duration(days: now.weekday - 1));
+          start = DateTime(start.year, start.month, start.day);
+          break;
+        case 'Bulan ini':
+          start = DateTime(now.year, now.month, 1);
+          break;
+        default:
+          start = DateTime(0);
+      }
+      result = result.where((e) => e.timestamp.isAfter(start)).toList();
+    }
+
+    // Filter search
+    if (searchQuery != null && searchQuery.isNotEmpty) {
+      final query = searchQuery.toLowerCase();
+      final df = DateFormat('dd/MM/yyyy HH:mm:ss');
+      result = result.where((e) {
+        final matchesBarcode = e.value.toLowerCase().contains(query);
+        final matchesDate = df.format(e.timestamp).contains(query);
+        return matchesBarcode || matchesDate;
+      }).toList();
+    }
+
+    // Sort
+    result.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+
+    // Pagination
+    final start = offset;
+    final end = (offset + limit).clamp(0, result.length);
+    return result.sublist(start, end);
+  }
+
+  Future<int> getCount({
+    String? searchQuery,
+    String? period,
+  }) async {
+    await _loadCache();
+    List<ScanEntry> result = List.from(_cache);
+
+    if (period != null && period != 'Semua') {
+      final now = DateTime.now();
+      DateTime start;
+      switch (period) {
+        case 'Hari ini':
+          start = DateTime(now.year, now.month, now.day);
+          break;
+        case 'Minggu ini':
+          start = now.subtract(Duration(days: now.weekday - 1));
+          start = DateTime(start.year, start.month, start.day);
+          break;
+        case 'Bulan ini':
+          start = DateTime(now.year, now.month, 1);
+          break;
+        default:
+          start = DateTime(0);
+      }
+      result = result.where((e) => e.timestamp.isAfter(start)).toList();
+    }
+
+    if (searchQuery != null && searchQuery.isNotEmpty) {
+      final query = searchQuery.toLowerCase();
+      final df = DateFormat('dd/MM/yyyy HH:mm:ss');
+      result = result.where((e) {
+        final matchesBarcode = e.value.toLowerCase().contains(query);
+        final matchesDate = df.format(e.timestamp).contains(query);
+        return matchesBarcode || matchesDate;
+      }).toList();
+    }
+
+    return result.length;
   }
 
   // ─── PHOTO ────────────────────────────────────────────────────────
