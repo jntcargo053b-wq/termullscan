@@ -1,3 +1,6 @@
+// ============================================================
+// lib/services/database_helper.dart (FINAL)
+// ============================================================
 import 'dart:async';
 import 'dart:io';
 import 'package:path/path.dart';
@@ -23,8 +26,9 @@ class DatabaseHelper {
     final path = join(dir.path, 'scan_log.db');
     return await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
     );
   }
 
@@ -42,9 +46,13 @@ class DatabaseHelper {
         note TEXT
       )
     ''');
-    // Index untuk pencarian cepat
     await db.execute('CREATE INDEX idx_value ON scan_entries(value)');
     await db.execute('CREATE INDEX idx_timestamp ON scan_entries(timestamp)');
+    await db.execute('CREATE INDEX idx_type ON scan_entries(type)');
+  }
+
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    // No schema changes in version 2
   }
 
   // ─── CRUD ──────────────────────────────────────────
@@ -55,11 +63,36 @@ class DatabaseHelper {
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
+  Future<void> insertAll(List<ScanEntry> entries) async {
+    final db = await database;
+    final batch = db.batch();
+    for (var entry in entries) {
+      batch.insert('scan_entries', entry.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    await batch.commit();
+  }
+
+  Future<List<ScanEntry>> getAll() async {
+    final db = await database;
+    final result = await db.query('scan_entries',
+        orderBy: 'timestamp DESC', limit: 10000); // batas aman
+    return result.map((map) => ScanEntry.fromMap(map)).toList();
+  }
+
+  Future<ScanEntry?> getEntry(String id) async {
+    final db = await database;
+    final result = await db.query('scan_entries',
+        where: 'id = ?', whereArgs: [id], limit: 1);
+    if (result.isEmpty) return null;
+    return ScanEntry.fromMap(result.first);
+  }
+
   Future<List<ScanEntry>> getEntries({
     int limit = 20,
     int offset = 0,
     String? searchQuery,
-    String? period, // 'today', 'week', 'month'
+    String? period,
   }) async {
     final db = await database;
     String sql = 'SELECT * FROM scan_entries';
@@ -163,7 +196,7 @@ class DatabaseHelper {
         where: 'id = ?', whereArgs: [entry.id]);
   }
 
-  // ─── MIGRASI DARI JSON ────────────────────────────
+  // ─── MIGRASI ──────────────────────────────────────
 
   Future<void> migrateFromJson(List<ScanEntry> entries) async {
     final db = await database;
