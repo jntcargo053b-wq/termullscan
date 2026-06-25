@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/log_screen.dart (FULL - dengan Selection & Share Foto)
+// lib/screens/log_screen.dart (FIXED - ChoiceChip onSelected)
 // ============================================================
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -29,7 +29,7 @@ class _LogScreenState extends State<LogScreen> {
 
   // Filter state
   String _searchQuery = '';
-  String _filterPeriod = 'Semua'; // 'Semua', 'Hari ini', 'Minggu ini', 'Bulan ini'
+  String _filterPeriod = 'Semua';
 
   final TextEditingController _searchController = TextEditingController();
   final DateFormat _dateFormat = DateFormat('dd/MM/yyyy HH:mm:ss');
@@ -63,7 +63,6 @@ class _LogScreenState extends State<LogScreen> {
   void _applyFilters() {
     List<ScanEntry> result = List.from(_entries);
 
-    // Filter periode
     if (_filterPeriod != 'Semua') {
       final now = DateTime.now();
       DateTime start;
@@ -84,7 +83,6 @@ class _LogScreenState extends State<LogScreen> {
       result = result.where((e) => e.timestamp.isAfter(start)).toList();
     }
 
-    // Search
     if (_searchQuery.isNotEmpty) {
       final query = _searchQuery.toLowerCase();
       result = result.where((e) {
@@ -105,7 +103,6 @@ class _LogScreenState extends State<LogScreen> {
   void _onSearchChanged(String value) {
     _searchQuery = value.trim();
     _applyFilters();
-    // Jika keluar dari mode seleksi saat mencari
     if (_isSelectionMode) _toggleSelectionMode();
   }
 
@@ -142,7 +139,6 @@ class _LogScreenState extends State<LogScreen> {
     return _selectedIds.length == _filteredEntries.length;
   }
 
-  // ── SHARE FOTO ──────────────────────────────────────────────────
   Future<void> _shareSelectedPhotos() async {
     if (_selectedIds.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -151,7 +147,6 @@ class _LogScreenState extends State<LogScreen> {
       return;
     }
 
-    // Ambil entry yang dipilih dan hanya yang bertipe photo
     final selectedEntries = _filteredEntries
         .where((e) => _selectedIds.contains(e.id) && e.type == ScanType.photo)
         .toList();
@@ -163,7 +158,6 @@ class _LogScreenState extends State<LogScreen> {
       return;
     }
 
-    // Kumpulkan file foto
     final List<XFile> files = [];
     for (final entry in selectedEntries) {
       final file = File(entry.value);
@@ -180,22 +174,17 @@ class _LogScreenState extends State<LogScreen> {
     }
 
     try {
-      // Tampilkan loading
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Menyiapkan foto untuk dibagikan...')),
       );
 
-      // Share menggunakan share_plus
       if (files.length == 1) {
-        // Share satu foto dengan caption
         await Share.shareXFiles(
           files,
           text: '📸 Hasil scan dari WH Scanner\n'
-              'Total: ${files.length} foto\n'
               'Waktu: ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now())}',
         );
       } else {
-        // Share multiple foto
         await Share.shareXFiles(
           files,
           text: '📸 ${files.length} foto hasil scan dari WH Scanner\n'
@@ -203,7 +192,6 @@ class _LogScreenState extends State<LogScreen> {
         );
       }
 
-      // Reset selection setelah share
       _toggleSelectionMode();
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -212,7 +200,6 @@ class _LogScreenState extends State<LogScreen> {
     }
   }
 
-  // ── EXPORT TEXT ──────────────────────────────────────────────────
   Future<void> _exportAndShare() async {
     if (_filteredEntries.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -257,7 +244,6 @@ class _LogScreenState extends State<LogScreen> {
           if (await file.exists()) await file.delete();
         } catch (_) {}
       }
-      // Hapus dari selection jika ada
       _selectedIds.remove(entry.id);
       await _loadEntries();
     }
@@ -364,7 +350,6 @@ class _LogScreenState extends State<LogScreen> {
             padding: const EdgeInsets.all(12),
             child: Column(
               children: [
-                // Search field
                 TextField(
                   controller: _searchController,
                   onChanged: _onSearchChanged,
@@ -392,7 +377,6 @@ class _LogScreenState extends State<LogScreen> {
                   ),
                 ),
                 const Gap(8),
-                // Filter chips
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
@@ -487,7 +471,7 @@ class _LogScreenState extends State<LogScreen> {
   }
 }
 
-// ── Filter Chip widget ──────────────────────────────────────
+// ── Filter Chip ──────────────────────────────────────
 class _FilterChip extends StatelessWidget {
   final String label;
   final bool selected;
@@ -506,7 +490,7 @@ class _FilterChip extends StatelessWidget {
       child: ChoiceChip(
         label: Text(label),
         selected: selected,
-        onPressed: onSelected,
+        onSelected: (_) => onSelected(), // ✅ FIX: onSelected, not onPressed
         selectedColor: AppTheme.accentOrange,
         backgroundColor: Colors.grey.shade800,
         labelStyle: TextStyle(
