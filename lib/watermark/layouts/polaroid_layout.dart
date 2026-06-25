@@ -29,12 +29,14 @@ class PolaroidLayout extends WatermarkLayout {
     final baseSize = LayoutHelper.getBaseSize(photoWidth, photoHeight);
     final padding = LayoutHelper.padding(baseSize);
     final rowCount = _countTextLines(data);
-    final lineH = LayoutHelper.lineHeight(baseSize, ratio: 0.048);
-    final fontSz = LayoutHelper.fontSize(baseSize, ratio: 0.032);
+
+    // ✅ Gunakan data.fontSize, bukan auto-calc
+    final fontSz = data.fontSize;
+    final lineH = fontSz * 1.4;
 
     final bottomStripHeight = math.max(
-      photoHeight * 0.22,
-      rowCount * lineH + padding * 2.5,
+      photoHeight * 0.18,
+      rowCount * lineH + padding * 2,
     );
 
     final canvasW = photoWidth + padding * 2;
@@ -143,7 +145,7 @@ class PolaroidLayout extends WatermarkLayout {
     if (isManual) {
       _paintManualBadge(
         canvas: canvas,
-        data: data, // ✅ TAMBAHKAN PARAMETER data
+        data: data,
         x: canvasWidth - padding - baseSize * 0.09 - 6,
         y: stripTop + (stripHeight * 0.10),
         baseSize: baseSize,
@@ -337,7 +339,7 @@ class PolaroidLayout extends WatermarkLayout {
 
   void _paintManualBadge({
     required ui.Canvas canvas,
-    required WatermarkData data, // ✅ TAMBAHKAN PARAMETER INI
+    required WatermarkData data,
     required double x,
     required double y,
     required double baseSize,
@@ -360,7 +362,7 @@ class PolaroidLayout extends WatermarkLayout {
       color: Colors.white,
       fontSize: badgeH * 0.45,
       fontWeight: FontWeight.w800,
-      fontFamily: data.fontFamily, // ✅ SEKARANG data TERSEDIA
+      fontFamily: data.fontFamily,
     );
   }
 }
