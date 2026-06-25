@@ -10,6 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
 
+  # ─── CORE ──────────────────────────────────────────────────────────────
   shared_preferences: ^2.2.2
   path_provider: ^2.1.1
   permission_handler: ^11.3.1
@@ -17,13 +18,29 @@ dependencies:
   intl: ^0.19.0
   uuid: ^4.3.1
   device_info_plus: ^9.1.0
+
+  # ─── UI ────────────────────────────────────────────────────────────────
   gap: ^3.0.1
   flutter_animate: ^4.5.0
+
+  # ─── SCANNER ──────────────────────────────────────────────────────────
   mobile_scanner: ^5.2.0
+
+  # ─── GALLERY ──────────────────────────────────────────────────────────
   saver_gallery: ^3.0.0
+
+  # ─── SHARE ────────────────────────────────────────────────────────────
   share_plus: ^9.0.0
+
+  # ─── IMAGE PROCESSING ────────────────────────────────────────────────
   image: ^4.1.7
+
+  # ─── SVG ──────────────────────────────────────────────────────────────
   flutter_svg: ^2.0.10+1
+
+  # ─── DATABASE (untuk pagination & indexing) ─────────────────────────
+  sqflite: ^2.3.0
+  path: ^1.9.0
 
 dev_dependencies:
   flutter_test:
