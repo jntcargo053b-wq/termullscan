@@ -1,6 +1,3 @@
-// ============================================================
-// lib/screens/photo_scan_screen.dart (AUTO SAVE TO GALLERY)
-// ============================================================
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -50,8 +47,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
   List<String> _photoPaths = [];
 
-  Timer? _debounceTimer;
-
   @override
   void initState() {
     super.initState();
@@ -61,7 +56,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
   @override
   void dispose() {
-    _debounceTimer?.cancel();
     super.dispose();
   }
 
@@ -225,9 +219,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   Future<void> _takePhoto() async {
     if (_isSaving || _isCapturing) return;
 
-    _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(milliseconds: 500), () {});
-
     if (!await _ensureCameraPermission()) return;
 
     setState(() {
@@ -245,12 +236,16 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       );
     } catch (e) {
       _showError('Gagal membuka kamera');
-      setState(() {
-        _isSaving = false;
-        _isCapturing = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+          _isCapturing = false;
+        });
+      }
       return;
     }
+
+    if (!mounted) return;
 
     if (xfile == null) {
       setState(() {
@@ -263,11 +258,9 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     await _processPhoto(xfile);
   }
 
+  // ─── PICK FROM GALLERY ──────────────────────────────────────────────
   Future<void> _pickFromGallery() async {
     if (_isSaving || _isCapturing) return;
-
-    _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(milliseconds: 500), () {});
 
     setState(() {
       _isSaving = true;
@@ -283,12 +276,16 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       );
     } catch (e) {
       _showError('Gagal membuka galeri');
-      setState(() {
-        _isSaving = false;
-        _isCapturing = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+          _isCapturing = false;
+        });
+      }
       return;
     }
+
+    if (!mounted) return;
 
     if (xfile == null) {
       setState(() {
@@ -331,7 +328,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         throw Exception('Gagal menyimpan file foto');
       }
 
-      // ✅ SIMPAN OTOMATIS KE GALERI
+      // Simpan otomatis ke galeri
       final entry = ScanEntry(
         id: _storage.generateId(),
         type: ScanType.photo,
