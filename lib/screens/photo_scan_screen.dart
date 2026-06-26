@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/photo_scan_screen.dart (LENGKAP)
+// lib/screens/photo_scan_screen.dart (DENGAN BATCH MODE)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -21,7 +21,16 @@ import '../utils/file_helper.dart';
 import 'watermark_settings_sheet.dart';
 
 class PhotoScanScreen extends StatefulWidget {
-  const PhotoScanScreen({super.key});
+  final String? barcode; // barcode yang sedang aktif
+  final bool batchMode; // apakah mode batch
+  final String? entryId; // ID entry barcode yang sudah disimpan
+
+  const PhotoScanScreen({
+    super.key,
+    this.barcode,
+    this.batchMode = false,
+    this.entryId,
+  });
 
   @override
   State<PhotoScanScreen> createState() => _PhotoScanScreenState();
@@ -36,6 +45,9 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   int _photoCount = 0;
   bool _cameraGranted = false;
   bool _settingsLoaded = false;
+
+  // Daftar path foto yang berhasil diambil (untuk batch)
+  List<String> _photoPaths = [];
 
   Timer? _debounceTimer;
 
@@ -112,15 +124,22 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     });
   }
 
-  Future<String> _applyWatermark(String imagePath, DateTime timestamp) async {
+  Future<String> _applyWatermark(String imagePath, DateTime timestamp, int photoIndex) async {
     await _wmSettings.load();
+
+    // Tentukan nama barcode untuk watermark (gunakan barcode jika ada, atau "PHOTO")
+    final barcodeValue = widget.barcode ?? 'PHOTO';
+    final fileName = widget.barcode != null
+        ? '${widget.barcode}_$photoIndex'
+        : 'photo_$photoIndex';
+
     final outputPath =
         '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.png';
 
     final tempEntry = ScanEntry(
       id: _storage.generateId(),
       type: ScanType.photo,
-      value: '',
+      value: fileName,
       barcodeFormat: null,
       timestamp: timestamp,
       latitude: null,
@@ -133,6 +152,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     debugPrint('  Position: ${_wmSettings.position.name}');
     debugPrint('  FontSize: ${_wmSettings.fontSize}');
     debugPrint('  FontFamily: ${_wmSettings.fontFamily}');
+    debugPrint('  Barcode: $barcodeValue');
     debugPrint('======================================');
 
     final result = await WatermarkRenderer.render(
@@ -142,7 +162,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       entry: tempEntry,
     );
 
-    // Hapus file temporary jika hasil berbeda
     if (result != null && result != imagePath) {
       final file = File(imagePath);
       try {
@@ -229,42 +248,78 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     String compressedPath = xfile.path;
 
     try {
-      // Validasi ukuran
       final fileSize = await File(xfile.path).length();
       if (fileSize > 20 * 1024 * 1024) {
         throw Exception('Ukuran foto terlalu besar (>20MB)');
       }
 
-      // Kompresi adaptif
       compressedPath = await ImageCompressor.compressIfNeeded(xfile.path);
 
       final timestamp = DateTime.now();
+      final photoIndex = _photoCount + 1;
 
-      watermarkedPath = await _applyWatermark(compressedPath, timestamp);
+      watermarkedPath = await _applyWatermark(compressedPath, timestamp, photoIndex);
 
       if (!await File(watermarkedPath).exists()) {
         throw Exception('File watermark tidak ditemukan');
       }
 
-      final savedPath = await _storage.savePhoto(watermarkedPath);
+      // Simpan foto dengan nama yang mengandung barcode (jika ada)
+      final name = widget.barcode != null
+          ? '${widget.barcode}_$photoIndex'
+          : null;
+      final savedPath = await _storage.savePhoto(watermarkedPath, name: name);
       if (savedPath.isEmpty) {
         throw Exception('Gagal menyimpan file foto');
       }
 
-      final entry = ScanEntry(
-        id: _storage.generateId(),
-        type: ScanType.photo,
-        value: savedPath,
-        timestamp: timestamp,
-        latitude: null,
-        longitude: null,
-        locationName: null,
-      );
-      await _storage.add(entry);
+      // Tambahkan ke daftar photoPaths
+      _photoPaths.add(savedPath);
 
-      if (!mounted) return;
-      setState(() => _photoCount++);
-      _showSuccess(entry);
+      setState(() {
+        _photoCount++;
+      });
+
+      // Jika bukan batch mode, langsung selesai
+      if (!widget.batchMode) {
+        // Buat entri foto
+        final entry = ScanEntry(
+          id: _storage.generateId(),
+          type: ScanType.photo,
+          value: savedPath,
+          timestamp: timestamp,
+          latitude: null,
+          longitude: null,
+          locationName: null,
+        );
+        await _storage.add(entry);
+
+        _showSuccess(entry);
+        Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
+        return;
+      }
+
+      // Jika batch mode, update entri barcode dengan photoPaths
+      if (widget.entryId != null) {
+        final barcodeEntry = await _storage.getEntry(widget.entryId!);
+        if (barcodeEntry != null) {
+          final updated = barcodeEntry.copyWith(photoPaths: List.from(_photoPaths));
+          await _storage.update(updated);
+        }
+      }
+
+      // Tampilkan snackbar sukses
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('📸 Foto ${_photoCount} berhasil (${widget.barcode ?? 'tanpa barcode'})'),
+            duration: const Duration(seconds: 1),
+            backgroundColor: Colors.green.shade700,
+          ),
+        );
+      }
+
+      // Tetap di layar untuk ambil foto lagi (batch mode)
     } catch (e, stack) {
       debugPrint('Error processing photo: $e\n$stack');
       _showError('Gagal memproses foto: ${e.toString().split(':').last}');
@@ -272,12 +327,10 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         try { await File(watermarkedPath).delete(); } catch (_) {}
       }
     } finally {
-      // ✅ HANYA hapus file jika temporary (AMAN)
       if (compressedPath != xfile.path &&
           await FileHelper.isTemporaryFile(compressedPath)) {
         try { await File(compressedPath).delete(); } catch (_) {}
       }
-
       if (await FileHelper.isTemporaryFile(xfile.path)) {
         try { await File(xfile.path).delete(); } catch (_) {}
       }
@@ -286,6 +339,65 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         setState(() => _isSaving = false);
       }
     }
+  }
+
+  Future<void> _finishBatch() async {
+    // Pastikan entri barcode memiliki photoPaths
+    if (widget.entryId != null && _photoPaths.isNotEmpty) {
+      final barcodeEntry = await _storage.getEntry(widget.entryId!);
+      if (barcodeEntry != null) {
+        final updated = barcodeEntry.copyWith(photoPaths: List.from(_photoPaths));
+        await _storage.update(updated);
+      }
+    }
+
+    if (_photoPaths.isNotEmpty) {
+      // Tampilkan ringkasan
+      _showBatchSummary();
+    }
+
+    Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
+  }
+
+  void _showBatchSummary() {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('✅ Selesai Batch (${widget.barcode ?? ''})'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Total foto: $_photoCount'),
+            const Gap(8),
+            Wrap(
+              spacing: 4,
+              runSpacing: 4,
+              children: _photoPaths.map((path) {
+                return Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(4),
+                    image: DecorationImage(
+                      image: FileImage(File(path)),
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showSuccess(ScanEntry entry) {
@@ -327,12 +439,46 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     return Scaffold(
       backgroundColor: AppTheme.bg,
       appBar: AppBar(
-        title: const Text('Ambil Foto'),
+        title: widget.batchMode
+            ? Text('Batch: ${widget.barcode ?? 'Foto'} (${_photoCount})')
+            : const Text('Ambil Foto'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context, _photoCount),
+          onPressed: () {
+            // Jika batch mode dan ada foto yang diambil, tanyakan konfirmasi
+            if (widget.batchMode && _photoCount > 0) {
+              showDialog(
+                context: context,
+                builder: (_) => AlertDialog(
+                  title: const Text('Keluar Batch?'),
+                  content: Text('${_photoCount} foto sudah diambil. Yakin keluar?'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Lanjutkan'),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
+                      },
+                      child: const Text('Keluar'),
+                    ),
+                  ],
+                ),
+              );
+            } else {
+              Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
+            }
+          },
         ),
         actions: [
+          if (widget.batchMode && _photoCount > 0)
+            IconButton(
+              icon: const Icon(Icons.done_all, color: Colors.green),
+              onPressed: _finishBatch,
+              tooltip: 'Selesai Batch',
+            ),
           IconButton(
             onPressed: _openWatermarkSettings,
             icon: Stack(
@@ -375,22 +521,75 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                     width: 2,
                   ),
                 ),
-                child: const Icon(Icons.camera_alt,
-                    size: 52, color: AppTheme.accentOrange),
+                child: widget.batchMode
+                    ? Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          const Icon(Icons.camera_alt,
+                              size: 52, color: AppTheme.accentOrange),
+                          if (_photoCount > 0)
+                            Positioned(
+                              bottom: 4,
+                              right: 4,
+                              child: Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: const BoxDecoration(
+                                  color: AppTheme.accentOrange,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Text(
+                                  '$_photoCount',
+                                  style: const TextStyle(
+                                    color: Colors.black,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      )
+                    : const Icon(Icons.camera_alt,
+                        size: 52, color: AppTheme.accentOrange),
               ).animate().scale(duration: 400.ms, curve: Curves.elasticOut),
               const Gap(24),
               Text(
-                _photoCount == 0
-                    ? 'Siap Ambil Foto'
-                    : '$_photoCount foto tersimpan',
+                widget.batchMode
+                    ? 'Ambil Foto Batch'
+                    : 'Siap Ambil Foto',
                 style: Theme.of(context).textTheme.titleLarge,
               ).animate().fadeIn(delay: 100.ms),
               const Gap(8),
               Text(
-                'Foto otomatis disertai timestamp & watermark',
+                widget.batchMode
+                    ? '${_photoCount} foto diambil untuk ${widget.barcode ?? 'tanpa barcode'}'
+                    : 'Foto otomatis disertai timestamp & watermark',
                 style: Theme.of(context).textTheme.bodyMedium,
                 textAlign: TextAlign.center,
               ).animate().fadeIn(delay: 200.ms),
+              if (widget.batchMode && _photoCount > 0) ...[
+                const Gap(16),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: _photoPaths.map((path) {
+                      return Container(
+                        margin: const EdgeInsets.only(right: 8),
+                        width: 60,
+                        height: 60,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          image: DecorationImage(
+                            image: FileImage(File(path)),
+                            fit: BoxFit.cover,
+                          ),
+                          border: Border.all(color: Colors.grey.shade700),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ],
               const Gap(48),
               SizedBox(
                 width: double.infinity,
@@ -404,7 +603,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                               color: Colors.black, strokeWidth: 2))
                       : const Icon(Icons.camera_alt, size: 22),
                   label:
-                      Text(_isSaving ? 'Menyimpan...' : 'Ambil Foto Kamera'),
+                      Text(_isSaving ? 'Menyimpan...' : 'Ambil Foto'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppTheme.accentOrange,
                     foregroundColor: Colors.black,
@@ -430,6 +629,24 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                   ),
                 ),
               ).animate().fadeIn(delay: 300.ms),
+              if (widget.batchMode) ...[
+                const Gap(16),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _photoCount == 0 ? null : _finishBatch,
+                    icon: const Icon(Icons.done_all, size: 20),
+                    label: Text('Selesai Batch (${_photoCount} foto)'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green.shade700,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      textStyle: const TextStyle(
+                          fontWeight: FontWeight.w600, fontSize: 15),
+                    ),
+                  ),
+                ).animate().fadeIn(delay: 350.ms),
+              ],
               const Gap(32),
               Container(
                 padding:
@@ -439,14 +656,16 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(color: AppTheme.border),
                 ),
-                child: const Row(
+                child: Row(
                   children: [
                     Icon(Icons.info_outline,
                         size: 16, color: AppTheme.accentBlue),
                     Gap(10),
                     Expanded(
                       child: Text(
-                        'Setiap foto otomatis dicatat: waktu & watermark',
+                        widget.batchMode
+                            ? 'Ambil banyak foto untuk satu barcode. Tekan "Selesai Batch" jika sudah.'
+                            : 'Setiap foto otomatis dicatat: waktu & watermark',
                         style: TextStyle(
                             color: AppTheme.textSecondary, fontSize: 12),
                       ),
