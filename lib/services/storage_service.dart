@@ -1,5 +1,5 @@
 // ============================================================
-// lib/services/storage_service.dart (FINAL - dengan migrateFromJson)
+// lib/services/storage_service.dart (FIXED - savePhoto naming)
 // ============================================================
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -88,9 +88,17 @@ class StorageService {
       if (!await photosDir.exists()) {
         await photosDir.create(recursive: true);
       }
-      final fileName = name != null
-          ? '${DateTime.now().millisecondsSinceEpoch}_$name.jpg'
-          : '${DateTime.now().millisecondsSinceEpoch}.jpg';
+
+      // ✅ Perbaikan nama file: jika name diberikan, langsung gunakan name.jpg
+      // tanpa tambahan timestamp di depan.
+      String fileName;
+      if (name != null && name.isNotEmpty) {
+        // Jika name sudah berakhiran .jpg, biarkan; jika tidak tambahkan .jpg
+        fileName = name.endsWith('.jpg') ? name : '$name.jpg';
+      } else {
+        fileName = '${DateTime.now().millisecondsSinceEpoch}.jpg';
+      }
+
       final destPath = '${photosDir.path}/$fileName';
       await source.copy(destPath);
       if (sourcePath != destPath && await source.exists()) {
