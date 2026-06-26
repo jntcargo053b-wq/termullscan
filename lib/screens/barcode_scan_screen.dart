@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/barcode_scan_screen.dart (LENGKAP)
+// lib/screens/barcode_scan_screen.dart (DENGAN BATCH MODE)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -21,6 +21,7 @@ import '../watermark/watermark_settings.dart';
 import '../utils/image_compressor.dart';
 import '../utils/file_helper.dart';
 import 'watermark_settings_sheet.dart';
+import 'photo_scan_screen.dart';
 
 class BarcodeScanScreen extends StatefulWidget {
   const BarcodeScanScreen({super.key});
@@ -39,6 +40,12 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   bool _processingScan = false;
   bool _sheetOpen = false;
   bool _resumeScheduled = false;
+  bool _isTakingMultiple = false;
+
+  // BATCH MODE STATE
+  String? _activeBarcode;
+  int _batchPhotoCount = 0;
+  bool _batchMode = true; // default true, bisa di-toggle
 
   final StorageService _storage = StorageService();
   final LocationService _loc = LocationService();
@@ -75,7 +82,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   }
 
   Future<void> _resumeScanning() async {
-    if (_resumeScheduled || _processingScan || _isSaving) return;
+    if (_resumeScheduled || _processingScan || _isSaving || _isTakingMultiple) return;
     _resumeScheduled = true;
     await _scannerController.start();
     if (mounted) {
@@ -102,7 +109,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   }
 
   Future<void> _onDetect(BarcodeCapture capture) async {
-    if (!_scanning || _isSaving || _processingScan) return;
+    if (!_scanning || _isSaving || _processingScan || _isTakingMultiple) return;
 
     _processingScan = true;
 
@@ -131,11 +138,13 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     setState(() {
       _scanning = false;
       _lastCode = code;
+      _activeBarcode = code;
     });
 
     try {
       HapticFeedback.mediumImpact();
 
+      // Simpan barcode sebagai entri terpisah (tanpa foto)
       final entry = ScanEntry(
         id: _storage.generateId(),
         type: ScanType.barcode,
@@ -145,37 +154,49 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         latitude: null,
         longitude: null,
         locationName: null,
+        photoPaths: null,
       );
       await _storage.add(entry);
 
       if (!mounted) return;
       setState(() => _scanCount++);
 
+      // Hentikan scanner
+      await _scannerController.stop();
+
+      // Buka PhotoScanScreen dengan mode batch
       if (mounted) {
-        await _scannerController.stop();
-        try {
-          await _takePhotoAndShow(entry);
-        } catch (e) {
-          debugPrint('Error _takePhotoAndShow: $e');
-          if (mounted) _resumeScanning();
+        final result = await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => PhotoScanScreen(
+              barcode: code,
+              batchMode: _batchMode,
+              entryId: entry.id,
+            ),
+          ),
+        );
+        // Jika kembali dari PhotoScanScreen, refresh count
+        if (result != null) {
+          _batchPhotoCount = result['count'] ?? 0;
         }
+        _activeBarcode = null;
+        _resumeScanning();
       }
     } catch (e) {
       debugPrint('Error _onDetect: $e');
       if (mounted) _resumeScanning();
     } finally {
       _processingScan = false;
-      if (mounted && !_scanning && !_isSaving && !_sheetOpen && !_resumeScheduled) {
-        Future.delayed(
-          const Duration(milliseconds: 300),
-          () {
-            if (mounted) _resumeScanning();
-          },
-        );
+      if (mounted && !_scanning && !_isSaving && !_sheetOpen && !_resumeScheduled && !_isTakingMultiple) {
+        Future.delayed(const Duration(milliseconds: 300), () {
+          if (mounted) _resumeScanning();
+        });
       }
     }
   }
 
+  // ─── MANUAL INPUT ──────────────────────────────────────────
   void _showManualInput() {
     final controller = TextEditingController();
     showModalBottomSheet(
@@ -289,11 +310,12 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   }
 
   Future<void> _processManualCode(String code) async {
-    if (_isSaving) return;
+    if (_isSaving || _isTakingMultiple) return;
 
     setState(() {
       _scanning = false;
       _lastCode = code;
+      _activeBarcode = code;
     });
 
     try {
@@ -308,6 +330,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         latitude: null,
         longitude: null,
         locationName: null,
+        photoPaths: null,
       );
       await _storage.add(entry);
 
@@ -316,232 +339,25 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
 
       if (mounted) {
         await _scannerController.stop();
-        try {
-          await _takePhotoAndShow(entry);
-        } catch (e) {
-          debugPrint('Error _takePhotoAndShow: $e');
-          if (mounted) _resumeScanning();
+        final result = await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => PhotoScanScreen(
+              barcode: code,
+              batchMode: _batchMode,
+              entryId: entry.id,
+            ),
+          ),
+        );
+        if (result != null) {
+          _batchPhotoCount = result['count'] ?? 0;
         }
+        _activeBarcode = null;
+        _resumeScanning();
       }
     } catch (e) {
       debugPrint('Error _processManualCode: $e');
       if (mounted) _resumeScanning();
-    }
-  }
-
-  Future<void> _takePhotoAndShow(ScanEntry entry) async {
-    if (_sheetOpen) {
-      debugPrint('⚠️ Bottom sheet already open, skipping');
-      return;
-    }
-    _sheetOpen = true;
-
-    final XFile? file;
-    try {
-      file = await _picker.pickImage(
-        source: ImageSource.camera,
-        maxWidth: AppConfig.maxWidth,
-        imageQuality: AppConfig.imageQuality,
-      );
-    } catch (e) {
-      debugPrint('Error opening camera: $e');
-      _sheetOpen = false;
-      if (mounted) _resumeScanning();
-      return;
-    }
-
-    if (file == null) {
-      _sheetOpen = false;
-      if (mounted) _resumeScanning();
-      return;
-    }
-
-    // Kompresi adaptif
-    String compressedPath = await ImageCompressor.compressIfNeeded(file.path);
-
-    if (mounted) setState(() => _isSaving = true);
-
-    String? wmPath;
-    try {
-      await _wmSettings.load();
-
-      final updatedEntry = entry.copyWith(
-        latitude: null,
-        longitude: null,
-        locationName: null,
-      );
-      await _storage.update(updatedEntry);
-
-      final stateNotifier = ValueNotifier<_ResultState>(
-        _ResultState(entry: updatedEntry, photoPath: null, processing: true),
-      );
-
-      showModalBottomSheet(
-        context: context,
-        isDismissible: true,
-        isScrollControlled: true,
-        builder: (_) => _ResultSheet(
-          notifier: stateNotifier,
-          storage: _storage,
-          onSaveToGallery: _saveToGallery,
-        ),
-      ).whenComplete(() {
-        stateNotifier.dispose();
-        _sheetOpen = false;
-        if (mounted) _resumeScanning();
-      });
-
-      wmPath = await _addWatermarkInIsolate(compressedPath, updatedEntry);
-
-      final savedPhotoPath = await _storage.savePhoto(wmPath, name: entry.value);
-
-      final photoEntry = ScanEntry(
-        id: _storage.generateId(),
-        type: ScanType.photo,
-        value: savedPhotoPath,
-        timestamp: DateTime.now(),
-        latitude: null,
-        longitude: null,
-        locationName: null,
-      );
-      await _storage.add(photoEntry);
-
-      stateNotifier.value = _ResultState(
-        entry: updatedEntry,
-        photoPath: savedPhotoPath,
-        processing: false,
-      );
-    } catch (e) {
-      debugPrint('Error in _takePhotoAndShow: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: Colors.red,
-            content: Text('Gagal memproses: $e'),
-          ),
-        );
-        _resumeScanning();
-      }
-      if (wmPath != null && wmPath != compressedPath) {
-        try { await File(wmPath).delete(); } catch (_) {}
-      }
-    } finally {
-      if (mounted) setState(() => _isSaving = false);
-
-      // ✅ HANYA hapus file jika temporary (AMAN)
-      if (compressedPath != file.path &&
-          await FileHelper.isTemporaryFile(compressedPath)) {
-        try { await File(compressedPath).delete(); } catch (_) {}
-      }
-
-      if (file != null &&
-          await FileHelper.isTemporaryFile(file.path)) {
-        try { await File(file.path).delete(); } catch (_) {}
-      }
-    }
-  }
-
-  Future<String> _addWatermarkInIsolate(String imagePath, ScanEntry entry) async {
-    await _wmSettings.load();
-    final outputPath =
-        '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.png';
-
-    debugPrint('🔍 ===== ADD WATERMARK IN ISOLATE =====');
-    debugPrint('  Style: ${_wmSettings.style.name}');
-    debugPrint('  Position: ${_wmSettings.position.name}');
-    debugPrint('  FontSize: ${_wmSettings.fontSize}');
-    debugPrint('  FontFamily: ${_wmSettings.fontFamily}');
-    debugPrint('=======================================');
-
-    final result = await WatermarkRenderer.render(
-      imagePath: imagePath,
-      outputPath: outputPath,
-      settings: _wmSettings,
-      entry: entry,
-    );
-
-    if (result == null) throw Exception('Watermark isolate gagal');
-
-    if (result != imagePath) {
-      final file = File(imagePath);
-      try {
-        final parentPath = file.parent.path.toLowerCase();
-        if (parentPath.contains('cache') ||
-            parentPath.contains('tmp') ||
-            parentPath.contains('.cache')) {
-          await file.delete();
-          debugPrint('✅ Cache file deleted: $imagePath');
-        } else {
-          debugPrint('⏭️ Skipped deleting non-cache file: $imagePath');
-        }
-      } catch (e) {
-        debugPrint('⚠️ Error deleting file: $e');
-      }
-    }
-
-    return result;
-  }
-
-  Future<bool> _saveToGallery(String filePath, ScanEntry entry) async {
-    try {
-      final file = File(filePath);
-      if (!await file.exists()) {
-        debugPrint('❌ File not found: $filePath');
-        return false;
-      }
-
-      final granted = await PermissionService.requestGalleryPermission();
-      if (!granted) {
-        debugPrint('❌ Gallery permission denied');
-        if (mounted) {
-          final shouldOpenSettings = await showDialog<bool>(
-            context: context,
-            builder: (_) => AlertDialog(
-              title: const Text('Izin Diperlukan'),
-              content: const Text(
-                'Aplikasi memerlukan izin galeri untuk menyimpan foto. '
-                'Silakan berikan izin di pengaturan aplikasi.'
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text('Batal'),
-                ),
-                TextButton(
-                  onPressed: () => Navigator.pop(context, true),
-                  child: const Text('Buka Pengaturan'),
-                ),
-              ],
-            ),
-          );
-          if (shouldOpenSettings == true) {
-            await openAppSettings();
-          }
-        }
-        return false;
-      }
-
-      final filename = 'scan_${DateTime.now().millisecondsSinceEpoch}.jpg';
-
-      final result = await SaverGallery.saveFile(
-        file: filePath,
-        name: filename,
-        androidRelativePath: 'Pictures/TERMULScan',
-        androidExistNotSave: false,
-      );
-
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      if (result.isSuccess) {
-        debugPrint('✅ Foto tersimpan ke galeri: $filename');
-        return true;
-      } else {
-        debugPrint('❌ Gagal simpan: ${result.errorMessage}');
-        return false;
-      }
-    } catch (e) {
-      debugPrint('❌ Error _saveToGallery: $e');
-      return false;
     }
   }
 
@@ -583,9 +399,61 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
             controller: _scannerController,
             onDetect: _onDetect,
           ),
+          // Indikator batch mode & barcode aktif
+          if (_activeBarcode != null)
+            Positioned(
+              top: 12,
+              left: 0,
+              right: 0,
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 20),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.75),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.amber.withOpacity(0.4)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.qr_code, color: Colors.amber, size: 18),
+                    const Gap(8),
+                    Expanded(
+                      child: Text(
+                        '$_activeBarcode',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const Gap(8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.withOpacity(0.2),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        '$_batchPhotoCount foto',
+                        style: const TextStyle(
+                          color: Colors.amber,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           if (_settingsLoaded &&
               _wmSettings.operatorName.isNotEmpty &&
-              !_isSaving)
+              !_isSaving &&
+              !_isTakingMultiple &&
+              _activeBarcode == null)
             Positioned(
               top: 12,
               left: 0,
@@ -620,31 +488,51 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
                 ),
               ),
             ),
-          if (!_isSaving)
+          if (!_isSaving && !_isTakingMultiple && _activeBarcode == null)
             Positioned(
               bottom: 40,
               left: 0,
               right: 0,
-              child: Center(
-                child: TextButton.icon(
-                  onPressed: _showManualInput,
-                  icon: const Icon(Icons.keyboard, color: Colors.white70, size: 18),
-                  label: const Text(
-                    'Input Manual',
-                    style: TextStyle(color: Colors.white70, fontSize: 13),
-                  ),
-                  style: TextButton.styleFrom(
-                    backgroundColor: const Color(0x88000000),
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(20),
-                      side: const BorderSide(color: Colors.white24),
+              child: Column(
+                children: [
+                  // Tombol mode batch toggle
+                  TextButton.icon(
+                    onPressed: () {
+                      setState(() {
+                        _batchMode = !_batchMode;
+                      });
+                    },
+                    icon: Icon(
+                      _batchMode ? Icons.view_list : Icons.camera_alt,
+                      color: Colors.white70,
+                      size: 16,
+                    ),
+                    label: Text(
+                      _batchMode ? 'Mode: Batch (1 scan → banyak foto)' : 'Mode: Single (1 scan → 1 foto)',
+                      style: const TextStyle(color: Colors.white70, fontSize: 12),
                     ),
                   ),
-                ),
+                  const Gap(8),
+                  TextButton.icon(
+                    onPressed: _showManualInput,
+                    icon: const Icon(Icons.keyboard, color: Colors.white70, size: 18),
+                    label: const Text(
+                      'Input Manual',
+                      style: TextStyle(color: Colors.white70, fontSize: 13),
+                    ),
+                    style: TextButton.styleFrom(
+                      backgroundColor: const Color(0x88000000),
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                        side: const BorderSide(color: Colors.white24),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-          if (_isSaving)
+          if (_isSaving || _isTakingMultiple)
             const ColoredBox(
               color: Color(0x88000000),
               child: Center(
@@ -661,313 +549,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
             ),
         ],
       ),
-    );
-  }
-}
-
-// ── Result State ──────────────────────────────────────────────────────────
-class _ResultState {
-  final ScanEntry entry;
-  final String? photoPath;
-  final bool processing;
-  final bool error;
-  const _ResultState({
-    required this.entry,
-    required this.photoPath,
-    required this.processing,
-    this.error = false,
-  });
-}
-
-// ── Result Sheet ──────────────────────────────────────────────────────────
-class _ResultSheet extends StatefulWidget {
-  final ValueNotifier<_ResultState> notifier;
-  final StorageService storage;
-  final Future<bool> Function(String, ScanEntry) onSaveToGallery;
-  const _ResultSheet({
-    required this.notifier,
-    required this.storage,
-    required this.onSaveToGallery,
-  });
-
-  @override
-  State<_ResultSheet> createState() => _ResultSheetState();
-}
-
-class _ResultSheetState extends State<_ResultSheet> {
-  final TextEditingController _noteController = TextEditingController();
-  bool _isSaved = false;
-  bool _isSaving = false;
-  bool _isEditingNote = false;
-  bool _noteSaved = false;
-
-  bool get _isManual => widget.notifier.value.entry.barcodeFormat == 'MANUAL';
-
-  @override
-  void dispose() {
-    _noteController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<_ResultState>(
-      valueListenable: widget.notifier,
-      builder: (context, state, _) {
-        final entry = state.entry;
-        final photoPath = state.photoPath;
-        return Padding(
-          padding: EdgeInsets.fromLTRB(
-            20, 16, 20,
-            MediaQuery.of(context).viewInsets.bottom + 32,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 40,
-                height: 4,
-                margin: const EdgeInsets.only(bottom: 16),
-                decoration: BoxDecoration(
-                  color: Colors.grey[300],
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              if (_isManual)
-                Container(
-                  margin: const EdgeInsets.only(bottom: 10),
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.amber.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: Colors.amber.withOpacity(0.4)),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.keyboard, color: Colors.amber, size: 13),
-                      Gap(5),
-                      Text('Input Manual',
-                          style: TextStyle(
-                            color: Colors.amber,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                          )),
-                    ],
-                  ),
-                ),
-              if (photoPath != null)
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Image.file(
-                    File(photoPath),
-                    height: 200,
-                    width: double.infinity,
-                    fit: BoxFit.cover,
-                  ),
-                )
-              else if (state.processing)
-                Container(
-                  height: 200,
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[200],
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                        Gap(8),
-                        Text('Memproses foto & ...',
-                            style: TextStyle(color: Colors.grey, fontSize: 12)),
-                      ],
-                    ),
-                  ),
-                )
-              else if (state.error)
-                Container(
-                  height: 80,
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    color: Colors.red.withOpacity(0.08),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Center(
-                    child: Text('Gagal memproses foto',
-                        style: TextStyle(color: Colors.red, fontSize: 12)),
-                  ),
-                ),
-              const Gap(12),
-              Text(
-                entry.value,
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                textAlign: TextAlign.center,
-              ),
-              const Gap(4),
-              Text(
-                DateFormat('dd/MM/yyyy HH:mm:ss').format(entry.timestamp),
-                style: const TextStyle(color: Colors.grey, fontSize: 13),
-              ),
-              const Gap(4),
-              Text(
-                'GPS dinonaktifkan',
-                style: const TextStyle(color: Colors.grey, fontSize: 12),
-              ),
-              const Gap(12),
-              if (!_isEditingNote && !_noteSaved)
-                SizedBox(
-                  width: double.infinity,
-                  child: TextButton.icon(
-                    onPressed: () => setState(() => _isEditingNote = true),
-                    icon: const Icon(Icons.note_add_outlined, size: 18),
-                    label: const Text('Tambah Catatan'),
-                    style: TextButton.styleFrom(
-                      alignment: Alignment.centerLeft,
-                      foregroundColor: Colors.grey,
-                    ),
-                  ),
-                ),
-              if (_isEditingNote)
-                Column(
-                  children: [
-                    TextField(
-                      controller: _noteController,
-                      autofocus: true,
-                      maxLines: 3,
-                      decoration: InputDecoration(
-                        hintText: 'Tulis catatan...',
-                        isDense: true,
-                        contentPadding: const EdgeInsets.all(10),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                    ),
-                    const Gap(8),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () => setState(() {
-                              _isEditingNote = false;
-                              _noteController.clear();
-                            }),
-                            child: const Text('Batal'),
-                          ),
-                        ),
-                        const Gap(8),
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed: () async {
-                              final note = _noteController.text.trim();
-                              if (note.isNotEmpty) {
-                                final updated = entry.copyWith(note: note);
-                                await widget.storage.update(updated);
-                                widget.notifier.value = _ResultState(
-                                  entry: updated,
-                                  photoPath: state.photoPath,
-                                  processing: state.processing,
-                                  error: state.error,
-                                );
-                              }
-                              setState(() {
-                                _isEditingNote = false;
-                                _noteSaved = note.isNotEmpty;
-                              });
-                            },
-                            child: const Text('Simpan Catatan'),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              if (_noteSaved)
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.green.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.green.withOpacity(0.3)),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.check_circle, color: Colors.green, size: 16),
-                      const Gap(8),
-                      Expanded(
-                        child: Text(
-                          _noteController.text,
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                      ),
-                      GestureDetector(
-                        onTap: () => setState(() {
-                          _noteSaved = false;
-                          _isEditingNote = true;
-                        }),
-                        child: const Icon(Icons.edit, size: 16, color: Colors.grey),
-                      ),
-                    ],
-                  ),
-                ),
-              const Gap(12),
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: (_isSaved || _isSaving || photoPath == null)
-                          ? null
-                          : () async {
-                              setState(() => _isSaving = true);
-                              final success = await widget.onSaveToGallery(photoPath!, entry);
-                              setState(() {
-                                _isSaving = false;
-                                _isSaved = success;
-                              });
-                              if (mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(success
-                                        ? '✓ Foto tersimpan ke galeri'
-                                        : 'Gagal menyimpan — cek permission'),
-                                    duration: const Duration(seconds: 2),
-                                  ),
-                                );
-                              }
-                            },
-                      icon: _isSaving
-                          ? const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : Icon(_isSaved ? Icons.check : Icons.save_alt),
-                      label: Text(_isSaving
-                          ? 'Menyimpan...'
-                          : _isSaved ? 'Tersimpan' : 'Simpan'),
-                    ),
-                  ),
-                  const Gap(10),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.qr_code_scanner),
-                      label: const Text('Scan Lagi'),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        );
-      },
     );
   }
 }
