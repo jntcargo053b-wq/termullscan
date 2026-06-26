@@ -154,7 +154,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         latitude: null,
         longitude: null,
         locationName: null,
-        photoPaths: null,
+        
       );
       await _storage.add(entry);
 
