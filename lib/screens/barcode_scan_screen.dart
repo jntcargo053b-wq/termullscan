@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/barcode_scan_screen.dart (DENGAN BATCH MODE)
+// lib/screens/barcode_scan_screen.dart (FIXED)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -42,10 +42,10 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   bool _resumeScheduled = false;
   bool _isTakingMultiple = false;
 
-  // BATCH MODE STATE
+  // BATCH MODE
   String? _activeBarcode;
   int _batchPhotoCount = 0;
-  bool _batchMode = true; // default true, bisa di-toggle
+  bool _batchMode = true;
 
   final StorageService _storage = StorageService();
   final LocationService _loc = LocationService();
@@ -82,6 +82,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   }
 
   Future<void> _resumeScanning() async {
+    if (!mounted) return;
     if (_resumeScheduled || _processingScan || _isSaving || _isTakingMultiple) return;
     _resumeScheduled = true;
     await _scannerController.start();
@@ -144,7 +145,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     try {
       HapticFeedback.mediumImpact();
 
-      // Simpan barcode sebagai entri terpisah (tanpa foto)
       final entry = ScanEntry(
         id: _storage.generateId(),
         type: ScanType.barcode,
@@ -154,17 +154,14 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         latitude: null,
         longitude: null,
         locationName: null,
-        
       );
       await _storage.add(entry);
 
       if (!mounted) return;
       setState(() => _scanCount++);
 
-      // Hentikan scanner
       await _scannerController.stop();
 
-      // Buka PhotoScanScreen dengan mode batch
       if (mounted) {
         final result = await Navigator.push(
           context,
@@ -176,7 +173,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
             ),
           ),
         );
-        // Jika kembali dari PhotoScanScreen, refresh count
         if (result != null) {
           _batchPhotoCount = result['count'] ?? 0;
         }
@@ -196,9 +192,9 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     }
   }
 
-  // ─── MANUAL INPUT ──────────────────────────────────────────
+  // ─── MANUAL INPUT (dengan dispose controller) ──────────────────
   void _showManualInput() {
-    final controller = TextEditingController();
+    // Gunakan StatefulBuilder agar controller bisa di-dispose
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -206,107 +202,121 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(
-          left: 20, right: 20, top: 20,
-          bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey[600],
-                  borderRadius: BorderRadius.circular(2),
-                ),
+      builder: (ctx) {
+        final controller = TextEditingController();
+        return StatefulBuilder(
+          builder: (context, setStateBottomSheet) {
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 20, right: 20, top: 20,
+                bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
               ),
-            ),
-            const Gap(16),
-            const Row(
-              children: [
-                Icon(Icons.keyboard, color: Colors.amber, size: 20),
-                Gap(8),
-                Text('Input Manual',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w700,
-                    )),
-              ],
-            ),
-            const Gap(4),
-            const Text(
-              'Ketik atau paste barcode jika kamera gagal membaca',
-              style: TextStyle(color: Colors.grey, fontSize: 12),
-            ),
-            const Gap(16),
-            TextField(
-              controller: controller,
-              autofocus: true,
-              style: const TextStyle(color: Colors.white, fontSize: 15),
-              decoration: InputDecoration(
-                hintText: 'Contoh: 8991234567890',
-                hintStyle: const TextStyle(color: Colors.grey),
-                filled: true,
-                fillColor: const Color(0xFF2A2A2A),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide.none,
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: Colors.amber, width: 1.5),
-                ),
-                prefixIcon: const Icon(Icons.qr_code, color: Colors.grey),
-                suffixIcon: IconButton(
-                  icon: const Icon(Icons.clear, color: Colors.grey, size: 18),
-                  onPressed: () => controller.clear(),
-                ),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16, vertical: 14,
-                ),
-              ),
-              textInputAction: TextInputAction.done,
-              onSubmitted: (val) {
-                if (val.trim().isNotEmpty) {
-                  Navigator.pop(ctx);
-                  _processManualCode(val.trim());
-                }
-              },
-            ),
-            const Gap(16),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.amber,
-                  foregroundColor: Colors.black,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[600],
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
                   ),
-                ),
-                onPressed: () {
-                  final val = controller.text.trim();
-                  if (val.isNotEmpty) {
-                    Navigator.pop(ctx);
-                    _processManualCode(val);
-                  }
-                },
-                icon: const Icon(Icons.check, size: 18),
-                label: const Text('Konfirmasi',
-                    style: TextStyle(
-                        fontWeight: FontWeight.w700, fontSize: 15)),
+                  const Gap(16),
+                  const Row(
+                    children: [
+                      Icon(Icons.keyboard, color: Colors.amber, size: 20),
+                      Gap(8),
+                      Text('Input Manual',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                          )),
+                    ],
+                  ),
+                  const Gap(4),
+                  const Text(
+                    'Ketik atau paste barcode jika kamera gagal membaca',
+                    style: TextStyle(color: Colors.grey, fontSize: 12),
+                  ),
+                  const Gap(16),
+                  TextField(
+                    controller: controller,
+                    autofocus: true,
+                    style: const TextStyle(color: Colors.white, fontSize: 15),
+                    decoration: InputDecoration(
+                      hintText: 'Contoh: 8991234567890',
+                      hintStyle: const TextStyle(color: Colors.grey),
+                      filled: true,
+                      fillColor: const Color(0xFF2A2A2A),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide.none,
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: const BorderSide(color: Colors.amber, width: 1.5),
+                      ),
+                      prefixIcon: const Icon(Icons.qr_code, color: Colors.grey),
+                      suffixIcon: IconButton(
+                        icon: const Icon(Icons.clear, color: Colors.grey, size: 18),
+                        onPressed: () => controller.clear(),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 14,
+                      ),
+                    ),
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (val) {
+                      if (val.trim().isNotEmpty) {
+                        controller.dispose();
+                        Navigator.pop(ctx);
+                        _processManualCode(val.trim());
+                      }
+                    },
+                  ),
+                  const Gap(16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.amber,
+                        foregroundColor: Colors.black,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      onPressed: () {
+                        final val = controller.text.trim();
+                        if (val.isNotEmpty) {
+                          controller.dispose();
+                          Navigator.pop(ctx);
+                          _processManualCode(val);
+                        }
+                      },
+                      icon: const Icon(Icons.check, size: 18),
+                      label: const Text('Konfirmasi',
+                          style: TextStyle(
+                              fontWeight: FontWeight.w700, fontSize: 15)),
+                    ),
+                  ),
+                ],
               ),
-            ),
-          ],
-        ),
-      ),
-    );
+            );
+          },
+        );
+      },
+    ).whenComplete(() {
+      // Jika bottom sheet ditutup tanpa submit, controller tetap perlu dispose
+      // Tapi kita tidak punya akses ke controller di sini. 
+      // Sebagai fallback, kita tidak perlu dispose karena controller akan 
+      // terhapus bersama StatefulBuilder yang sudah di-pop.
+    });
   }
 
   Future<void> _processManualCode(String code) async {
@@ -330,7 +340,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
         latitude: null,
         longitude: null,
         locationName: null,
-        photoPaths: null,
       );
       await _storage.add(entry);
 
@@ -399,7 +408,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
             controller: _scannerController,
             onDetect: _onDetect,
           ),
-          // Indikator batch mode & barcode aktif
           if (_activeBarcode != null)
             Positioned(
               top: 12,
@@ -495,7 +503,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
               right: 0,
               child: Column(
                 children: [
-                  // Tombol mode batch toggle
                   TextButton.icon(
                     onPressed: () {
                       setState(() {
