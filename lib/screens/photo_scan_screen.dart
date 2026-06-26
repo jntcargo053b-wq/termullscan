@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/photo_scan_screen.dart (FINAL - dengan _isCapturing)
+// lib/screens/photo_scan_screen.dart (AUTO SAVE TO GALLERY)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -9,6 +9,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:gap/gap.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:saver_gallery/saver_gallery.dart';
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
 import '../services/permission_service.dart';
@@ -42,7 +43,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   final WatermarkSettings _wmSettings = WatermarkSettings();
 
   bool _isSaving = false;
-  bool _isCapturing = false; // ✅ tambahan untuk proteksi double tap
+  bool _isCapturing = false;
   int _photoCount = 0;
   bool _cameraGranted = false;
   bool _settingsLoaded = false;
@@ -181,7 +182,46 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     return result ?? imagePath;
   }
 
-  // ─── TAKE PHOTO (dengan proteksi double tap) ──────────────────
+  // ─── SAVE TO GALLERY ──────────────────────────────────────────────────
+  Future<bool> _saveToGallery(String filePath, ScanEntry entry) async {
+    try {
+      final file = File(filePath);
+      if (!await file.exists()) {
+        debugPrint('❌ File not found: $filePath');
+        return false;
+      }
+
+      final granted = await PermissionService.requestGalleryPermission();
+      if (!granted) {
+        debugPrint('❌ Gallery permission denied');
+        return false;
+      }
+
+      final filename = 'scan_${DateTime.now().millisecondsSinceEpoch}.jpg';
+
+      final result = await SaverGallery.saveFile(
+        file: filePath,
+        name: filename,
+        androidRelativePath: 'Pictures/TERMULScan',
+        androidExistNotSave: false,
+      );
+
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      if (result.isSuccess) {
+        debugPrint('✅ Foto tersimpan ke galeri: $filename');
+        return true;
+      } else {
+        debugPrint('❌ Gagal simpan: ${result.errorMessage}');
+        return false;
+      }
+    } catch (e) {
+      debugPrint('❌ Error _saveToGallery: $e');
+      return false;
+    }
+  }
+
+  // ─── TAKE PHOTO ──────────────────────────────────────────────────────
   Future<void> _takePhoto() async {
     if (_isSaving || _isCapturing) return;
 
@@ -223,7 +263,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     await _processPhoto(xfile);
   }
 
-  // ─── PICK FROM GALLERY ──────────────────────────────────────────
   Future<void> _pickFromGallery() async {
     if (_isSaving || _isCapturing) return;
 
@@ -262,7 +301,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     await _processPhoto(xfile);
   }
 
-  // ─── PROCESS PHOTO ──────────────────────────────────────────────
+  // ─── PROCESS PHOTO ──────────────────────────────────────────────────
   Future<void> _processPhoto(XFile xfile) async {
     String? watermarkedPath;
     String compressedPath = xfile.path;
@@ -292,6 +331,18 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         throw Exception('Gagal menyimpan file foto');
       }
 
+      // ✅ SIMPAN OTOMATIS KE GALERI
+      final entry = ScanEntry(
+        id: _storage.generateId(),
+        type: ScanType.photo,
+        value: savedPath,
+        timestamp: timestamp,
+        latitude: null,
+        longitude: null,
+        locationName: null,
+      );
+      await _saveToGallery(savedPath, entry);
+
       _photoPaths.add(savedPath);
 
       setState(() {
@@ -299,15 +350,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       });
 
       if (!widget.batchMode) {
-        final entry = ScanEntry(
-          id: _storage.generateId(),
-          type: ScanType.photo,
-          value: savedPath,
-          timestamp: timestamp,
-          latitude: null,
-          longitude: null,
-          locationName: null,
-        );
         await _storage.add(entry);
 
         _showSuccess(entry);
@@ -356,7 +398,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     }
   }
 
-  // ─── FINISH BATCH ──────────────────────────────────────────────
   Future<void> _finishBatch() async {
     if (widget.entryId != null && _photoPaths.isNotEmpty) {
       final barcodeEntry = await _storage.getEntry(widget.entryId!);
