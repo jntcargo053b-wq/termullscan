@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:gap/gap.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import '../services/storage_service.dart';
-import '../services/location_service.dart';
 import '../theme/app_theme.dart';
 import 'barcode_scan_screen.dart';
 import 'photo_scan_screen.dart';
@@ -17,8 +16,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final StorageService _storage = StorageService();
-  final LocationService _loc = LocationService();
-
+ 
   int _scanCount = 0;
 
   @override
