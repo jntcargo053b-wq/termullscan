@@ -1,6 +1,7 @@
 // ============================================================
-// lib/screens/log_screen.dart (FIXED - Share Photo)
+// lib/screens/log_screen.dart (FINAL - with DEBOUNCE 300ms)
 // ============================================================
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:gap/gap.dart';
@@ -40,6 +41,9 @@ class _LogScreenState extends State<LogScreen> {
   final ScrollController _scrollController = ScrollController();
   final DateFormat _dateFormat = DateFormat('dd/MM/yyyy HH:mm:ss');
 
+  // ✅ DEBOUNCE
+  Timer? _debounceTimer;
+
   @override
   void initState() {
     super.initState();
@@ -49,6 +53,7 @@ class _LogScreenState extends State<LogScreen> {
 
   @override
   void dispose() {
+    _debounceTimer?.cancel();
     _searchController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -75,7 +80,7 @@ class _LogScreenState extends State<LogScreen> {
 
     try {
       final offset = _currentPage * _pageSize;
-      
+
       final newEntries = await _storage.getEntries(
         limit: _pageSize,
         offset: offset,
@@ -96,7 +101,7 @@ class _LogScreenState extends State<LogScreen> {
 
       _hasMore = _filteredEntries.length < totalCount;
       _currentPage++;
-      
+
       debugPrint('📊 Loaded ${newEntries.length} entries, total: $totalCount, hasMore: $_hasMore');
     } catch (e) {
       debugPrint('Error loading entries: $e');
@@ -111,22 +116,26 @@ class _LogScreenState extends State<LogScreen> {
     }
   }
 
+  // ✅ DEBOUNCE: tunggu 300ms setelah user berhenti mengetik
   void _onSearchChanged(String value) {
-    _searchQuery = value.trim();
-    debugPrint('🔍 Search query: "$_searchQuery"');
-    
-    _currentPage = 0;
-    _filteredEntries.clear();
-    _hasMore = true;
-    _loadEntries(refresh: true);
-    
-    if (_isSelectionMode) _toggleSelectionMode();
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 300), () {
+      _searchQuery = value.trim();
+      debugPrint('🔍 Search query: "$_searchQuery"');
+
+      _currentPage = 0;
+      _filteredEntries.clear();
+      _hasMore = true;
+      _loadEntries(refresh: true);
+
+      if (_isSelectionMode) _toggleSelectionMode();
+    });
   }
 
   void _setFilterPeriod(String period) {
     setState(() => _filterPeriod = period);
     debugPrint('📅 Filter period: $period');
-    
+
     _currentPage = 0;
     _filteredEntries.clear();
     _hasMore = true;
@@ -204,7 +213,6 @@ class _LogScreenState extends State<LogScreen> {
     }
 
     try {
-      // ✅ FIX: Gunakan non-constant untuk snackbar
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Menyiapkan ${files.length} foto untuk dibagikan...'),
@@ -228,7 +236,6 @@ class _LogScreenState extends State<LogScreen> {
 
       _toggleSelectionMode();
 
-      // ✅ FIX: Gunakan SnackBar biasa (bukan const)
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('✅ Berhasil share ${files.length} foto'),
@@ -397,7 +404,6 @@ class _LogScreenState extends State<LogScreen> {
             padding: const EdgeInsets.all(12),
             child: Column(
               children: [
-                // Search Field
                 TextField(
                   controller: _searchController,
                   onChanged: _onSearchChanged,
@@ -425,7 +431,6 @@ class _LogScreenState extends State<LogScreen> {
                   ),
                 ),
                 const Gap(8),
-                // Filter Chips
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
