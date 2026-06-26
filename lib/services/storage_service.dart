@@ -35,12 +35,10 @@ class StorageService {
 
   // ─── QUERY ────────────────────────────────────────────────────
 
-  /// Load semua data (limit 10000 untuk keamanan)
   Future<List<ScanEntry>> loadAll() async {
     return await _db.getAll();
   }
 
-  /// Query dengan pagination dan filter
   Future<List<ScanEntry>> getEntries({
     int limit = 20,
     int offset = 0,
@@ -69,7 +67,7 @@ class StorageService {
     return await _db.getEntry(id);
   }
 
-  // ─── MIGRASI DARI JSON ──────────────────────────────────────
+  // ─── MIGRASI ──────────────────────────────────────────────────
 
   Future<void> migrateFromJson(List<ScanEntry> entries) async {
     await _db.migrateFromJson(entries);
@@ -89,8 +87,7 @@ class StorageService {
         await photosDir.create(recursive: true);
       }
 
-      // ✅ Perbaikan nama file: jika name diberikan, langsung gunakan name.jpg
-      // tanpa tambahan timestamp di depan.
+      // ✅ Jika name diberikan, gunakan langsung tanpa timestamp
       String fileName;
       if (name != null && name.isNotEmpty) {
         // Jika name sudah berakhiran .jpg, biarkan; jika tidak tambahkan .jpg
