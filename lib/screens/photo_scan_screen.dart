@@ -1,3 +1,6 @@
+// ============================================================
+// lib/screens/photo_scan_screen.dart (FINAL)
+// ============================================================
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -123,9 +126,16 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     await _wmSettings.load();
 
     final barcodeValue = widget.barcode ?? 'PHOTO';
-    final fileName = widget.barcode != null
-        ? '${widget.barcode}_$photoIndex'
-        : 'photo_$photoIndex';
+    String fileName;
+    if (widget.barcode != null) {
+      if (photoIndex == 1) {
+        fileName = widget.barcode!;
+      } else {
+        fileName = '${widget.barcode}${photoIndex.toString().padLeft(3, '0')}';
+      }
+    } else {
+      fileName = 'photo_$photoIndex';
+    }
 
     final outputPath =
         '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.png';
@@ -147,6 +157,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     debugPrint('  FontSize: ${_wmSettings.fontSize}');
     debugPrint('  FontFamily: ${_wmSettings.fontFamily}');
     debugPrint('  Barcode: $barcodeValue');
+    debugPrint('  FileName: $fileName');
     debugPrint('======================================');
 
     final result = await WatermarkRenderer.render(
@@ -176,7 +187,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     return result ?? imagePath;
   }
 
-  // ─── SAVE TO GALLERY ──────────────────────────────────────────────────
+  // ─── SAVE TO GALLERY (with actual file name) ──────────────────────────────────
   Future<bool> _saveToGallery(String filePath, ScanEntry entry) async {
     try {
       final file = File(filePath);
@@ -191,7 +202,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         return false;
       }
 
-      final filename = 'scan_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      // ✅ Gunakan nama file asli (barcode.jpg atau barcode002.jpg)
+      final String filename = file.path.split('/').last;
 
       final result = await SaverGallery.saveFile(
         file: filePath,
@@ -258,7 +270,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     await _processPhoto(xfile);
   }
 
-  // ─── PICK FROM GALLERY ──────────────────────────────────────────────
   Future<void> _pickFromGallery() async {
     if (_isSaving || _isCapturing) return;
 
@@ -320,15 +331,22 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         throw Exception('File watermark tidak ditemukan');
       }
 
-      final name = widget.barcode != null
-          ? '${widget.barcode}_$photoIndex'
-          : null;
+      // Nama file sesuai format: ABC.jpg, ABC002.jpg, ...
+      String? name;
+      if (widget.barcode != null) {
+        if (photoIndex == 1) {
+          name = widget.barcode!;
+        } else {
+          name = '${widget.barcode}${photoIndex.toString().padLeft(3, '0')}';
+        }
+      }
+
       final savedPath = await _storage.savePhoto(watermarkedPath, name: name);
       if (savedPath.isEmpty) {
         throw Exception('Gagal menyimpan file foto');
       }
 
-      // Simpan otomatis ke galeri
+      // Simpan otomatis ke galeri dengan nama asli
       final entry = ScanEntry(
         id: _storage.generateId(),
         type: ScanType.photo,
