@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/photo_scan_screen.dart (DENGAN BATCH MODE)
+// lib/screens/photo_scan_screen.dart (FINAL - dengan _isCapturing)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -21,9 +21,9 @@ import '../utils/file_helper.dart';
 import 'watermark_settings_sheet.dart';
 
 class PhotoScanScreen extends StatefulWidget {
-  final String? barcode; // barcode yang sedang aktif
-  final bool batchMode; // apakah mode batch
-  final String? entryId; // ID entry barcode yang sudah disimpan
+  final String? barcode;
+  final bool batchMode;
+  final String? entryId;
 
   const PhotoScanScreen({
     super.key,
@@ -42,11 +42,11 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   final WatermarkSettings _wmSettings = WatermarkSettings();
 
   bool _isSaving = false;
+  bool _isCapturing = false; // ✅ tambahan untuk proteksi double tap
   int _photoCount = 0;
   bool _cameraGranted = false;
   bool _settingsLoaded = false;
 
-  // Daftar path foto yang berhasil diambil (untuk batch)
   List<String> _photoPaths = [];
 
   Timer? _debounceTimer;
@@ -127,7 +127,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   Future<String> _applyWatermark(String imagePath, DateTime timestamp, int photoIndex) async {
     await _wmSettings.load();
 
-    // Tentukan nama barcode untuk watermark (gunakan barcode jika ada, atau "PHOTO")
     final barcodeValue = widget.barcode ?? 'PHOTO';
     final fileName = widget.barcode != null
         ? '${widget.barcode}_$photoIndex'
@@ -182,15 +181,19 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     return result ?? imagePath;
   }
 
+  // ─── TAKE PHOTO (dengan proteksi double tap) ──────────────────
   Future<void> _takePhoto() async {
-    if (_isSaving) return;
+    if (_isSaving || _isCapturing) return;
 
     _debounceTimer?.cancel();
     _debounceTimer = Timer(const Duration(milliseconds: 500), () {});
 
     if (!await _ensureCameraPermission()) return;
 
-    if (mounted) setState(() => _isSaving = true);
+    setState(() {
+      _isSaving = true;
+      _isCapturing = true;
+    });
 
     final XFile? xfile;
     try {
@@ -202,25 +205,35 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       );
     } catch (e) {
       _showError('Gagal membuka kamera');
-      if (mounted) setState(() => _isSaving = false);
+      setState(() {
+        _isSaving = false;
+        _isCapturing = false;
+      });
       return;
     }
 
     if (xfile == null) {
-      if (mounted) setState(() => _isSaving = false);
+      setState(() {
+        _isSaving = false;
+        _isCapturing = false;
+      });
       return;
     }
 
     await _processPhoto(xfile);
   }
 
+  // ─── PICK FROM GALLERY ──────────────────────────────────────────
   Future<void> _pickFromGallery() async {
-    if (_isSaving) return;
+    if (_isSaving || _isCapturing) return;
 
     _debounceTimer?.cancel();
     _debounceTimer = Timer(const Duration(milliseconds: 500), () {});
 
-    if (mounted) setState(() => _isSaving = true);
+    setState(() {
+      _isSaving = true;
+      _isCapturing = true;
+    });
 
     final XFile? xfile;
     try {
@@ -231,18 +244,25 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       );
     } catch (e) {
       _showError('Gagal membuka galeri');
-      if (mounted) setState(() => _isSaving = false);
+      setState(() {
+        _isSaving = false;
+        _isCapturing = false;
+      });
       return;
     }
 
     if (xfile == null) {
-      if (mounted) setState(() => _isSaving = false);
+      setState(() {
+        _isSaving = false;
+        _isCapturing = false;
+      });
       return;
     }
 
     await _processPhoto(xfile);
   }
 
+  // ─── PROCESS PHOTO ──────────────────────────────────────────────
   Future<void> _processPhoto(XFile xfile) async {
     String? watermarkedPath;
     String compressedPath = xfile.path;
@@ -264,7 +284,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         throw Exception('File watermark tidak ditemukan');
       }
 
-      // Simpan foto dengan nama yang mengandung barcode (jika ada)
       final name = widget.barcode != null
           ? '${widget.barcode}_$photoIndex'
           : null;
@@ -273,16 +292,13 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         throw Exception('Gagal menyimpan file foto');
       }
 
-      // Tambahkan ke daftar photoPaths
       _photoPaths.add(savedPath);
 
       setState(() {
         _photoCount++;
       });
 
-      // Jika bukan batch mode, langsung selesai
       if (!widget.batchMode) {
-        // Buat entri foto
         final entry = ScanEntry(
           id: _storage.generateId(),
           type: ScanType.photo,
@@ -299,7 +315,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         return;
       }
 
-      // Jika batch mode, update entri barcode dengan photoPaths
       if (widget.entryId != null) {
         final barcodeEntry = await _storage.getEntry(widget.entryId!);
         if (barcodeEntry != null) {
@@ -308,7 +323,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         }
       }
 
-      // Tampilkan snackbar sukses
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -318,8 +332,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
           ),
         );
       }
-
-      // Tetap di layar untuk ambil foto lagi (batch mode)
     } catch (e, stack) {
       debugPrint('Error processing photo: $e\n$stack');
       _showError('Gagal memproses foto: ${e.toString().split(':').last}');
@@ -336,13 +348,16 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       }
 
       if (mounted) {
-        setState(() => _isSaving = false);
+        setState(() {
+          _isSaving = false;
+          _isCapturing = false;
+        });
       }
     }
   }
 
+  // ─── FINISH BATCH ──────────────────────────────────────────────
   Future<void> _finishBatch() async {
-    // Pastikan entri barcode memiliki photoPaths
     if (widget.entryId != null && _photoPaths.isNotEmpty) {
       final barcodeEntry = await _storage.getEntry(widget.entryId!);
       if (barcodeEntry != null) {
@@ -352,7 +367,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     }
 
     if (_photoPaths.isNotEmpty) {
-      // Tampilkan ringkasan
       _showBatchSummary();
     }
 
@@ -445,7 +459,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () {
-            // Jika batch mode dan ada foto yang diambil, tanyakan konfirmasi
             if (widget.batchMode && _photoCount > 0) {
               showDialog(
                 context: context,
@@ -594,16 +607,17 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
-                  onPressed: _isSaving ? null : _takePhoto,
-                  icon: _isSaving
+                  onPressed: (_isSaving || _isCapturing) ? null : _takePhoto,
+                  icon: _isSaving || _isCapturing
                       ? const SizedBox(
                           width: 18,
                           height: 18,
                           child: CircularProgressIndicator(
                               color: Colors.black, strokeWidth: 2))
                       : const Icon(Icons.camera_alt, size: 22),
-                  label:
-                      Text(_isSaving ? 'Menyimpan...' : 'Ambil Foto'),
+                  label: Text(
+                    (_isSaving || _isCapturing) ? 'Menyimpan...' : 'Ambil Foto',
+                  ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppTheme.accentOrange,
                     foregroundColor: Colors.black,
@@ -617,7 +631,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
-                  onPressed: _isSaving ? null : _pickFromGallery,
+                  onPressed: (_isSaving || _isCapturing) ? null : _pickFromGallery,
                   icon: const Icon(Icons.photo_library_outlined, size: 20),
                   label: const Text('Pilih dari Galeri'),
                   style: OutlinedButton.styleFrom(
