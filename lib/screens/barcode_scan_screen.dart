@@ -13,7 +13,6 @@ import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
-import '../services/location_service.dart';
 import '../services/permission_service.dart';
 import '../config/app_config.dart';
 import '../watermark/watermark_renderer.dart';
@@ -48,7 +47,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   bool _batchMode = true;
 
   final StorageService _storage = StorageService();
-  final LocationService _loc = LocationService();
   final ImagePicker _picker = ImagePicker();
   final WatermarkSettings _wmSettings = WatermarkSettings();
   final MobileScannerController _scannerController = MobileScannerController();
