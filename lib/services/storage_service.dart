@@ -1,5 +1,5 @@
 // ============================================================
-// lib/services/storage_service.dart (FIXED - savePhoto naming)
+// lib/services/storage_service.dart (FINAL - dengan proteksi overwrite)
 // ============================================================
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -88,10 +88,21 @@ class StorageService {
       }
 
       // ✅ Jika name diberikan, gunakan langsung tanpa timestamp
+      // ✅ Cegah overwrite file dengan menambahkan suffix increment
       String fileName;
       if (name != null && name.isNotEmpty) {
-        // Jika name sudah berakhiran .jpg, biarkan; jika tidak tambahkan .jpg
-        fileName = name.endsWith('.jpg') ? name : '$name.jpg';
+        // Pastikan ekstensi .jpg
+        String baseName = name.endsWith('.jpg') ? name.substring(0, name.length - 4) : name;
+        String ext = '.jpg';
+
+        // Periksa apakah file sudah ada, tambahkan counter jika perlu
+        int counter = 0;
+        String candidate = '$baseName$ext';
+        while (await File('${photosDir.path}/$candidate').exists()) {
+          counter++;
+          candidate = '${baseName}_$counter$ext';
+        }
+        fileName = candidate;
       } else {
         fileName = '${DateTime.now().millisecondsSinceEpoch}.jpg';
       }
