@@ -12,6 +12,7 @@ class ScanEntry {
   final double? longitude;
   final String? locationName;
   final String? note;
+  final List<String>? photoPaths; // ✅ multiple photos support
 
   ScanEntry({
     required this.id,
@@ -23,7 +24,12 @@ class ScanEntry {
     this.longitude,
     this.locationName,
     this.note,
+    this.photoPaths,
   });
+
+  bool get hasMultiplePhotos => photoPaths != null && photoPaths!.length > 1;
+
+  String get firstPhotoPath => photoPaths?.isNotEmpty == true ? photoPaths!.first : value;
 
   String get timestampFormatted =>
       DateFormat('dd-MM-yyyy HH:mm:ss').format(timestamp);
@@ -39,7 +45,7 @@ class ScanEntry {
   bool get isBarcode => type == ScanType.barcode;
   bool get isPhoto => type == ScanType.photo;
 
-  // ─── JSON (legacy) ──────────────────────────────────────────────
+  // ─── JSON ──────────────────────────────────────────────
   Map<String, dynamic> toJson() => {
     'id': id,
     'type': type.name,
@@ -50,6 +56,7 @@ class ScanEntry {
     'longitude': longitude,
     'locationName': locationName,
     'note': note,
+    'photoPaths': photoPaths,
   };
 
   factory ScanEntry.fromJson(Map<String, dynamic> j) => ScanEntry(
@@ -68,9 +75,10 @@ class ScanEntry {
     longitude: (j['longitude'] as num?)?.toDouble(),
     locationName: j['locationName'],
     note: j['note'],
+    photoPaths: (j['photoPaths'] as List?)?.cast<String>(),
   );
 
-  // ─── SQLite (toMap / fromMap) ──────────────────────────────────
+  // ─── SQLite ──────────────────────────────────────────────
   Map<String, dynamic> toMap() => {
     'id': id,
     'type': type.name,
@@ -81,6 +89,7 @@ class ScanEntry {
     'longitude': longitude,
     'locationName': locationName,
     'note': note,
+    'photoPaths': photoPaths?.join(','),
   };
 
   factory ScanEntry.fromMap(Map<String, dynamic> map) => ScanEntry(
@@ -93,15 +102,17 @@ class ScanEntry {
     longitude: map['longitude'] as double?,
     locationName: map['locationName'],
     note: map['note'],
+    photoPaths: (map['photoPaths'] as String?)?.split(',').where((s) => s.isNotEmpty).toList(),
   );
 
-  // ─── Copy ───────────────────────────────────────────────────────
+  // ─── Copy ────────────────────────────────────────────────
   ScanEntry copyWith({
     String? value,
     double? latitude,
     double? longitude,
     String? locationName,
     String? note,
+    List<String>? photoPaths,
   }) => ScanEntry(
     id: id,
     type: type,
@@ -112,5 +123,6 @@ class ScanEntry {
     longitude: longitude ?? this.longitude,
     locationName: locationName ?? this.locationName,
     note: note ?? this.note,
+    photoPaths: photoPaths ?? this.photoPaths,
   );
 }
