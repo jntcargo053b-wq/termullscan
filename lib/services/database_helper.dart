@@ -43,7 +43,8 @@ class DatabaseHelper {
         latitude REAL,
         longitude REAL,
         locationName TEXT,
-        note TEXT
+        note TEXT,
+        photoPaths TEXT
       )
     ''');
     await db.execute('CREATE INDEX idx_value ON scan_entries(value)');
@@ -52,7 +53,10 @@ class DatabaseHelper {
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    // No schema changes in version 2
+    if (oldVersion < 2) {
+      // Tambahkan kolom photoPaths untuk migrasi dari versi 1 ke 2
+      await db.execute('ALTER TABLE scan_entries ADD COLUMN photoPaths TEXT');
+    }
   }
 
   // ─── CRUD ──────────────────────────────────────────
@@ -76,7 +80,7 @@ class DatabaseHelper {
   Future<List<ScanEntry>> getAll() async {
     final db = await database;
     final result = await db.query('scan_entries',
-        orderBy: 'timestamp DESC', limit: 10000); // batas aman
+        orderBy: 'timestamp DESC', limit: 10000);
     return result.map((map) => ScanEntry.fromMap(map)).toList();
   }
 
