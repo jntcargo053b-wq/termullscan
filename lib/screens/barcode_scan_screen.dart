@@ -1,5 +1,7 @@
 // ============================================================
-// lib/screens/barcode_scan_screen.dart (FINAL - fixed permission check)
+// lib/screens/barcode_scan_screen.dart (FINAL)
+// Default mode = Single (1 scan → 1 foto)
+// Batch mode bisa diaktifkan via toggle di UI
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -41,10 +43,10 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   bool _resumeScheduled = false;
   bool _isTakingMultiple = false;
 
-  // BATCH MODE
+  // BATCH MODE - DEFAULT SINGLE (false)
   String? _activeBarcode;
   int _batchPhotoCount = 0;
-  bool _batchMode = true;
+  bool _batchMode = false; // ← ubah default menjadi false (single)
 
   final StorageService _storage = StorageService();
   final ImagePicker _picker = ImagePicker();
@@ -88,7 +90,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       await _scannerController.start();
     } catch (e) {
       debugPrint('⚠️ Resume scanner error: $e');
-      // Jika error karena permission, coba request ulang
       if (e.toString().contains('permission')) {
         await Permission.camera.request();
         try {
@@ -181,7 +182,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
           MaterialPageRoute(
             builder: (_) => PhotoScanScreen(
               barcode: code,
-              batchMode: _batchMode,
+              batchMode: _batchMode, // tergantung mode aktif
               entryId: entry.id,
             ),
           ),
