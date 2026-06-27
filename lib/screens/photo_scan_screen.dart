@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/photo_scan_screen.dart (FINAL - all setState guarded)
+// lib/screens/photo_scan_screen.dart (FINAL - CRITICAL FIX: single mode updates barcode entry)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -187,8 +187,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     return result ?? imagePath;
   }
 
-  // ─── SAVE TO GALLERY ──────────────────────────────────────────────────
-  Future<bool> _saveToGallery(String filePath, ScanEntry entry) async {
+  // ─── SAVE TO GALLERY (optional entry) ──────────────────────────────────
+  Future<bool> _saveToGallery(String filePath, {ScanEntry? entry}) async {
     try {
       final file = File(filePath);
       if (!await file.exists()) {
@@ -310,6 +310,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   }
 
   // ─── PROCESS PHOTO ──────────────────────────────────────────────────
+  // ✅ CRITICAL FIX: Single mode now updates barcode entry's photoPaths,
+  //    no longer creates a separate photo entry.
   Future<void> _processPhoto(XFile xfile) async {
     String? watermarkedPath;
     String compressedPath = xfile.path;
@@ -345,33 +347,10 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         throw Exception('Gagal menyimpan file foto');
       }
 
-      final entry = ScanEntry(
-        id: _storage.generateId(),
-        type: ScanType.photo,
-        value: savedPath,
-        timestamp: timestamp,
-        latitude: null,
-        longitude: null,
-        locationName: null,
-      );
-      await _saveToGallery(savedPath, entry);
-
+      // Tambahkan ke daftar path
       _photoPaths.add(savedPath);
 
-      // Guard setState after async operations
-      if (!mounted) return;
-      setState(() {
-        _photoCount++;
-      });
-
-      if (!widget.batchMode) {
-        await _storage.add(entry);
-
-        _showSuccess(entry);
-        Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
-        return;
-      }
-
+      // ✅ Update barcode entry dengan photoPaths (selalu, baik single maupun batch)
       if (widget.entryId != null) {
         final barcodeEntry = await _storage.getEntry(widget.entryId!);
         if (barcodeEntry != null) {
@@ -380,6 +359,22 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         }
       }
 
+      // Simpan ke galeri
+      await _saveToGallery(savedPath);
+
+      if (!mounted) return;
+      setState(() {
+        _photoCount++;
+      });
+
+      if (!widget.batchMode) {
+        // Single mode: selesai, langsung pop dengan data
+        _showSuccess();
+        Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
+        return;
+      }
+
+      // Batch mode: tampilkan snackbar dan tetap di layar
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -470,13 +465,13 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     );
   }
 
-  void _showSuccess(ScanEntry entry) {
+  void _showSuccess() {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
+      const SnackBar(
         backgroundColor: Colors.green.shade700,
-        duration: const Duration(seconds: 2),
-        content: const Row(
+        duration: Duration(seconds: 2),
+        content: Row(
           children: [
             Icon(Icons.check_circle, color: Colors.white, size: 18),
             Gap(8),
