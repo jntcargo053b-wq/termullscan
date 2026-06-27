@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/log_screen.dart (FINAL - with DEBOUNCE 300ms)
+// lib/screens/log_screen.dart (FINAL - with preview & search fix)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -41,7 +41,6 @@ class _LogScreenState extends State<LogScreen> {
   final ScrollController _scrollController = ScrollController();
   final DateFormat _dateFormat = DateFormat('dd/MM/yyyy HH:mm:ss');
 
-  // ✅ DEBOUNCE
   Timer? _debounceTimer;
 
   @override
@@ -80,7 +79,6 @@ class _LogScreenState extends State<LogScreen> {
 
     try {
       final offset = _currentPage * _pageSize;
-
       final newEntries = await _storage.getEntries(
         limit: _pageSize,
         offset: offset,
@@ -101,8 +99,7 @@ class _LogScreenState extends State<LogScreen> {
 
       _hasMore = _filteredEntries.length < totalCount;
       _currentPage++;
-
-      debugPrint('📊 Loaded ${newEntries.length} entries, total: $totalCount, hasMore: $_hasMore');
+      debugPrint('📊 Loaded ${newEntries.length} entries, total: $totalCount');
     } catch (e) {
       debugPrint('Error loading entries: $e');
       if (refresh) _filteredEntries = [];
@@ -116,26 +113,22 @@ class _LogScreenState extends State<LogScreen> {
     }
   }
 
-  // ✅ DEBOUNCE: tunggu 300ms setelah user berhenti mengetik
+  // ✅ DEBOUNCE SEARCH
   void _onSearchChanged(String value) {
     _debounceTimer?.cancel();
     _debounceTimer = Timer(const Duration(milliseconds: 300), () {
       _searchQuery = value.trim();
       debugPrint('🔍 Search query: "$_searchQuery"');
-
       _currentPage = 0;
       _filteredEntries.clear();
       _hasMore = true;
       _loadEntries(refresh: true);
-
       if (_isSelectionMode) _toggleSelectionMode();
     });
   }
 
   void _setFilterPeriod(String period) {
     setState(() => _filterPeriod = period);
-    debugPrint('📅 Filter period: $period');
-
     _currentPage = 0;
     _filteredEntries.clear();
     _hasMore = true;
@@ -166,7 +159,45 @@ class _LogScreenState extends State<LogScreen> {
     return _selectedIds.length == _filteredEntries.length;
   }
 
-  // ─── SHARE FOTO ────────────────────────────────────────────────
+  // ─── PHOTO PREVIEW ──────────────────────────────────────────────────
+  void _showPhotoPreview(ScanEntry entry, {int initialIndex = 0}) {
+    final List<String> paths = entry.photoPaths ?? [];
+    // Jika tidak ada photoPaths, coba gunakan value sebagai path (single photo)
+    if (paths.isEmpty && entry.type == ScanType.photo && entry.value.isNotEmpty) {
+      paths.add(entry.value);
+    }
+    if (paths.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Tidak ada foto untuk ditampilkan')),
+      );
+      return;
+    }
+
+    // Validasi file exists
+    final validPaths = <String>[];
+    for (final p in paths) {
+      final file = File(p);
+      if (file.existsSync()) validPaths.add(p);
+    }
+    if (validPaths.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('File foto tidak ditemukan')),
+      );
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (_) => _PhotoPreviewDialog(
+        paths: validPaths,
+        initialIndex: initialIndex.clamp(0, validPaths.length - 1),
+        barcode: entry.value,
+        timestamp: entry.timestamp,
+      ),
+    );
+  }
+
+  // ─── SHARE FOTO ──────────────────────────────────────────────────────
   Future<void> _shareSelectedPhotos() async {
     if (_selectedIds.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -194,11 +225,16 @@ class _LogScreenState extends State<LogScreen> {
 
     final List<XFile> files = [];
     for (final entry in selectedEntries) {
-      final file = File(entry.value);
-      if (await file.exists()) {
-        files.add(XFile(file.path));
-      } else {
-        debugPrint('⚠️ File not found: ${entry.value}');
+      // Gunakan photoPaths jika ada, fallback ke value
+      final paths = entry.photoPaths ?? [];
+      if (paths.isNotEmpty) {
+        for (final path in paths) {
+          final file = File(path);
+          if (await file.exists()) files.add(XFile(file.path));
+        }
+      } else if (entry.type == ScanType.photo && entry.value.isNotEmpty) {
+        final file = File(entry.value);
+        if (await file.exists()) files.add(XFile(file.path));
       }
     }
 
@@ -235,7 +271,6 @@ class _LogScreenState extends State<LogScreen> {
       }
 
       _toggleSelectionMode();
-
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('✅ Berhasil share ${files.length} foto'),
@@ -254,7 +289,7 @@ class _LogScreenState extends State<LogScreen> {
     }
   }
 
-  // ─── EXPORT ──────────────────────────────────────────────────────
+  // ─── EXPORT TEXT ────────────────────────────────────────────────────
   Future<void> _exportAndShare() async {
     if (_filteredEntries.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -272,7 +307,7 @@ class _LogScreenState extends State<LogScreen> {
     }
   }
 
-  // ─── DELETE ──────────────────────────────────────────────────────
+  // ─── DELETE ──────────────────────────────────────────────────────────
   Future<void> _deleteEntry(ScanEntry entry) async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -294,11 +329,16 @@ class _LogScreenState extends State<LogScreen> {
     );
     if (confirm == true) {
       await _storage.delete(entry.id);
-      if (entry.type == ScanType.photo && entry.value.isNotEmpty) {
-        try {
-          final file = File(entry.value);
-          if (await file.exists()) await file.delete();
-        } catch (_) {}
+      // Hapus file foto
+      if (entry.type == ScanType.photo) {
+        final paths = entry.photoPaths ?? [];
+        if (paths.isNotEmpty) {
+          for (final path in paths) {
+            try { final f = File(path); if (await f.exists()) await f.delete(); } catch (_) {}
+          }
+        } else if (entry.value.isNotEmpty) {
+          try { final f = File(entry.value); if (await f.exists()) await f.delete(); } catch (_) {}
+        }
       }
       _selectedIds.remove(entry.id);
       _loadEntries(refresh: true);
@@ -328,11 +368,15 @@ class _LogScreenState extends State<LogScreen> {
     if (confirm == true) {
       for (final id in _selectedIds) {
         final entry = _filteredEntries.firstWhere((e) => e.id == id);
-        if (entry.type == ScanType.photo && entry.value.isNotEmpty) {
-          try {
-            final file = File(entry.value);
-            if (await file.exists()) await file.delete();
-          } catch (_) {}
+        if (entry.type == ScanType.photo) {
+          final paths = entry.photoPaths ?? [];
+          if (paths.isNotEmpty) {
+            for (final path in paths) {
+              try { final f = File(path); if (await f.exists()) await f.delete(); } catch (_) {}
+            }
+          } else if (entry.value.isNotEmpty) {
+            try { final f = File(entry.value); if (await f.exists()) await f.delete(); } catch (_) {}
+          }
         }
         await _storage.delete(id);
       }
@@ -399,7 +443,7 @@ class _LogScreenState extends State<LogScreen> {
       ),
       body: Column(
         children: [
-          // ─── Search & Filter ──────────────────────────────────
+          // ─── SEARCH & FILTER ──────────────────────────────────
           Padding(
             padding: const EdgeInsets.all(12),
             child: Column(
@@ -409,7 +453,7 @@ class _LogScreenState extends State<LogScreen> {
                   onChanged: _onSearchChanged,
                   style: const TextStyle(color: Colors.white),
                   decoration: InputDecoration(
-                    hintText: '🔍 Cari barcode atau tanggal (DD/MM/YYYY)...',
+                    hintText: '🔍 Cari barcode, nama file, atau tanggal...',
                     hintStyle: const TextStyle(color: Colors.grey),
                     prefixIcon: const Icon(Icons.search, color: Colors.grey),
                     suffixIcon: _searchController.text.isNotEmpty
@@ -475,7 +519,7 @@ class _LogScreenState extends State<LogScreen> {
               ],
             ),
           ),
-          // ─── List ──────────────────────────────────────────────
+          // ─── LIST ──────────────────────────────────────────────
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
@@ -535,7 +579,7 @@ class _LogScreenState extends State<LogScreen> {
                                       }
                                     });
                                   }
-                                : null,
+                                : () => _showPhotoPreview(entry), // ✅ Preview foto
                             onDelete: () => _deleteEntry(entry),
                             dateFormat: _dateFormat,
                           );
@@ -548,7 +592,7 @@ class _LogScreenState extends State<LogScreen> {
   }
 }
 
-// ── Filter Chip ──────────────────────────────────────
+// ─── Filter Chip ──────────────────────────────────────
 class _FilterChip extends StatelessWidget {
   final String label;
   final bool selected;
@@ -581,7 +625,7 @@ class _FilterChip extends StatelessWidget {
   }
 }
 
-// ── Log Item ────────────────────────────────────────────────
+// ─── Log Item ────────────────────────────────────────────────
 class _LogItem extends StatelessWidget {
   final ScanEntry entry;
   final bool isSelected;
@@ -601,6 +645,7 @@ class _LogItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final isPhoto = entry.type == ScanType.photo;
     final icon = isPhoto ? Icons.photo_camera : Icons.qr_code;
+    final hasPhoto = entry.photoPaths != null && entry.photoPaths!.isNotEmpty;
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -617,7 +662,9 @@ class _LogItem extends StatelessWidget {
         leading: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (onTap != null)
+            if (onTap != null && !isSelectionMode) // jika bukan mode seleksi, kita tampilkan icon foto
+              const SizedBox.shrink(),
+            if (isSelectionMode)
               Padding(
                 padding: const EdgeInsets.only(right: 8),
                 child: Icon(
@@ -632,14 +679,46 @@ class _LogItem extends StatelessWidget {
             ),
           ],
         ),
-        title: Text(
-          entry.value,
-          style: const TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.w600,
-          ),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(
+                entry.value,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (hasPhoto) ...[
+              const Gap(6),
+              Icon(
+                Icons.photo_library,
+                size: 16,
+                color: Colors.amber.shade400,
+              ),
+            ],
+            if (entry.photoPaths != null && entry.photoPaths!.length > 1) ...[
+              const Gap(2),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                decoration: BoxDecoration(
+                  color: Colors.amber.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  '${entry.photoPaths!.length}',
+                  style: const TextStyle(
+                    color: Colors.amber,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ],
         ),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -686,6 +765,244 @@ class _LogItem extends StatelessWidget {
                 ],
               )
             : null,
+      ),
+    );
+  }
+}
+
+// ─── Photo Preview Dialog ──────────────────────────────────────
+class _PhotoPreviewDialog extends StatefulWidget {
+  final List<String> paths;
+  final int initialIndex;
+  final String barcode;
+  final DateTime timestamp;
+
+  const _PhotoPreviewDialog({
+    required this.paths,
+    required this.initialIndex,
+    required this.barcode,
+    required this.timestamp,
+  });
+
+  @override
+  State<_PhotoPreviewDialog> createState() => _PhotoPreviewDialogState();
+}
+
+class _PhotoPreviewDialogState extends State<_PhotoPreviewDialog> {
+  late PageController _pageController;
+  late int _currentIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentIndex = widget.initialIndex;
+    _pageController = PageController(initialPage: _currentIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.black,
+      insetPadding: const EdgeInsets.all(8),
+      child: Column(
+        mainAxisSize: MainAxisSize.max,
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.8),
+              border: Border(
+                bottom: BorderSide(color: Colors.grey.shade800),
+              ),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.barcode,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Text(
+                        DateFormat('dd/MM/yyyy HH:mm:ss').format(widget.timestamp),
+                        style: const TextStyle(
+                          color: Colors.grey,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+          ),
+          // Image
+          Expanded(
+            child: PageView.builder(
+              controller: _pageController,
+              onPageChanged: (index) {
+                setState(() => _currentIndex = index);
+              },
+              itemCount: widget.paths.length,
+              itemBuilder: (context, index) {
+                final path = widget.paths[index];
+                return InteractiveViewer(
+                  panEnabled: true,
+                  scaleEnabled: true,
+                  minScale: 0.5,
+                  maxScale: 3.0,
+                  child: Center(
+                    child: Image.file(
+                      File(path),
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => Container(
+                        color: Colors.grey.shade900,
+                        child: const Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.broken_image, color: Colors.grey, size: 48),
+                              Gap(8),
+                              Text('File tidak ditemukan', style: TextStyle(color: Colors.grey)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          // Footer: counter & navigation
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.8),
+              border: Border(
+                top: BorderSide(color: Colors.grey.shade800),
+              ),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (widget.paths.length > 1) ...[
+                  IconButton(
+                    icon: const Icon(Icons.chevron_left, color: Colors.white),
+                    onPressed: _currentIndex > 0
+                        ? () {
+                            _pageController.previousPage(
+                              duration: const Duration(milliseconds: 300),
+                              curve: Curves.easeInOut,
+                            );
+                          }
+                        : null,
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade800,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '${_currentIndex + 1} / ${widget.paths.length}',
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.chevron_right, color: Colors.white),
+                    onPressed: _currentIndex < widget.paths.length - 1
+                        ? () {
+                            _pageController.nextPage(
+                              duration: const Duration(milliseconds: 300),
+                              curve: Curves.easeInOut,
+                            );
+                          }
+                        : null,
+                  ),
+                ],
+                const Gap(16),
+                ElevatedButton.icon(
+                  onPressed: () async {
+                    // Share foto yang sedang ditampilkan
+                    try {
+                      final file = File(widget.paths[_currentIndex]);
+                      if (await file.exists()) {
+                        await Share.shareXFiles(
+                          [XFile(file.path)],
+                          text: '📸 ${widget.barcode}\n${DateFormat('dd/MM/yyyy HH:mm:ss').format(widget.timestamp)}',
+                        );
+                      }
+                    } catch (e) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Gagal share: $e')),
+                      );
+                    }
+                  },
+                  icon: const Icon(Icons.share, size: 18),
+                  label: const Text('Share Foto'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green.shade700,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  ),
+                ),
+                const Gap(8),
+                if (widget.paths.length > 1)
+                  ElevatedButton.icon(
+                    onPressed: () async {
+                      // Share semua foto
+                      try {
+                        final allFiles = <XFile>[];
+                        for (final p in widget.paths) {
+                          final f = File(p);
+                          if (await f.exists()) {
+                            allFiles.add(XFile(f.path));
+                          }
+                        }
+                        if (allFiles.isNotEmpty) {
+                          await Share.shareXFiles(
+                            allFiles,
+                            text: '📸 ${widget.barcode} - ${allFiles.length} foto',
+                          );
+                        }
+                      } catch (e) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Gagal share semua: $e')),
+                        );
+                      }
+                    },
+                    icon: const Icon(Icons.share, size: 18),
+                    label: const Text('Share Semua'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue.shade700,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
