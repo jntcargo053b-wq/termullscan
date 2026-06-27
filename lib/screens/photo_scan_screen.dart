@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/photo_scan_screen.dart (FINAL)
+// lib/screens/photo_scan_screen.dart (FINAL - all setState guarded)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -187,7 +187,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     return result ?? imagePath;
   }
 
-  // ─── SAVE TO GALLERY (with actual file name) ──────────────────────────────────
+  // ─── SAVE TO GALLERY ──────────────────────────────────────────────────
   Future<bool> _saveToGallery(String filePath, ScanEntry entry) async {
     try {
       final file = File(filePath);
@@ -202,7 +202,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         return false;
       }
 
-      // ✅ Gunakan nama file asli (barcode.jpg atau barcode002.jpg)
       final String filename = file.path.split('/').last;
 
       final result = await SaverGallery.saveFile(
@@ -270,6 +269,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     await _processPhoto(xfile);
   }
 
+  // ─── PICK FROM GALLERY ──────────────────────────────────────────────
   Future<void> _pickFromGallery() async {
     if (_isSaving || _isCapturing) return;
 
@@ -331,7 +331,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         throw Exception('File watermark tidak ditemukan');
       }
 
-      // Nama file sesuai format: ABC.jpg, ABC002.jpg, ...
       String? name;
       if (widget.barcode != null) {
         if (photoIndex == 1) {
@@ -346,7 +345,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         throw Exception('Gagal menyimpan file foto');
       }
 
-      // Simpan otomatis ke galeri dengan nama asli
       final entry = ScanEntry(
         id: _storage.generateId(),
         type: ScanType.photo,
@@ -360,6 +358,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
       _photoPaths.add(savedPath);
 
+      // Guard setState after async operations
+      if (!mounted) return;
       setState(() {
         _photoCount++;
       });
