@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/barcode_scan_screen.dart (FINAL - FIXED)
+// lib/screens/barcode_scan_screen.dart (FINAL - with permission check)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -79,9 +79,21 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     await PermissionService.requestGalleryPermission();
   }
 
+  // ✅ Perbaikan: tambahkan pengecekan permission kamera
   Future<void> _resumeScanning() async {
     if (!mounted) return;
     if (_resumeScheduled || _processingScan || _isSaving || _isTakingMultiple) return;
+
+    // Cek permission kamera
+    if (!_scannerController.value.hasCameraPermission) {
+      debugPrint('⚠️ No camera permission, requesting...');
+      final status = await Permission.camera.request();
+      if (!status.isGranted) {
+        debugPrint('❌ Camera permission denied');
+        return;
+      }
+    }
+
     _resumeScheduled = true;
     try {
       await _scannerController.start();
