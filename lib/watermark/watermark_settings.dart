@@ -1,6 +1,3 @@
-// ============================================================
-// lib/watermark/watermark_settings.dart (SINGLETON)
-// ============================================================
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'watermark_style.dart';
@@ -13,13 +10,6 @@ enum WatermarkPosition {
 }
 
 class WatermarkSettings {
-  static final WatermarkSettings _instance = WatermarkSettings._internal();
-  factory WatermarkSettings() => _instance;
-
-  WatermarkSettings._internal();
-
-  bool _loaded = false;
-
   static const String _keyOperatorName = 'watermark_operator_name';
   static const String _keyStyle = 'watermark_style';
   static const String _keyLogoPath = 'watermark_logo_path';
@@ -29,26 +19,25 @@ class WatermarkSettings {
   static const String _keyBgOpacity = 'watermark_bg_opacity';
   static const String _keyFontFamily = 'watermark_font_family';
 
-  // Konstanta default
-  static const double defaultFontSize = 14.0;
-  static const double defaultBackgroundOpacity = 0.85;
-  static const double minFontSize = 8.0;
-  static const double maxFontSize = 48.0;
-  static const double minOpacity = 0.1;
-  static const double maxOpacity = 1.0;
-
-  late String operatorName;
-  late WatermarkStyle style;
+  // Semua field diinisialisasi dengan nilai default, bukan late
+  String operatorName = '';
+  WatermarkStyle style = WatermarkStyle.professional;
   String? logoPath;
   bool hasLogo = false;
 
-  late WatermarkPosition position;
-  late double fontSize;
-  late double backgroundOpacity;
-  late String fontFamily;
+  WatermarkPosition position = WatermarkPosition.bottomRight;
+  double fontSize = 14.0;
+  double backgroundOpacity = 0.55;
+  String fontFamily = 'Roboto';
+
+  bool _loaded = false;
+
+  WatermarkSettings() {
+    load(); // async, tapi tidak menunggu. 
+    // Namun kita pastikan load menetapkan nilai default jika gagal.
+  }
 
   Future<void> load() async {
-    if (_loaded) return;
     try {
       final prefs = await SharedPreferences.getInstance();
       operatorName = prefs.getString(_keyOperatorName) ?? '';
@@ -67,15 +56,16 @@ class WatermarkSettings {
       position = (posIndex >= 0 && posIndex < posValues.length)
           ? posValues[posIndex]
           : WatermarkPosition.bottomRight;
-      fontSize = prefs.getDouble(_keyFontSize) ?? defaultFontSize;
-      backgroundOpacity = prefs.getDouble(_keyBgOpacity) ?? defaultBackgroundOpacity;
+      fontSize = prefs.getDouble(_keyFontSize) ?? 14.0;
+      backgroundOpacity = prefs.getDouble(_keyBgOpacity) ?? 0.55;
       fontFamily = prefs.getString(_keyFontFamily) ?? 'Roboto';
 
       _loaded = true;
       debugPrint('✅ Watermark settings loaded: style=${style.name}, position=$position, fontSize=$fontSize, fontFamily=$fontFamily');
     } catch (e) {
-      debugPrint('⚠️ Error loading watermark settings: $e');
-      _loaded = true;
+      debugPrint('⚠️ Error loading watermark settings: $e, using defaults');
+      // Semua field sudah memiliki nilai default, jadi tidak perlu set ulang
+      _loaded = true; // tetap tandai sudah dimuat meskipun error
     }
   }
 
@@ -118,12 +108,12 @@ class WatermarkSettings {
   }
 
   Future<void> setFontSize(double size) async {
-    fontSize = size.clamp(minFontSize, maxFontSize);
+    fontSize = size.clamp(8.0, 48.0);
     await save();
   }
 
   Future<void> setBackgroundOpacity(double opacity) async {
-    backgroundOpacity = opacity.clamp(minOpacity, maxOpacity);
+    backgroundOpacity = opacity.clamp(0.1, 1.0);
     await save();
   }
 
@@ -147,8 +137,8 @@ class WatermarkSettings {
   Future<void> resetToDefaults() async {
     style = WatermarkStyle.professional;
     position = WatermarkPosition.bottomRight;
-    fontSize = defaultFontSize;
-    backgroundOpacity = defaultBackgroundOpacity;
+    fontSize = 14.0;
+    backgroundOpacity = 0.85;
     fontFamily = 'Roboto';
     await save();
   }
