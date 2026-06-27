@@ -19,7 +19,6 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.debug
-            // ✅ Aktifkan optimasi
             minifyEnabled = true
             shrinkResources = true
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
@@ -43,4 +42,10 @@ android {
 
 flutter {
     source = "../.."
+}
+
+// ✅ Tambahkan dependensi Play Core agar class tidak missing
+dependencies {
+    implementation 'com.google.android.play:app-update:2.1.0'
+    implementation 'com.google.android.play:feature-delivery:2.1.0'
 }
