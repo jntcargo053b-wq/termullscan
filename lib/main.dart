@@ -1,5 +1,5 @@
 // ============================================================
-// lib/main.dart (panggil cleanup di awal)
+// lib/main.dart (load watermark settings sekali)
 // ============================================================
 import 'dart:convert';
 import 'dart:io';
@@ -16,11 +16,11 @@ import 'models/scan_entry.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // ─── Load settings ──────────────────────────────────
+  // ─── Load watermark settings (sekali) ──────────────────────
   final watermarkSettings = WatermarkSettings();
   await watermarkSettings.load();
 
-  // ─── Migrasi JSON → SQLite ─────────────────────────
+  // ─── Migrasi JSON → SQLite ──────────────────────────────────
   final storage = StorageService();
   try {
     final dir = await getApplicationDocumentsDirectory();
@@ -41,13 +41,13 @@ void main() async {
     debugPrint('⚠️ Migration error: $e (maybe no JSON data)');
   }
 
-  // ─── Cleanup old photos (45 days) ──────────────────
+  // ─── Cleanup old photos (45 days) ──────────────────────────
   await storage.cleanupOldFiles(days: 45);
 
-  // ─── Izin ────────────────────────────────────────────
+  // ─── Izin ────────────────────────────────────────────────────
   await PermissionService.requestAllPermissions();
 
-  // ─── Orientasi ──────────────────────────────────────
+  // ─── Orientasi ──────────────────────────────────────────────
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
