@@ -1,6 +1,3 @@
-// ============================================================
-// lib/services/storage_service.dart (FINAL - fully optimized)
-// ============================================================
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
@@ -13,8 +10,7 @@ class StorageService {
   final Uuid _uuid = const Uuid();
   final DatabaseHelper _db = DatabaseHelper();
 
-  // Cache untuk menyimpan angka terakhir per barcode prefix
-  // Agar tidak scan ulang direktori setiap kali
+  // Cache angka maksimum per prefix barcode
   final Map<String, int> _maxNumberCache = {};
 
   String generateId() => _uuid.v4();
@@ -93,18 +89,17 @@ class StorageService {
 
       String fileName;
       if (name != null && name.isNotEmpty) {
-        // Ekstrak base name tanpa ekstensi dan tanpa angka di akhir
         String baseName = name.endsWith('.jpg') ? name.substring(0, name.length - 4) : name;
         String pureBase = baseName.replaceFirst(RegExp(r'\d+$'), '');
         String candidate = '$pureBase.jpg';
 
         if (!await File('${photosDir.path}/$candidate').exists()) {
           fileName = candidate;
-          // Reset cache untuk prefix ini karena file baru dibuat
           _maxNumberCache.remove(pureBase);
         } else {
-          // Cari angka maksimum untuk prefix ini
-          int maxNumber = await _findMaxNumberForPrefix(photosDir, pureBase);
+          // ✅ Optimasi: gunakan stream, tidak toList()
+          int maxNumber = await _findMaxNumberForPrefixStream(photosDir, pureBase);
+          if (maxNumber == 0) maxNumber = 1;
           int nextNumber = maxNumber + 1;
           fileName = '$pureBase${nextNumber.toString().padLeft(3, '0')}.jpg';
         }
@@ -125,18 +120,15 @@ class StorageService {
     }
   }
 
-  // ─── FIND MAX NUMBER FOR PREFIX (dengan stream) ──────────────
-
-  Future<int> _findMaxNumberForPrefix(Directory photosDir, String pureBase) async {
-    // Cek cache dulu
+  // ✅ Optimasi: gunakan stream untuk scan direktori
+  Future<int> _findMaxNumberForPrefixStream(Directory photosDir, String pureBase) async {
     if (_maxNumberCache.containsKey(pureBase)) {
       return _maxNumberCache[pureBase]!;
     }
 
     int maxNumber = 0;
-    final RegExp regExp = RegExp(r'^' + RegExp.escape(pureBase) + r'(\d{0,3})\.jpg$');
+    final RegExp regExp = RegExp(r'^' + RegExp.escape(pureBase) + r'(\d*)\.jpg$');
 
-    // ✅ Scan direktori dengan stream, tidak load semua ke memory
     await for (final entity in photosDir.list()) {
       if (entity is File) {
         final filename = entity.path.split('/').last;
@@ -151,22 +143,13 @@ class StorageService {
       }
     }
 
-    // Simpan di cache
     _maxNumberCache[pureBase] = maxNumber;
     return maxNumber;
   }
 
-  // ─── CLEAR CACHE (opsional, saat file dihapus) ──────────────
+  // ─── CLEANUP ────────────────────────────────────────────────────
 
-  void _clearCacheForPrefix(String pureBase) {
-    _maxNumberCache.remove(pureBase);
-  }
-
-  // ─── CLEANUP OLD FILES ────────────────────────────────────────
-
-  /// Hapus file foto yang sudah lebih dari [days] hari.
-  /// Default 45 hari.
-  Future<void> cleanupOldFiles({int days = 45}) async {
+  Future<void> cleanupOldFiles({int days = 90}) async {
     try {
       final dir = await getApplicationDocumentsDirectory();
       final photosDir = Directory('${dir.path}/photos');
@@ -176,20 +159,16 @@ class StorageService {
       final cutoff = now.subtract(Duration(days: days));
       int deletedCount = 0;
 
-      // ✅ Stream tidak load semua ke memory
       await for (final entity in photosDir.list()) {
         if (entity is File && entity.path.endsWith('.jpg')) {
           final stat = await entity.stat();
           if (stat.modified.isBefore(cutoff)) {
-            // Hapus file
             await entity.delete();
             deletedCount++;
-
-            // Bersihkan cache untuk prefix yang terpengaruh
             final filename = entity.path.split('/').last;
-            final baseName = filename.endsWith('.jpg') ? filename.substring(0, filename.length - 4) : filename;
-            final pureBase = baseName.replaceFirst(RegExp(r'\d+$'), '');
-            _clearCacheForPrefix(pureBase);
+            final base = filename.endsWith('.jpg') ? filename.substring(0, filename.length - 4) : filename;
+            final pureBase = base.replaceFirst(RegExp(r'\d+$'), '');
+            _maxNumberCache.remove(pureBase);
           }
         }
       }
@@ -201,21 +180,48 @@ class StorageService {
     }
   }
 
-  // ─── DELETE PHOTO (update cache) ─────────────────────────────
-
   Future<void> deletePhoto(String path) async {
     try {
       final file = File(path);
       if (await file.exists()) {
         final filename = file.path.split('/').last;
-        final baseName = filename.endsWith('.jpg') ? filename.substring(0, filename.length - 4) : filename;
-        final pureBase = baseName.replaceFirst(RegExp(r'\d+$'), '');
+        final base = filename.endsWith('.jpg') ? filename.substring(0, filename.length - 4) : filename;
+        final pureBase = base.replaceFirst(RegExp(r'\d+$'), '');
         await file.delete();
-        _clearCacheForPrefix(pureBase);
+        _maxNumberCache.remove(pureBase);
         debugPrint('🗑️ Photo deleted: $path');
       }
     } catch (e) {
       debugPrint('⚠️ Storage: error deleting photo: $e');
+    }
+  }
+
+  // ─── VIDEO ────────────────────────────────────────────────────
+
+  Future<String> saveVideo(String sourcePath, {String? name}) async {
+    try {
+      final source = File(sourcePath);
+      if (!await source.exists()) {
+        throw FileSystemException('Source file not found', sourcePath);
+      }
+      final dir = await getApplicationDocumentsDirectory();
+      final videosDir = Directory('${dir.path}/videos');
+      if (!await videosDir.exists()) {
+        await videosDir.create(recursive: true);
+      }
+      final fileName = name != null
+          ? '${name}_${DateTime.now().millisecondsSinceEpoch}.mp4'
+          : '${DateTime.now().millisecondsSinceEpoch}.mp4';
+      final destPath = '${videosDir.path}/$fileName';
+      await source.copy(destPath);
+      if (sourcePath != destPath && await source.exists()) {
+        await source.delete();
+      }
+      debugPrint('🎥 Video saved: $destPath');
+      return destPath;
+    } catch (e) {
+      debugPrint('⚠️ Storage: error saving video: $e');
+      rethrow;
     }
   }
 
