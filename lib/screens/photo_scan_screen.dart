@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/photo_scan_screen.dart (FINAL - setState guarded)
+// lib/screens/photo_scan_screen.dart (FINAL - UI LENGKAP)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -362,7 +362,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       // Simpan ke galeri
       await _saveToGallery(savedPath);
 
-      // ✅ Guard sebelum setState
       if (!mounted) return;
       setState(() {
         _photoCount++;
@@ -399,7 +398,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         try { await File(xfile.path).delete(); } catch (_) {}
       }
 
-      // ✅ Guard sebelum setState
       if (mounted) {
         setState(() {
           _isSaving = false;
@@ -502,7 +500,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // ... (sama seperti sebelumnya, tidak diubah)
     return Scaffold(
       backgroundColor: AppTheme.bg,
       appBar: AppBar(
@@ -576,9 +573,170 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // ... (sisanya sama)
-              // Tidak perlu diubah semua, yang penting sudah guard setState.
-              const Text('Konten tidak berubah'),
+              Container(
+                width: 120,
+                height: 120,
+                decoration: BoxDecoration(
+                  color: AppTheme.accentOrange.withOpacity(0.1),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: AppTheme.accentOrange.withOpacity(0.4),
+                    width: 2,
+                  ),
+                ),
+                child: widget.batchMode
+                    ? Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          const Icon(Icons.camera_alt,
+                              size: 52, color: AppTheme.accentOrange),
+                          if (_photoCount > 0)
+                            Positioned(
+                              bottom: 4,
+                              right: 4,
+                              child: Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: const BoxDecoration(
+                                  color: AppTheme.accentOrange,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Text(
+                                  '$_photoCount',
+                                  style: const TextStyle(
+                                    color: Colors.black,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      )
+                    : const Icon(Icons.camera_alt,
+                        size: 52, color: AppTheme.accentOrange),
+              ).animate().scale(duration: 400.ms, curve: Curves.elasticOut),
+              const Gap(24),
+              Text(
+                widget.batchMode
+                    ? 'Ambil Foto Batch'
+                    : 'Siap Ambil Foto',
+                style: Theme.of(context).textTheme.titleLarge,
+              ).animate().fadeIn(delay: 100.ms),
+              const Gap(8),
+              Text(
+                widget.batchMode
+                    ? '${_photoCount} foto diambil untuk ${widget.barcode ?? 'tanpa barcode'}'
+                    : 'Foto otomatis disertai timestamp & watermark',
+                style: Theme.of(context).textTheme.bodyMedium,
+                textAlign: TextAlign.center,
+              ).animate().fadeIn(delay: 200.ms),
+              if (widget.batchMode && _photoCount > 0) ...[
+                const Gap(16),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: _photoPaths.map((path) {
+                      return Container(
+                        margin: const EdgeInsets.only(right: 8),
+                        width: 60,
+                        height: 60,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(8),
+                          image: DecorationImage(
+                            image: FileImage(File(path)),
+                            fit: BoxFit.cover,
+                          ),
+                          border: Border.all(color: Colors.grey.shade700),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+              ],
+              const Gap(48),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: (_isSaving || _isCapturing) ? null : _takePhoto,
+                  icon: _isSaving || _isCapturing
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                              color: Colors.black, strokeWidth: 2))
+                      : const Icon(Icons.camera_alt, size: 22),
+                  label: Text(
+                    (_isSaving || _isCapturing) ? 'Menyimpan...' : 'Ambil Foto',
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.accentOrange,
+                    foregroundColor: Colors.black,
+                    padding: const EdgeInsets.symmetric(vertical: 18),
+                    textStyle: const TextStyle(
+                        fontWeight: FontWeight.w700, fontSize: 15),
+                  ),
+                ),
+              ).animate().fadeIn(delay: 250.ms),
+              const Gap(14),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: (_isSaving || _isCapturing) ? null : _pickFromGallery,
+                  icon: const Icon(Icons.photo_library_outlined, size: 20),
+                  label: const Text('Pilih dari Galeri'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTheme.accentOrange,
+                    side: BorderSide(
+                        color: AppTheme.accentOrange.withOpacity(0.6)),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    textStyle: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ).animate().fadeIn(delay: 300.ms),
+              if (widget.batchMode) ...[
+                const Gap(16),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _photoCount == 0 ? null : _finishBatch,
+                    icon: const Icon(Icons.done_all, size: 20),
+                    label: Text('Selesai Batch (${_photoCount} foto)'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green.shade700,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      textStyle: const TextStyle(
+                          fontWeight: FontWeight.w600, fontSize: 15),
+                    ),
+                  ),
+                ).animate().fadeIn(delay: 350.ms),
+              ],
+              const Gap(32),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: AppTheme.surface,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppTheme.border),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline,
+                        size: 16, color: AppTheme.accentBlue),
+                    Gap(10),
+                    Expanded(
+                      child: Text(
+                        widget.batchMode
+                            ? 'Ambil banyak foto untuk satu barcode. Tekan "Selesai Batch" jika sudah.'
+                            : 'Setiap foto otomatis dicatat: waktu & watermark',
+                        style: TextStyle(
+                            color: AppTheme.textSecondary, fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ).animate().fadeIn(delay: 350.ms),
             ],
           ),
         ),
