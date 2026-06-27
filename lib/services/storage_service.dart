@@ -1,5 +1,5 @@
 // ============================================================
-// lib/services/storage_service.dart (FINAL - konsisten format)
+// lib/services/storage_service.dart (FINAL - with cleanup)
 // ============================================================
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -93,9 +93,6 @@ class StorageService {
         String baseName = name.endsWith('.jpg') ? name.substring(0, name.length - 4) : name;
         // Hapus angka di akhir (jika ada) untuk mendapatkan base murni
         String pureBase = baseName.replaceFirst(RegExp(r'\d+$'), '');
-        // Jika baseName sama dengan pureBase, berarti tidak ada angka
-        bool hasNumber = baseName != pureBase;
-
         // Cek apakah file dengan nama persis sudah ada
         String candidate = '$pureBase.jpg';
         if (!await File('${photosDir.path}/$candidate').exists()) {
@@ -118,13 +115,7 @@ class StorageService {
               }
             }
           }
-          // Jika file dengan angka sudah ada, maxNumber sudah mencakup semua
-          // Tapi kita perlu memastikan bahwa jika tidak ada file dengan angka, maxNumber tetap 1
-          // Karena kita sudah tahu pureBase.jpg ada, maka maxNumber minimal 1.
-          // Namun jika tidak ada file dengan angka sama sekali, maxNumber = 1.
-          // Maka nextNumber = 2.
           int nextNumber = maxNumber + 1;
-          // Tapi jika sudah ada file dengan angka 999? Kita batasi? Tidak perlu.
           fileName = '$pureBase${nextNumber.toString().padLeft(3, '0')}.jpg';
         }
       } else {
@@ -153,6 +144,37 @@ class StorageService {
       }
     } catch (e) {
       debugPrint('⚠️ Storage: error deleting photo: $e');
+    }
+  }
+
+  // ─── CLEANUP OLD FILES ────────────────────────────────────────
+
+  /// Hapus file foto yang sudah lebih dari [days] hari.
+  /// Default 45 hari.
+  Future<void> cleanupOldFiles({int days = 45}) async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final photosDir = Directory('${dir.path}/photos');
+      if (!await photosDir.exists()) return;
+
+      final now = DateTime.now();
+      final cutoff = now.subtract(Duration(days: days));
+      int deletedCount = 0;
+
+      await for (var entity in photosDir.list()) {
+        if (entity is File && entity.path.endsWith('.jpg')) {
+          final stat = await entity.stat();
+          if (stat.modified.isBefore(cutoff)) {
+            await entity.delete();
+            deletedCount++;
+          }
+        }
+      }
+      if (deletedCount > 0) {
+        debugPrint('🧹 Cleaned up $deletedCount old files (>$days days)');
+      }
+    } catch (e) {
+      debugPrint('⚠️ Error cleaning up old files: $e');
     }
   }
 
