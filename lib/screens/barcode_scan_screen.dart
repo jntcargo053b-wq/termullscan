@@ -83,21 +83,20 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     if (!mounted) return;
     if (_resumeScheduled || _processingScan || _isSaving || _isTakingMultiple) return;
 
-    // ✅ Perbaikan: gunakan permissionStatus bawaan mobile_scanner
-    if (_scannerController.value.permissionStatus != PermissionStatus.granted) {
-      debugPrint('⚠️ No camera permission, requesting...');
-      final status = await Permission.camera.request();
-      if (!status.isGranted) {
-        debugPrint('❌ Camera permission denied');
-        return;
-      }
-    }
-
     _resumeScheduled = true;
     try {
       await _scannerController.start();
     } catch (e) {
       debugPrint('⚠️ Resume scanner error: $e');
+      // Jika error karena permission, coba request ulang
+      if (e.toString().contains('permission')) {
+        await Permission.camera.request();
+        try {
+          await _scannerController.start();
+        } catch (e2) {
+          debugPrint('⚠️ Still cannot start scanner after re-request: $e2');
+        }
+      }
     } finally {
       _resumeScheduled = false;
     }
