@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/photo_scan_screen.dart (FINAL - CRITICAL FIX: single mode updates barcode entry)
+// lib/screens/photo_scan_screen.dart (FINAL - fixed const SnackBar error)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -187,7 +187,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     return result ?? imagePath;
   }
 
-  // ─── SAVE TO GALLERY (optional entry) ──────────────────────────────────
+  // ─── SAVE TO GALLERY ──────────────────────────────────────────────────
   Future<bool> _saveToGallery(String filePath, {ScanEntry? entry}) async {
     try {
       final file = File(filePath);
@@ -310,8 +310,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   }
 
   // ─── PROCESS PHOTO ──────────────────────────────────────────────────
-  // ✅ CRITICAL FIX: Single mode now updates barcode entry's photoPaths,
-  //    no longer creates a separate photo entry.
   Future<void> _processPhoto(XFile xfile) async {
     String? watermarkedPath;
     String compressedPath = xfile.path;
@@ -347,10 +345,9 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         throw Exception('Gagal menyimpan file foto');
       }
 
-      // Tambahkan ke daftar path
       _photoPaths.add(savedPath);
 
-      // ✅ Update barcode entry dengan photoPaths (selalu, baik single maupun batch)
+      // Update barcode entry dengan photoPaths
       if (widget.entryId != null) {
         final barcodeEntry = await _storage.getEntry(widget.entryId!);
         if (barcodeEntry != null) {
@@ -368,13 +365,13 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       });
 
       if (!widget.batchMode) {
-        // Single mode: selesai, langsung pop dengan data
+        // Single mode: selesai, langsung pop
         _showSuccess();
         Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
         return;
       }
 
-      // Batch mode: tampilkan snackbar dan tetap di layar
+      // Batch mode: snackbar
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -465,13 +462,14 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     );
   }
 
+  // ✅ Perbaikan: hilangkan const pada SnackBar
   void _showSuccess() {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
+      SnackBar(
         backgroundColor: Colors.green.shade700,
-        duration: Duration(seconds: 2),
-        content: Row(
+        duration: const Duration(seconds: 2),
+        content: const Row(
           children: [
             Icon(Icons.check_circle, color: Colors.white, size: 18),
             Gap(8),
