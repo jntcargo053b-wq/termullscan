@@ -1,5 +1,5 @@
 // ============================================================
-// lib/watermark/watermark_settings.dart (Tambah konstanta)
+// lib/watermark/watermark_settings.dart (SINGLETON)
 // ============================================================
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -13,6 +13,13 @@ enum WatermarkPosition {
 }
 
 class WatermarkSettings {
+  static final WatermarkSettings _instance = WatermarkSettings._internal();
+  factory WatermarkSettings() => _instance;
+
+  WatermarkSettings._internal();
+
+  bool _loaded = false;
+
   static const String _keyOperatorName = 'watermark_operator_name';
   static const String _keyStyle = 'watermark_style';
   static const String _keyLogoPath = 'watermark_logo_path';
@@ -30,21 +37,18 @@ class WatermarkSettings {
   static const double minOpacity = 0.1;
   static const double maxOpacity = 1.0;
 
-  String operatorName = '';
-  WatermarkStyle style = WatermarkStyle.professional;
+  late String operatorName;
+  late WatermarkStyle style;
   String? logoPath;
   bool hasLogo = false;
 
-  WatermarkPosition position = WatermarkPosition.bottomRight;
-  double fontSize = defaultFontSize;
-  double backgroundOpacity = defaultBackgroundOpacity;
-  String fontFamily = 'Roboto';
-
-  WatermarkSettings() {
-    load();
-  }
+  late WatermarkPosition position;
+  late double fontSize;
+  late double backgroundOpacity;
+  late String fontFamily;
 
   Future<void> load() async {
+    if (_loaded) return;
     try {
       final prefs = await SharedPreferences.getInstance();
       operatorName = prefs.getString(_keyOperatorName) ?? '';
@@ -67,9 +71,11 @@ class WatermarkSettings {
       backgroundOpacity = prefs.getDouble(_keyBgOpacity) ?? defaultBackgroundOpacity;
       fontFamily = prefs.getString(_keyFontFamily) ?? 'Roboto';
 
+      _loaded = true;
       debugPrint('✅ Watermark settings loaded: style=${style.name}, position=$position, fontSize=$fontSize, fontFamily=$fontFamily');
     } catch (e) {
       debugPrint('⚠️ Error loading watermark settings: $e');
+      _loaded = true;
     }
   }
 
