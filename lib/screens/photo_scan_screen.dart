@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/photo_scan_screen.dart (FINAL - fixed const SnackBar error)
+// lib/screens/photo_scan_screen.dart (FINAL - fixed const SnackBar)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -462,7 +462,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     );
   }
 
-  // ✅ Perbaikan: hilangkan const pada SnackBar
+  // ✅ FIX: Hapus const agar backgroundColor bisa digunakan
   void _showSuccess() {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
