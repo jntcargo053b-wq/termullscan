@@ -1,20 +1,56 @@
 // ============================================================
-// android/app/build.gradle (FIX: sinkronkan targetSdk)
+// android/app/build.gradle
 // ============================================================
-// Hanya bagian yang diubah:
+plugins {
+    id "com.android.application"
+    // id "org.jetbrains.kotlin.android"
+    id "dev.flutter.flutter-gradle-plugin"
+}
+
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withReader('UTF-8') { reader ->
+        localProperties.load(reader)
+    }
+}
+
+def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
+if (flutterVersionCode == null) {
+    flutterVersionCode = '1'
+}
+
+def flutterVersionName = localProperties.getProperty('flutter.versionName')
+if (flutterVersionName == null) {
+    flutterVersionName = '1.0'
+}
 
 android {
     compileSdk 35
 
-    // ...
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
 
     defaultConfig {
         applicationId "com.termulscan.whscanner"
         minSdk 21
-        targetSdk 35 // ✅ ubah dari 34 ke 35 agar sinkron dengan compileSdk
-        versionCode 1
-        versionName "1.0.0"
+        targetSdk 35
+        versionCode flutterVersionCode.toInteger()
+        versionName flutterVersionName
     }
 
-    // ...
+    buildTypes {
+        release {
+            minifyEnabled false
+            shrinkResources false
+            // Jika ingin minify, aktifkan dan sesuaikan proguard
+            // proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+flutter {
+    source '../..'
 }
