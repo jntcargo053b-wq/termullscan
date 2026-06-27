@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/log_screen.dart (FINAL - with preview & search fix)
+// lib/screens/log_screen.dart (FINAL - fixed isSelectionMode error)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -113,7 +113,6 @@ class _LogScreenState extends State<LogScreen> {
     }
   }
 
-  // ✅ DEBOUNCE SEARCH
   void _onSearchChanged(String value) {
     _debounceTimer?.cancel();
     _debounceTimer = Timer(const Duration(milliseconds: 300), () {
@@ -159,10 +158,9 @@ class _LogScreenState extends State<LogScreen> {
     return _selectedIds.length == _filteredEntries.length;
   }
 
-  // ─── PHOTO PREVIEW ──────────────────────────────────────────────────
+  // ─── PHOTO PREVIEW ──────────────────────────────────────────────
   void _showPhotoPreview(ScanEntry entry, {int initialIndex = 0}) {
     final List<String> paths = entry.photoPaths ?? [];
-    // Jika tidak ada photoPaths, coba gunakan value sebagai path (single photo)
     if (paths.isEmpty && entry.type == ScanType.photo && entry.value.isNotEmpty) {
       paths.add(entry.value);
     }
@@ -173,7 +171,6 @@ class _LogScreenState extends State<LogScreen> {
       return;
     }
 
-    // Validasi file exists
     final validPaths = <String>[];
     for (final p in paths) {
       final file = File(p);
@@ -225,7 +222,6 @@ class _LogScreenState extends State<LogScreen> {
 
     final List<XFile> files = [];
     for (final entry in selectedEntries) {
-      // Gunakan photoPaths jika ada, fallback ke value
       final paths = entry.photoPaths ?? [];
       if (paths.isNotEmpty) {
         for (final path in paths) {
@@ -329,7 +325,6 @@ class _LogScreenState extends State<LogScreen> {
     );
     if (confirm == true) {
       await _storage.delete(entry.id);
-      // Hapus file foto
       if (entry.type == ScanType.photo) {
         final paths = entry.photoPaths ?? [];
         if (paths.isNotEmpty) {
@@ -579,7 +574,7 @@ class _LogScreenState extends State<LogScreen> {
                                       }
                                     });
                                   }
-                                : () => _showPhotoPreview(entry), // ✅ Preview foto
+                                : () => _showPhotoPreview(entry),
                             onDelete: () => _deleteEntry(entry),
                             dateFormat: _dateFormat,
                           );
@@ -662,9 +657,8 @@ class _LogItem extends StatelessWidget {
         leading: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (onTap != null && !isSelectionMode) // jika bukan mode seleksi, kita tampilkan icon foto
-              const SizedBox.shrink(),
-            if (isSelectionMode)
+            // ✅ Perbaikan: gunakan onTap != null sebagai indikator mode seleksi
+            if (onTap != null)
               Padding(
                 padding: const EdgeInsets.only(right: 8),
                 child: Icon(
@@ -893,7 +887,7 @@ class _PhotoPreviewDialogState extends State<_PhotoPreviewDialog> {
               },
             ),
           ),
-          // Footer: counter & navigation
+          // Footer
           Container(
             padding: const EdgeInsets.symmetric(vertical: 12),
             decoration: BoxDecoration(
@@ -943,7 +937,6 @@ class _PhotoPreviewDialogState extends State<_PhotoPreviewDialog> {
                 const Gap(16),
                 ElevatedButton.icon(
                   onPressed: () async {
-                    // Share foto yang sedang ditampilkan
                     try {
                       final file = File(widget.paths[_currentIndex]);
                       if (await file.exists()) {
@@ -970,7 +963,6 @@ class _PhotoPreviewDialogState extends State<_PhotoPreviewDialog> {
                 if (widget.paths.length > 1)
                   ElevatedButton.icon(
                     onPressed: () async {
-                      // Share semua foto
                       try {
                         final allFiles = <XFile>[];
                         for (final p in widget.paths) {
