@@ -1,5 +1,5 @@
 // ============================================================
-// 2. lib/utils/image_compressor.dart (file baru)
+// lib/utils/image_compressor.dart (FINAL - resize + kompresi)
 // ============================================================
 import 'dart:io';
 import 'package:image/image.dart' as img;
@@ -9,9 +9,10 @@ import '../config/app_config.dart';
 class ImageCompressor {
   static const int maxSizeBytes = AppConfig.maxImageSizeMB * 1024 * 1024; // 5MB
   static const int targetSizeBytes = AppConfig.targetImageSizeKB * 1024; // 1MB
+  static const int maxDimension = 1920; // ✅ batas maksimal lebar/tinggi
 
-  /// Kompres gambar jika ukuran > maxSizeBytes ke target ~1MB.
-  /// Mengembalikan path file hasil kompresi (atau path asli jika tidak perlu).
+  /// Resize dan kompres gambar ke ukuran optimal.
+  /// Mengembalikan path file hasil (atau path asli jika tidak perlu).
   static Future<String> compressIfNeeded(String imagePath) async {
     try {
       final file = File(imagePath);
@@ -30,7 +31,16 @@ class ImageCompressor {
       img.Image? image = img.decodeImage(bytes);
       if (image == null) return imagePath;
 
-      // Kompres dengan kualitas 75% terlebih dahulu
+      // ✅ STEP 1: Resize jika dimensi > maxDimension
+      if (image.width > maxDimension || image.height > maxDimension) {
+        double scale = maxDimension / (image.width > image.height ? image.width : image.height);
+        int newWidth = (image.width * scale).toInt();
+        int newHeight = (image.height * scale).toInt();
+        image = img.copyResize(image, width: newWidth, height: newHeight);
+        debugPrint('  Resize ke ${newWidth}x${newHeight}');
+      }
+
+      // ✅ STEP 2: Kompresi dengan kualitas adaptif
       int quality = 75;
       List<int> compressedBytes = img.encodeJpg(image, quality: quality);
       int compressedSize = compressedBytes.length;
@@ -43,7 +53,7 @@ class ImageCompressor {
         debugPrint('  Kualitas $quality% → ukuran ${compressedSize ~/ 1024}KB');
       }
 
-      // Jika masih terlalu besar, turunkan resolusi
+      // Jika masih terlalu besar, turunkan resolusi lagi
       if (compressedSize > targetSizeBytes * 3) {
         double scale = (targetSizeBytes * 2) / compressedSize;
         scale = scale.clamp(0.3, 0.9);
@@ -52,11 +62,11 @@ class ImageCompressor {
         final resized = img.copyResize(image, width: newWidth, height: newHeight);
         final finalBytes = img.encodeJpg(resized, quality: quality);
         compressedSize = finalBytes.length;
-        debugPrint('  Resize ke ${newWidth}x${newHeight}, ukuran ${compressedSize ~/ 1024}KB');
+        debugPrint('  Resize kedua ke ${newWidth}x${newHeight}, ukuran ${compressedSize ~/ 1024}KB');
         compressedBytes = finalBytes;
       }
 
-      // Simpan hasil kompresi sebagai file baru
+      // Simpan hasil kompresi
       final dir = file.parent.path;
       final filename = 'compressed_${DateTime.now().millisecondsSinceEpoch}.jpg';
       final compressedPath = '$dir/$filename';
