@@ -1,5 +1,5 @@
 // ============================================================
-// lib/main.dart (dengan migrasi JSON ke SQLite)
+// lib/main.dart (panggil cleanup di awal)
 // ============================================================
 import 'dart:convert';
 import 'dart:io';
@@ -20,9 +20,7 @@ void main() async {
   final watermarkSettings = WatermarkSettings();
   await watermarkSettings.load();
 
-  // ─── Migrasi JSON → SQLite (hanya sekali, opsional) ──
-  // Jika Anda sudah menggunakan SQLite dan tidak memiliki
-  // file JSON lama, blok ini akan diabaikan.
+  // ─── Migrasi JSON → SQLite ─────────────────────────
   final storage = StorageService();
   try {
     final dir = await getApplicationDocumentsDirectory();
@@ -42,6 +40,9 @@ void main() async {
   } catch (e) {
     debugPrint('⚠️ Migration error: $e (maybe no JSON data)');
   }
+
+  // ─── Cleanup old photos (45 days) ──────────────────
+  await storage.cleanupOldFiles(days: 45);
 
   // ─── Izin ────────────────────────────────────────────
   await PermissionService.requestAllPermissions();
