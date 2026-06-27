@@ -1,5 +1,5 @@
 // ============================================================
-// lib/services/database_helper.dart (perbaikan search)
+// lib/services/database_helper.dart (FIX: getAll tanpa limit)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -76,10 +76,11 @@ class DatabaseHelper {
     await batch.commit();
   }
 
+  // ✅ Hapus limit hardcode, kembalikan semua data (tanpa batas)
   Future<List<ScanEntry>> getAll() async {
     final db = await database;
     final result = await db.query('scan_entries',
-        orderBy: 'timestamp DESC', limit: 10000);
+        orderBy: 'timestamp DESC'); // tanpa limit
     return result.map((map) => ScanEntry.fromMap(map)).toList();
   }
 
@@ -102,7 +103,6 @@ class DatabaseHelper {
     final List<String> where = [];
     final List<dynamic> args = [];
 
-    // ✅ SEARCH: cari di value dan photoPaths
     if (searchQuery != null && searchQuery.isNotEmpty) {
       where.add('(value LIKE ? OR photoPaths LIKE ?)');
       args.add('%$searchQuery%');
@@ -151,7 +151,6 @@ class DatabaseHelper {
     final List<String> where = [];
     final List<dynamic> args = [];
 
-    // ✅ SEARCH: sama seperti di getEntries
     if (searchQuery != null && searchQuery.isNotEmpty) {
       where.add('(value LIKE ? OR photoPaths LIKE ?)');
       args.add('%$searchQuery%');
