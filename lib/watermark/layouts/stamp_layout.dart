@@ -1,3 +1,6 @@
+// ============================================================
+// lib/watermark/layouts/stamp_layout.dart (FINAL - PREMIUM)
+// ============================================================
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -29,14 +32,13 @@ class StampLayout extends WatermarkLayout {
     final baseSize = LayoutHelper.getBaseSize(photoWidth, photoHeight);
     final padding = LayoutHelper.padding(baseSize);
 
-    int lineCount = 1; // timestamp
+    int lineCount = 1;
     if (data.hasBarcode) lineCount++;
     if (data.hasOperator) lineCount++;
     lineCount++; // location
 
-    // ✅ Gunakan data.fontSize, bukan auto-calc
     final fontSz = data.fontSize;
-    final lineH = fontSz * 1.4;
+    final lineH = fontSz * 1.3;
 
     final panelHeight = lineCount * lineH + padding * 1.2;
 
@@ -52,8 +54,8 @@ class StampLayout extends WatermarkLayout {
       stripHeight: panelHeight,
       logoMaxSize: logoMaxSize,
       textRowCount: lineCount,
-      canvasWidth: photoWidth,   // ✅ TETAP
-      canvasHeight: photoHeight, // ✅ TIDAK DIUBAH
+      canvasWidth: photoWidth,
+      canvasHeight: photoHeight,
       textAvailableWidth: textW,
     );
   }
@@ -71,7 +73,6 @@ class StampLayout extends WatermarkLayout {
     final padding = metrics.padding;
     final baseSize = metrics.baseSize;
 
-    // ✅ Gambar foto full
     canvas.drawImageRect(
       srcImage,
       Rect.fromLTWH(0, 0, photoWidth, photoHeight),
@@ -184,8 +185,8 @@ class StampLayout extends WatermarkLayout {
     infoLines.add(data.displayLocation);
 
     final fontSize = data.fontSize;
-    final lineHeight = fontSize * 1.4;
-    final panelPadding = 8.0;
+    final lineHeight = fontSize * 1.3;
+    final panelPadding = 10.0;
     final panelHeight = infoLines.length * lineHeight + panelPadding * 2;
     final panelWidth = metrics.textAvailableWidth + panelPadding * 2;
 
@@ -212,7 +213,7 @@ class StampLayout extends WatermarkLayout {
         panelY = photoHeight - padding - panelHeight - stampH - padding;
     }
 
-    // ✅ Overlay panel di atas foto (transparan)
+    // Panel info dengan latar lebih polished
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromLTWH(panelX, panelY, panelWidth, panelHeight),
@@ -223,15 +224,27 @@ class StampLayout extends WatermarkLayout {
         ..style = PaintingStyle.fill,
     );
 
+    // Accent bar di sisi panel
+    final accentBarW = math.max(2.0, baseSize * 0.003);
+    canvas.drawRect(
+      Rect.fromLTWH(
+        panelX + 2,
+        panelY + 4,
+        accentBarW,
+        panelHeight - 8,
+      ),
+      Paint()..color = stampColor.withOpacity(0.6),
+    );
+
     double textY2 = panelY + panelPadding;
-    final textX2 = panelX + panelPadding;
+    final textX2 = panelX + panelPadding + 6;
     for (final line in infoLines) {
       TextHelper.paintText(
         canvas: canvas,
         text: line,
         x: textX2,
         y: textY2,
-        maxWidth: panelWidth - panelPadding * 2,
+        maxWidth: panelWidth - panelPadding * 2 - 8,
         color: Colors.white,
         fontSize: fontSize,
         fontWeight: FontWeight.w600,
@@ -270,6 +283,21 @@ class StampLayout extends WatermarkLayout {
           logoX = padding;
           logoY = padding;
       }
+
+      final cardPad = drawW * 0.10;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(
+            logoX - cardPad,
+            logoY - cardPad,
+            drawW + cardPad * 2,
+            drawH + cardPad * 2,
+          ),
+          Radius.circular(cardPad),
+        ),
+        Paint()..color = Colors.white.withOpacity(0.08),
+      );
+
       LogoWidget.paint(
         canvas: canvas,
         logoImage: logoImage,
@@ -299,87 +327,103 @@ class StampLayout extends WatermarkLayout {
     final stampColor = previewData.isManual ? const Color(0xFFE67E22) : const Color(0xFF2E8B57);
     final stampLabel = previewData.isManual ? 'MANUAL' : 'VERIFIED';
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                border: Border.all(color: stampColor, width: 1.5),
-                borderRadius: BorderRadius.circular(4),
-                color: stampColor.withOpacity(0.1),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Text(
-                    stampLabel,
-                    style: TextStyle(
-                      color: stampColor,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 1,
-                    ),
-                  ),
-                  const Gap(2),
-                  if (previewData.hasOperator)
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade900,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade700.withOpacity(0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  border: Border.all(color: stampColor, width: 1.5),
+                  borderRadius: BorderRadius.circular(4),
+                  color: stampColor.withOpacity(0.1),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
                     Text(
-                      previewData.operatorName,
+                      stampLabel,
+                      style: TextStyle(
+                        color: stampColor,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                    const Gap(2),
+                    if (previewData.hasOperator)
+                      Text(
+                        previewData.operatorName,
+                        style: TextStyle(
+                          color: stampColor,
+                          fontSize: 8,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    Text(
+                      previewData.formattedTimestamp,
                       style: TextStyle(
                         color: stampColor,
                         fontSize: 8,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                  Text(
-                    previewData.formattedTimestamp,
-                    style: TextStyle(
-                      color: stampColor,
-                      fontSize: 8,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (hasLogo && logoPath != null && logoPath.isNotEmpty) ...[
-              const Gap(8),
-              Image.file(
-                File(logoPath),
-                width: metrics.logoMaxSize,
-                height: metrics.logoMaxSize,
-                fit: BoxFit.contain,
-                errorBuilder: (_, __, ___) => const Icon(Icons.business, color: Colors.white24),
-              ),
-            ],
-          ],
-        ),
-        const Gap(6),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: Colors.grey.shade800,
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(
-                displayName,
-                style: const TextStyle(
-                  color: Colors.grey,
-                  fontSize: 8,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.5,
+                  ],
                 ),
               ),
-            ),
-          ],
-        ),
-      ],
+              if (hasLogo && logoPath != null && logoPath.isNotEmpty) ...[
+                const Gap(8),
+                Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Image.file(
+                    File(logoPath),
+                    width: metrics.logoMaxSize,
+                    height: metrics.logoMaxSize,
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) =>
+                        const Icon(Icons.broken_image, color: Colors.white38, size: 14),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const Gap(6),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade800,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  displayName,
+                  style: const TextStyle(
+                    color: Colors.grey,
+                    fontSize: 8,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }
