@@ -1,5 +1,5 @@
 // ============================================================
-// lib/watermark/layouts/stamp_layout.dart (FINAL - PREMIUM)
+// lib/watermark/layouts/stamp_layout.dart (FINAL - VISIBILITY FIX)
 // ============================================================
 import 'dart:io';
 import 'dart:math' as math;
@@ -38,12 +38,13 @@ class StampLayout extends WatermarkLayout {
     lineCount++; // location
 
     final fontSz = data.fontSize;
-    final lineH = fontSz * 1.3;
+    final lineH = fontSz * 1.4;
 
-    final panelHeight = lineCount * lineH + padding * 1.2;
+    final panelHeight = lineCount * lineH + padding * 1.4;
 
-    final logoMaxSize = baseSize * 0.12;
-    final panelWidth = baseSize * 0.46;
+    // ✅ Ukuran logo diperbesar
+    final logoMaxSize = baseSize * 0.18;
+    final panelWidth = baseSize * 0.50;
     final textW = panelWidth - padding * 0.8;
 
     return LayoutMetrics(
@@ -85,8 +86,9 @@ class StampLayout extends WatermarkLayout {
     final stampColor = data.isManual ? const Color(0xFFE67E22) : const Color(0xFF2E8B57);
     final stampLabel = data.isManual ? 'MANUAL' : 'VERIFIED';
 
-    final stampW = baseSize * 0.30;
-    final stampH = baseSize * 0.14;
+    // ✅ Stempel lebih besar
+    final stampW = baseSize * 0.35;
+    final stampH = baseSize * 0.18;
     double stampCenterX, stampCenterY;
 
     switch (data.position) {
@@ -113,65 +115,67 @@ class StampLayout extends WatermarkLayout {
 
     canvas.save();
     canvas.translate(stampCenterX, stampCenterY);
-    canvas.rotate(-0.08);
+    canvas.rotate(-0.06);
 
     final stampRect = Rect.fromCenter(center: Offset.zero, width: stampW, height: stampH);
-    final strokeWidth = math.max(2.0, baseSize * 0.0045);
+    final strokeWidth = math.max(2.5, baseSize * 0.005);
 
+    // Background stempel
     canvas.drawRRect(
-      RRect.fromRectAndRadius(stampRect, Radius.circular(stampH * 0.12)),
+      RRect.fromRectAndRadius(stampRect, Radius.circular(stampH * 0.14)),
       Paint()
-        ..color = stampColor.withOpacity(0.10)
+        ..color = stampColor.withOpacity(0.12)
         ..style = PaintingStyle.fill,
     );
     canvas.drawRRect(
-      RRect.fromRectAndRadius(stampRect, Radius.circular(stampH * 0.12)),
+      RRect.fromRectAndRadius(stampRect, Radius.circular(stampH * 0.14)),
       Paint()
         ..color = stampColor
         ..style = PaintingStyle.stroke
         ..strokeWidth = strokeWidth,
     );
 
-    double textY = -stampH * 0.35;
+    // ✅ Teks VERIFIED / MANUAL lebih besar
+    double textY = -stampH * 0.20;
     TextHelper.paintText(
       canvas: canvas,
       text: stampLabel,
-      x: -stampW / 2 + 8,
+      x: -stampW / 2 + 12,
       y: textY,
-      maxWidth: stampW - 16,
+      maxWidth: stampW - 24,
       color: stampColor,
-      fontSize: stampH * 0.28,
+      fontSize: stampH * 0.32,
       fontWeight: FontWeight.w900,
       textAlign: TextAlign.center,
       fontFamily: data.fontFamily,
     );
 
-    textY += stampH * 0.22;
+    textY += stampH * 0.30;
     if (data.hasOperator) {
       TextHelper.paintText(
         canvas: canvas,
-        text: data.operatorName,
-        x: -stampW / 2 + 8,
+        text: data.operatorName.toUpperCase(),
+        x: -stampW / 2 + 12,
         y: textY,
-        maxWidth: stampW - 16,
+        maxWidth: stampW - 24,
         color: stampColor,
-        fontSize: stampH * 0.16,
+        fontSize: stampH * 0.18,
         fontWeight: FontWeight.w600,
         textAlign: TextAlign.center,
         fontFamily: data.fontFamily,
       );
-      textY += stampH * 0.20;
+      textY += stampH * 0.24;
     }
 
     final dateStr = DateFormat('dd/MM/yyyy HH:mm').format(data.timestamp);
     TextHelper.paintText(
       canvas: canvas,
       text: dateStr,
-      x: -stampW / 2 + 8,
+      x: -stampW / 2 + 12,
       y: textY,
-      maxWidth: stampW - 16,
+      maxWidth: stampW - 24,
       color: stampColor,
-      fontSize: stampH * 0.14,
+      fontSize: stampH * 0.16,
       fontWeight: FontWeight.w600,
       textAlign: TextAlign.center,
       fontFamily: data.fontFamily,
@@ -179,14 +183,15 @@ class StampLayout extends WatermarkLayout {
 
     canvas.restore();
 
+    // ─── INFO PANEL ────────────────────────────────────────────
     final infoLines = <String>[];
     if (data.hasBarcode) infoLines.add(data.barcodeValue!);
     if (data.hasOperator) infoLines.add('OP: ${data.operatorName}');
     infoLines.add(data.displayLocation);
 
     final fontSize = data.fontSize;
-    final lineHeight = fontSize * 1.3;
-    final panelPadding = 10.0;
+    final lineHeight = fontSize * 1.35;
+    final panelPadding = 12.0;
     final panelHeight = infoLines.length * lineHeight + panelPadding * 2;
     final panelWidth = metrics.textAvailableWidth + panelPadding * 2;
 
@@ -194,26 +199,26 @@ class StampLayout extends WatermarkLayout {
     switch (data.position) {
       case WatermarkPosition.bottomRight:
         panelX = photoWidth - padding - panelWidth;
-        panelY = photoHeight - padding - panelHeight - stampH - padding;
+        panelY = photoHeight - padding - panelHeight - stampH - padding * 1.2;
         break;
       case WatermarkPosition.bottomLeft:
         panelX = padding;
-        panelY = photoHeight - padding - panelHeight - stampH - padding;
+        panelY = photoHeight - padding - panelHeight - stampH - padding * 1.2;
         break;
       case WatermarkPosition.topRight:
         panelX = photoWidth - padding - panelWidth;
-        panelY = padding + stampH + padding;
+        panelY = padding + stampH + padding * 1.2;
         break;
       case WatermarkPosition.topLeft:
         panelX = padding;
-        panelY = padding + stampH + padding;
+        panelY = padding + stampH + padding * 1.2;
         break;
       default:
         panelX = photoWidth - padding - panelWidth;
-        panelY = photoHeight - padding - panelHeight - stampH - padding;
+        panelY = photoHeight - padding - panelHeight - stampH - padding * 1.2;
     }
 
-    // Panel info dengan latar lebih polished
+    // Panel background
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromLTWH(panelX, panelY, panelWidth, panelHeight),
@@ -224,27 +229,27 @@ class StampLayout extends WatermarkLayout {
         ..style = PaintingStyle.fill,
     );
 
-    // Accent bar di sisi panel
-    final accentBarW = math.max(2.0, baseSize * 0.003);
+    // Accent bar — warna sesuai stempel
+    final accentBarW = math.max(3.0, baseSize * 0.004);
     canvas.drawRect(
       Rect.fromLTWH(
-        panelX + 2,
-        panelY + 4,
+        panelX + 3,
+        panelY + 6,
         accentBarW,
-        panelHeight - 8,
+        panelHeight - 12,
       ),
-      Paint()..color = stampColor.withOpacity(0.6),
+      Paint()..color = stampColor.withOpacity(0.7),
     );
 
     double textY2 = panelY + panelPadding;
-    final textX2 = panelX + panelPadding + 6;
+    final textX2 = panelX + panelPadding + 8;
     for (final line in infoLines) {
       TextHelper.paintText(
         canvas: canvas,
         text: line,
         x: textX2,
         y: textY2,
-        maxWidth: panelWidth - panelPadding * 2 - 8,
+        maxWidth: panelWidth - panelPadding * 2 - 12,
         color: Colors.white,
         fontSize: fontSize,
         fontWeight: FontWeight.w600,
@@ -254,6 +259,7 @@ class StampLayout extends WatermarkLayout {
       textY2 += lineHeight;
     }
 
+    // ─── LOGO ────────────────────────────────────────────────────
     if (logoImage != null) {
       final logoSize = metrics.logoMaxSize;
       final logoW = logoImage.width.toDouble();
@@ -284,7 +290,7 @@ class StampLayout extends WatermarkLayout {
           logoY = padding;
       }
 
-      final cardPad = drawW * 0.10;
+      final cardPad = drawW * 0.15;
       canvas.drawRRect(
         RRect.fromRectAndRadius(
           Rect.fromLTWH(
@@ -293,9 +299,9 @@ class StampLayout extends WatermarkLayout {
             drawW + cardPad * 2,
             drawH + cardPad * 2,
           ),
-          Radius.circular(cardPad),
+          Radius.circular(cardPad * 0.8),
         ),
-        Paint()..color = Colors.white.withOpacity(0.08),
+        Paint()..color = Colors.black.withOpacity(0.35),
       );
 
       LogoWidget.paint(
@@ -341,10 +347,10 @@ class StampLayout extends WatermarkLayout {
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
-                  border: Border.all(color: stampColor, width: 1.5),
-                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: stampColor, width: 2),
+                  borderRadius: BorderRadius.circular(6),
                   color: stampColor.withOpacity(0.1),
                 ),
                 child: Column(
@@ -354,26 +360,26 @@ class StampLayout extends WatermarkLayout {
                       stampLabel,
                       style: TextStyle(
                         color: stampColor,
-                        fontSize: 10,
+                        fontSize: 12,
                         fontWeight: FontWeight.w900,
-                        letterSpacing: 1,
+                        letterSpacing: 1.2,
                       ),
                     ),
-                    const Gap(2),
+                    const Gap(4),
                     if (previewData.hasOperator)
                       Text(
-                        previewData.operatorName,
+                        previewData.operatorName.toUpperCase(),
                         style: TextStyle(
                           color: stampColor,
-                          fontSize: 8,
-                          fontWeight: FontWeight.w600,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
                     Text(
                       previewData.formattedTimestamp,
                       style: TextStyle(
                         color: stampColor,
-                        fontSize: 8,
+                        fontSize: 9,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -385,13 +391,13 @@ class StampLayout extends WatermarkLayout {
                 Container(
                   padding: const EdgeInsets.all(4),
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.08),
+                    color: Colors.black.withOpacity(0.3),
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Image.file(
                     File(logoPath),
-                    width: metrics.logoMaxSize,
-                    height: metrics.logoMaxSize,
+                    width: metrics.logoMaxSize * 0.6,
+                    height: metrics.logoMaxSize * 0.6,
                     fit: BoxFit.contain,
                     errorBuilder: (_, __, ___) =>
                         const Icon(Icons.broken_image, color: Colors.white38, size: 14),
