@@ -1,7 +1,5 @@
 // ============================================================
-// lib/screens/barcode_scan_screen.dart (FINAL)
-// Default mode = Single (1 scan → 1 foto)
-// Batch mode bisa diaktifkan via toggle di UI
+// lib/screens/barcode_scan_screen.dart (FINAL - with callback dialog)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -46,7 +44,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   // BATCH MODE - DEFAULT SINGLE (false)
   String? _activeBarcode;
   int _batchPhotoCount = 0;
-  bool _batchMode = false; // ← ubah default menjadi false (single)
+  bool _batchMode = false;
 
   final StorageService _storage = StorageService();
   final ImagePicker _picker = ImagePicker();
@@ -182,7 +180,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
           MaterialPageRoute(
             builder: (_) => PhotoScanScreen(
               barcode: code,
-              batchMode: _batchMode, // tergantung mode aktif
+              batchMode: _batchMode,
               entryId: entry.id,
             ),
           ),
@@ -206,7 +204,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     }
   }
 
-  // ─── MANUAL INPUT (dengan dispose controller) ──────────────────
+  // ─── MANUAL INPUT (dengan callback) ──────────────────────────
   void _showManualInput() {
     showModalBottomSheet(
       context: context,
@@ -215,7 +213,11 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (_) => const _ManualInputDialog(),
+      builder: (_) => _ManualInputDialog(
+        onSubmitted: (code) {
+          _processManualCode(code);
+        },
+      ),
     );
   }
 
@@ -460,9 +462,14 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   }
 }
 
-// ─── Manual Input Dialog ──────────────────────────────────────
+// ─── Manual Input Dialog (dengan callback) ──────────────────────
 class _ManualInputDialog extends StatefulWidget {
-  const _ManualInputDialog({super.key});
+  final void Function(String code) onSubmitted;
+
+  const _ManualInputDialog({
+    required this.onSubmitted,
+    super.key,
+  });
 
   @override
   State<_ManualInputDialog> createState() => _ManualInputDialogState();
@@ -554,8 +561,7 @@ class _ManualInputDialogState extends State<_ManualInputDialog> {
             onSubmitted: (val) {
               if (val.trim().isNotEmpty) {
                 Navigator.pop(context);
-                final screen = context.findAncestorStateOfType<_BarcodeScanScreenState>();
-                screen?._processManualCode(val.trim());
+                widget.onSubmitted(val.trim());
               }
             },
           ),
@@ -575,8 +581,7 @@ class _ManualInputDialogState extends State<_ManualInputDialog> {
                 final val = _controller.text.trim();
                 if (val.isNotEmpty) {
                   Navigator.pop(context);
-                  final screen = context.findAncestorStateOfType<_BarcodeScanScreenState>();
-                  screen?._processManualCode(val);
+                  widget.onSubmitted(val);
                 }
               },
               icon: const Icon(Icons.check, size: 18),
