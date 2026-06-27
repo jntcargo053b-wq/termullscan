@@ -1,5 +1,5 @@
 // ============================================================
-// lib/watermark/layouts/minimal_layout.dart (FINAL - PREMIUM)
+// lib/watermark/layouts/minimal_layout.dart (FINAL - LOGO FIX)
 // ============================================================
 import 'dart:io';
 import 'dart:math' as math;
@@ -46,7 +46,8 @@ class MinimalLayout extends WatermarkLayout {
       lineCount * lineH + padding * 1.6,
     );
 
-    final logoMaxSize = baseSize * 0.13;
+    // ✅ LOGO: ukuran diperbesar dari 0.13 → 0.18
+    final logoMaxSize = baseSize * 0.18;
     final rightReserved = logoMaxSize + padding * 1.4;
     final accentBarSpace = baseSize * 0.006 + padding * 0.5;
     final textW = photoWidth - padding * 2 - rightReserved - accentBarSpace;
@@ -196,6 +197,7 @@ class MinimalLayout extends WatermarkLayout {
           fontWeight: FontWeight.w700);
     }
 
+    // ─── LOGO ────────────────────────────────────────────────────
     if (logoImage != null) {
       final logoSize = metrics.logoMaxSize;
       final logoW = logoImage.width.toDouble();
@@ -210,7 +212,8 @@ class MinimalLayout extends WatermarkLayout {
           ? photoHeight - padding - drawH
           : padding;
 
-      final cardPad = drawW * 0.10;
+      // ✅ Background card lebih gelap agar logo terlihat jelas
+      final cardPad = drawW * 0.15;
       canvas.drawRRect(
         RRect.fromRectAndRadius(
           Rect.fromLTWH(
@@ -219,11 +222,12 @@ class MinimalLayout extends WatermarkLayout {
             drawW + cardPad * 2,
             drawH + cardPad * 2,
           ),
-          Radius.circular(cardPad),
+          Radius.circular(cardPad * 0.8),
         ),
-        Paint()..color = Colors.white.withOpacity(0.08),
+        Paint()..color = Colors.black.withOpacity(0.35),
       );
 
+      // ✅ LOGO: opacity full 1.0 agar warna asli terlihat
       LogoWidget.paint(
         canvas: canvas,
         logoImage: logoImage,
@@ -231,7 +235,7 @@ class MinimalLayout extends WatermarkLayout {
         y: logoY,
         maxWidth: drawW,
         maxHeight: drawH,
-        opacity: 0.9,
+        opacity: 1.0,
       );
     }
   }
@@ -315,13 +319,13 @@ class MinimalLayout extends WatermarkLayout {
                         Container(
                           padding: const EdgeInsets.all(4),
                           decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.08),
+                            color: Colors.white.withOpacity(0.10),
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: Image.file(
                             File(logoPath),
-                            width: metrics.logoMaxSize * 0.5,
-                            height: metrics.logoMaxSize * 0.5,
+                            width: metrics.logoMaxSize * 0.55,
+                            height: metrics.logoMaxSize * 0.55,
                             fit: BoxFit.contain,
                             errorBuilder: (_, __, ___) =>
                                 const Icon(Icons.business, color: Colors.white38, size: 14),
