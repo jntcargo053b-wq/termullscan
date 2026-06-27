@@ -1,3 +1,6 @@
+// ============================================================
+// lib/watermark/layouts/professional_layout.dart (FINAL - PREMIUM)
+// ============================================================
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -19,7 +22,6 @@ class ProfessionalLayout extends WatermarkLayout {
   @override
   WatermarkStyle get style => WatermarkStyle.professional;
 
-  // Warna accent korporat — biru abu netral, bukan brand-spesifik.
   static const Color _accentColor = Color(0xFF4FA8E8);
 
   @override
@@ -36,12 +38,11 @@ class ProfessionalLayout extends WatermarkLayout {
     if (data.hasOperator) rowCount++;
     rowCount++; // location
 
-    // ✅ Gunakan data.fontSize, bukan auto-calc
     final fontSz = data.fontSize;
-    final lineH = fontSz * 1.45; // sedikit lebih lega untuk kesan rapi
+    final lineH = fontSz * 1.45;
 
     final overlayHeight = math.max(
-      photoHeight * 0.14, // minimal 14% dari foto
+      photoHeight * 0.14,
       rowCount * lineH + padding * 1.8,
     );
 
@@ -58,8 +59,8 @@ class ProfessionalLayout extends WatermarkLayout {
       stripHeight: overlayHeight,
       logoMaxSize: logoMaxSize,
       textRowCount: rowCount,
-      canvasWidth: photoWidth,   // ✅ TETAP
-      canvasHeight: photoHeight, // ✅ TIDAK DIUBAH
+      canvasWidth: photoWidth,
+      canvasHeight: photoHeight,
       textAvailableWidth: textW,
     );
   }
@@ -108,7 +109,6 @@ class ProfessionalLayout extends WatermarkLayout {
         overlayAtBottom = true;
     }
 
-    // ✅ Gambar foto full
     canvas.drawImageRect(
       srcImage,
       Rect.fromLTWH(0, 0, photoWidth, photoHeight),
@@ -118,7 +118,6 @@ class ProfessionalLayout extends WatermarkLayout {
         ..isAntiAlias = true,
     );
 
-    // --- Overlay gradient halus, lebih dalam & premium dari versi lama ---
     final gradientPaint = Paint()
       ..shader = ui.Gradient.linear(
         Offset(0, overlayTop),
@@ -141,7 +140,6 @@ class ProfessionalLayout extends WatermarkLayout {
       gradientPaint,
     );
 
-    // Garis tipis pemisah antara foto dan overlay — kesan "panel data".
     final dividerY = overlayAtBottom ? overlayTop : overlayTop + overlayHeight;
     canvas.drawLine(
       Offset(0, dividerY),
@@ -160,7 +158,6 @@ class ProfessionalLayout extends WatermarkLayout {
         : photoWidth - padding - textContentWidth;
     double textY = overlayTop + padding * 0.95;
 
-    // --- Accent bar vertikal di sisi teks — elemen khas dokumen korporat ---
     final barX = textAlign == TextAlign.left
         ? padding
         : photoWidth - padding - accentBarW;
@@ -182,9 +179,6 @@ class ProfessionalLayout extends WatermarkLayout {
       double fontSize, {
       FontWeight fontWeight = FontWeight.w500,
     }) {
-      // Label kecil huruf kapital — gaya field dokumen formal.
-      // Catatan: TextHelper.paintText tidak punya parameter letterSpacing,
-      // jadi spasi antar huruf disimulasikan manual lewat join karakter.
       TextHelper.paintText(
         canvas: canvas,
         text: _spaceOutLabel(label),
@@ -258,8 +252,6 @@ class ProfessionalLayout extends WatermarkLayout {
           ? photoHeight - padding - drawH
           : padding;
 
-      // Card halus transparan di belakang logo agar tidak tenggelam
-      // di foto terang maupun gelap.
       final cardPad = drawW * 0.12;
       canvas.drawRRect(
         RRect.fromRectAndRadius(
@@ -286,9 +278,6 @@ class ProfessionalLayout extends WatermarkLayout {
     }
   }
 
-  /// TextHelper.paintText tidak mendukung letterSpacing, jadi untuk label
-  /// kapital kecil (mis. "KODE BARANG") kita simulasikan jarak antar huruf
-  /// secara manual dengan menyisipkan spasi tipis di antara karakter.
   String _spaceOutLabel(String label) {
     return label.split('').join('\u200a ');
   }
@@ -321,7 +310,6 @@ class ProfessionalLayout extends WatermarkLayout {
         aspectRatio: previewWidth / previewHeight,
         child: Stack(
           children: [
-            // Simulasi foto dasar.
             Container(
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
@@ -334,7 +322,6 @@ class ProfessionalLayout extends WatermarkLayout {
                 child: Icon(Icons.image, color: Colors.white12, size: 28),
               ),
             ),
-            // Overlay gradient gelap di posisi yang sesuai.
             Align(
               alignment: isBottom ? Alignment.bottomCenter : Alignment.topCenter,
               child: FractionallySizedBox(
@@ -392,7 +379,6 @@ class ProfessionalLayout extends WatermarkLayout {
                 ),
               ),
             ),
-            // Label nama layout.
             Positioned(
               top: 6,
               left: 6,
