@@ -1,5 +1,5 @@
 // ============================================================
-// 7. lib/watermark/watermark_renderer.dart
+// lib/watermark/watermark_renderer.dart (optimasi single decode)
 // ============================================================
 import 'dart:io';
 import 'dart:typed_data';
@@ -49,11 +49,11 @@ class WatermarkRenderer {
       }
 
       final imageBytes = await file.readAsBytes();
-      final targetWidth = await _getOptimalTargetWidth(imageBytes);
 
+      // ✅ Single decode: baca dimensi + image sekaligus
       codec = await ui.instantiateImageCodec(
         imageBytes,
-        targetWidth: targetWidth,
+        targetWidth: 1600, // batas optimal
       );
       final frame = await codec.getNextFrame();
       srcImage = frame.image;
@@ -62,7 +62,7 @@ class WatermarkRenderer {
       final photoHeight = srcImage.height.toDouble();
 
       if (settings.hasLogo && settings.logoPath != null && settings.logoPath!.isNotEmpty) {
-        logoCodec = await _loadLogoCodec(settings.logoPath!, targetWidth: targetWidth);
+        logoCodec = await _loadLogoCodec(settings.logoPath!, targetWidth: 1600);
         if (logoCodec != null) {
           final logoFrame = await logoCodec.getNextFrame();
           logoImage = logoFrame.image;
@@ -146,22 +146,6 @@ class WatermarkRenderer {
       srcImage?.dispose();
       logoImage?.dispose();
       outputImage?.dispose();
-    }
-  }
-
-  static Future<int> _getOptimalTargetWidth(Uint8List imageBytes) async {
-    try {
-      final codec = await ui.instantiateImageCodec(imageBytes);
-      try {
-        final frame = await codec.getNextFrame();
-        final originalWidth = frame.image.width;
-        return originalWidth <= 1024 ? originalWidth : 1024;
-      } finally {
-        codec.dispose();
-      }
-    } catch (e) {
-      debugPrint('⚠️ Error membaca ukuran gambar: $e');
-      return 1024;
     }
   }
 
