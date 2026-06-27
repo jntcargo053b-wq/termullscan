@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/log_screen.dart (FINAL - fixed isSelectionMode error)
+// lib/screens/log_screen.dart (FINAL - PREVIEW FOTO + SEARCH)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -158,7 +158,7 @@ class _LogScreenState extends State<LogScreen> {
     return _selectedIds.length == _filteredEntries.length;
   }
 
-  // ─── PHOTO PREVIEW ──────────────────────────────────────────────
+  // ─── PREVIEW FOTO ──────────────────────────────────────────────────
   void _showPhotoPreview(ScanEntry entry, {int initialIndex = 0}) {
     final List<String> paths = entry.photoPaths ?? [];
     if (paths.isEmpty && entry.type == ScanType.photo && entry.value.isNotEmpty) {
@@ -194,7 +194,7 @@ class _LogScreenState extends State<LogScreen> {
     );
   }
 
-  // ─── SHARE FOTO ──────────────────────────────────────────────────────
+  // ─── SHARE FOTO ──────────────────────────────────────────────────
   Future<void> _shareSelectedPhotos() async {
     if (_selectedIds.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -285,7 +285,7 @@ class _LogScreenState extends State<LogScreen> {
     }
   }
 
-  // ─── EXPORT TEXT ────────────────────────────────────────────────────
+  // ─── EXPORT TEXT ──────────────────────────────────────────────────
   Future<void> _exportAndShare() async {
     if (_filteredEntries.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -303,7 +303,7 @@ class _LogScreenState extends State<LogScreen> {
     }
   }
 
-  // ─── DELETE ──────────────────────────────────────────────────────────
+  // ─── DELETE ──────────────────────────────────────────────────────
   Future<void> _deleteEntry(ScanEntry entry) async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -587,7 +587,7 @@ class _LogScreenState extends State<LogScreen> {
   }
 }
 
-// ─── Filter Chip ──────────────────────────────────────
+// ─── Filter Chip ──────────────────────────────────────────────────
 class _FilterChip extends StatelessWidget {
   final String label;
   final bool selected;
@@ -620,7 +620,7 @@ class _FilterChip extends StatelessWidget {
   }
 }
 
-// ─── Log Item ────────────────────────────────────────────────
+// ─── Log Item ──────────────────────────────────────────────────
 class _LogItem extends StatelessWidget {
   final ScanEntry entry;
   final bool isSelected;
@@ -657,7 +657,6 @@ class _LogItem extends StatelessWidget {
         leading: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // ✅ Perbaikan: gunakan onTap != null sebagai indikator mode seleksi
             if (onTap != null)
               Padding(
                 padding: const EdgeInsets.only(right: 8),
