@@ -1,5 +1,5 @@
 // ============================================================
-// lib/watermark/layouts/professional_layout.dart (FINAL - PREMIUM)
+// lib/watermark/layouts/professional_layout.dart (FINAL - LOGO FIX)
 // ============================================================
 import 'dart:io';
 import 'dart:math' as math;
@@ -46,7 +46,8 @@ class ProfessionalLayout extends WatermarkLayout {
       rowCount * lineH + padding * 1.8,
     );
 
-    final logoMaxSize = baseSize * 0.12;
+    // ✅ LOGO: ukuran diperbesar dari 0.12 → 0.18
+    final logoMaxSize = baseSize * 0.18;
     final rightReserved = logoMaxSize + padding * 1.4;
     final accentBarSpace = baseSize * 0.006 + padding * 0.5;
     final textW = photoWidth - padding * 2 - rightReserved - accentBarSpace;
@@ -238,6 +239,7 @@ class ProfessionalLayout extends WatermarkLayout {
       data.fontSize,
     );
 
+    // ─── LOGO ────────────────────────────────────────────────────
     if (logoImage != null) {
       final logoMaxH = metrics.logoMaxSize;
       final logoW = logoImage.width.toDouble();
@@ -252,7 +254,8 @@ class ProfessionalLayout extends WatermarkLayout {
           ? photoHeight - padding - drawH
           : padding;
 
-      final cardPad = drawW * 0.12;
+      // ✅ Background card lebih gelap agar logo terlihat jelas
+      final cardPad = drawW * 0.15;
       canvas.drawRRect(
         RRect.fromRectAndRadius(
           Rect.fromLTWH(
@@ -261,11 +264,12 @@ class ProfessionalLayout extends WatermarkLayout {
             drawW + cardPad * 2,
             drawH + cardPad * 2,
           ),
-          Radius.circular(cardPad),
+          Radius.circular(cardPad * 0.8),
         ),
-        Paint()..color = Colors.white.withOpacity(0.10),
+        Paint()..color = Colors.black.withOpacity(0.35),
       );
 
+      // ✅ LOGO: opacity full 1.0 agar warna asli terlihat
       LogoWidget.paint(
         canvas: canvas,
         logoImage: logoImage,
@@ -273,7 +277,7 @@ class ProfessionalLayout extends WatermarkLayout {
         y: logoY,
         maxWidth: drawW,
         maxHeight: drawH,
-        opacity: 0.92,
+        opacity: 1.0,
       );
     }
   }
