@@ -1,6 +1,3 @@
-// ============================================================
-// lib/services/database_helper.dart (FIX: getAll tanpa limit)
-// ============================================================
 import 'dart:async';
 import 'dart:io';
 import 'package:path/path.dart';
@@ -26,7 +23,7 @@ class DatabaseHelper {
     final path = join(dir.path, 'scan_log.db');
     return await openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -44,7 +41,10 @@ class DatabaseHelper {
         longitude REAL,
         locationName TEXT,
         note TEXT,
-        photoPaths TEXT
+        photoPaths TEXT,
+        videoPath TEXT,
+        videoDuration INTEGER,
+        videoThumbnail TEXT
       )
     ''');
     await db.execute('CREATE INDEX idx_value ON scan_entries(value)');
@@ -55,6 +55,11 @@ class DatabaseHelper {
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
       await db.execute('ALTER TABLE scan_entries ADD COLUMN photoPaths TEXT');
+    }
+    if (oldVersion < 3) {
+      await db.execute('ALTER TABLE scan_entries ADD COLUMN videoPath TEXT');
+      await db.execute('ALTER TABLE scan_entries ADD COLUMN videoDuration INTEGER');
+      await db.execute('ALTER TABLE scan_entries ADD COLUMN videoThumbnail TEXT');
     }
   }
 
@@ -76,11 +81,10 @@ class DatabaseHelper {
     await batch.commit();
   }
 
-  // ✅ Hapus limit hardcode, kembalikan semua data (tanpa batas)
   Future<List<ScanEntry>> getAll() async {
     final db = await database;
     final result = await db.query('scan_entries',
-        orderBy: 'timestamp DESC'); // tanpa limit
+        orderBy: 'timestamp DESC');
     return result.map((map) => ScanEntry.fromMap(map)).toList();
   }
 
@@ -92,6 +96,7 @@ class DatabaseHelper {
     return ScanEntry.fromMap(result.first);
   }
 
+  // ✅ Perbaikan: cari di value DAN photoPaths
   Future<List<ScanEntry>> getEntries({
     int limit = 20,
     int offset = 0,
@@ -104,7 +109,8 @@ class DatabaseHelper {
     final List<dynamic> args = [];
 
     if (searchQuery != null && searchQuery.isNotEmpty) {
-      where.add('(value LIKE ? OR photoPaths LIKE ?)');
+      where.add('(value LIKE ? OR photoPaths LIKE ? OR videoPath LIKE ?)');
+      args.add('%$searchQuery%');
       args.add('%$searchQuery%');
       args.add('%$searchQuery%');
     }
@@ -142,6 +148,7 @@ class DatabaseHelper {
     return maps.map((map) => ScanEntry.fromMap(map)).toList();
   }
 
+  // ✅ Perbaikan: cari di value DAN photoPaths
   Future<int> getCount({
     String? searchQuery,
     String? period,
@@ -152,7 +159,8 @@ class DatabaseHelper {
     final List<dynamic> args = [];
 
     if (searchQuery != null && searchQuery.isNotEmpty) {
-      where.add('(value LIKE ? OR photoPaths LIKE ?)');
+      where.add('(value LIKE ? OR photoPaths LIKE ? OR videoPath LIKE ?)');
+      args.add('%$searchQuery%');
       args.add('%$searchQuery%');
       args.add('%$searchQuery%');
     }
