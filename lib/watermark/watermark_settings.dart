@@ -19,53 +19,56 @@ class WatermarkSettings {
   static const String _keyBgOpacity = 'watermark_bg_opacity';
   static const String _keyFontFamily = 'watermark_font_family';
 
-  // Semua field diinisialisasi dengan nilai default, bukan late
-  String operatorName = '';
-  WatermarkStyle style = WatermarkStyle.professional;
+  // ✅ Semua field memiliki nilai default (tidak late)
+  String operatorName;
+  WatermarkStyle style;
   String? logoPath;
-  bool hasLogo = false;
-
-  WatermarkPosition position = WatermarkPosition.bottomRight;
-  double fontSize = 14.0;
-  double backgroundOpacity = 0.55;
-  String fontFamily = 'Roboto';
+  bool hasLogo;
+  WatermarkPosition position;
+  double fontSize;
+  double backgroundOpacity;
+  String fontFamily;
 
   bool _loaded = false;
 
-  WatermarkSettings() {
-    load(); // async, tapi tidak menunggu. 
-    // Namun kita pastikan load menetapkan nilai default jika gagal.
+  WatermarkSettings()
+      : operatorName = '',
+        style = WatermarkStyle.professional,
+        logoPath = null,
+        hasLogo = false,
+        position = WatermarkPosition.bottomRight,
+        fontSize = 14.0,
+        backgroundOpacity = 0.85,
+        fontFamily = 'Roboto' {
+    load(); // load async, tapi field sudah punya default
   }
 
   Future<void> load() async {
+    if (_loaded) return;
     try {
       final prefs = await SharedPreferences.getInstance();
       operatorName = prefs.getString(_keyOperatorName) ?? '';
       final styleIndex = prefs.getInt(_keyStyle) ?? WatermarkStyle.professional.index;
       final values = WatermarkStyle.values;
-      if (styleIndex >= 0 && styleIndex < values.length) {
-        style = values[styleIndex];
-      } else {
-        style = WatermarkStyle.professional;
-      }
+      style = (styleIndex >= 0 && styleIndex < values.length)
+          ? values[styleIndex]
+          : WatermarkStyle.professional;
       logoPath = prefs.getString(_keyLogoPath);
       hasLogo = prefs.getBool(_keyHasLogo) ?? false;
-
       final posIndex = prefs.getInt(_keyPosition) ?? WatermarkPosition.bottomRight.index;
       final posValues = WatermarkPosition.values;
       position = (posIndex >= 0 && posIndex < posValues.length)
           ? posValues[posIndex]
           : WatermarkPosition.bottomRight;
       fontSize = prefs.getDouble(_keyFontSize) ?? 14.0;
-      backgroundOpacity = prefs.getDouble(_keyBgOpacity) ?? 0.55;
+      backgroundOpacity = prefs.getDouble(_keyBgOpacity) ?? 0.85;
       fontFamily = prefs.getString(_keyFontFamily) ?? 'Roboto';
-
       _loaded = true;
-      debugPrint('✅ Watermark settings loaded: style=${style.name}, position=$position, fontSize=$fontSize, fontFamily=$fontFamily');
+      debugPrint('✅ Watermark settings loaded');
     } catch (e) {
       debugPrint('⚠️ Error loading watermark settings: $e, using defaults');
-      // Semua field sudah memiliki nilai default, jadi tidak perlu set ulang
-      _loaded = true; // tetap tandai sudah dimuat meskipun error
+      // Semua field sudah memiliki default, tidak crash
+      _loaded = true;
     }
   }
 
@@ -80,17 +83,17 @@ class WatermarkSettings {
         await prefs.remove(_keyLogoPath);
       }
       await prefs.setBool(_keyHasLogo, hasLogo);
-
       await prefs.setInt(_keyPosition, position.index);
       await prefs.setDouble(_keyFontSize, fontSize);
       await prefs.setDouble(_keyBgOpacity, backgroundOpacity);
       await prefs.setString(_keyFontFamily, fontFamily);
-
       debugPrint('✅ Watermark settings saved');
     } catch (e) {
       debugPrint('⚠️ Error saving watermark settings: $e');
     }
   }
+
+  // ─── Setter ────────────────────────────────────────────────
 
   Future<void> setOperatorName(String name) async {
     operatorName = name;
@@ -131,15 +134,6 @@ class WatermarkSettings {
   Future<void> clearLogo() async {
     logoPath = null;
     hasLogo = false;
-    await save();
-  }
-
-  Future<void> resetToDefaults() async {
-    style = WatermarkStyle.professional;
-    position = WatermarkPosition.bottomRight;
-    fontSize = 14.0;
-    backgroundOpacity = 0.85;
-    fontFamily = 'Roboto';
     await save();
   }
 }
