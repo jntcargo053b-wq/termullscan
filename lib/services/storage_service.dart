@@ -1,5 +1,5 @@
 // ============================================================
-// lib/services/storage_service.dart (FINAL - optimized stream)
+// lib/services/storage_service.dart (FINAL - fully optimized)
 // ============================================================
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -12,6 +12,10 @@ import 'database_helper.dart';
 class StorageService {
   final Uuid _uuid = const Uuid();
   final DatabaseHelper _db = DatabaseHelper();
+
+  // Cache untuk menyimpan angka terakhir per barcode prefix
+  // Agar tidak scan ulang direktori setiap kali
+  final Map<String, int> _maxNumberCache = {};
 
   String generateId() => _uuid.v4();
 
@@ -91,29 +95,16 @@ class StorageService {
       if (name != null && name.isNotEmpty) {
         // Ekstrak base name tanpa ekstensi dan tanpa angka di akhir
         String baseName = name.endsWith('.jpg') ? name.substring(0, name.length - 4) : name;
-        // Hapus angka di akhir (jika ada) untuk mendapatkan base murni
         String pureBase = baseName.replaceFirst(RegExp(r'\d+$'), '');
-        // Cek apakah file dengan nama persis sudah ada
         String candidate = '$pureBase.jpg';
+
         if (!await File('${photosDir.path}/$candidate').exists()) {
           fileName = candidate;
+          // Reset cache untuk prefix ini karena file baru dibuat
+          _maxNumberCache.remove(pureBase);
         } else {
-          // Scan direktori untuk mencari angka maksimum (gunakan stream, tidak load semua ke memori)
-          int maxNumber = 1; // ABC.jpg dianggap angka 1 (foto pertama)
-          final RegExp regExp = RegExp(r'^' + RegExp.escape(pureBase) + r'(\d{0,3})\.jpg$');
-          await for (var entity in photosDir.list()) {
-            if (entity is File) {
-              final filename = entity.path.split('/').last;
-              final match = regExp.firstMatch(filename);
-              if (match != null) {
-                final numStr = match.group(1);
-                if (numStr != null && numStr.isNotEmpty) {
-                  final num = int.tryParse(numStr) ?? 0;
-                  if (num > maxNumber) maxNumber = num;
-                }
-              }
-            }
-          }
+          // Cari angka maksimum untuk prefix ini
+          int maxNumber = await _findMaxNumberForPrefix(photosDir, pureBase);
           int nextNumber = maxNumber + 1;
           fileName = '$pureBase${nextNumber.toString().padLeft(3, '0')}.jpg';
         }
@@ -134,16 +125,41 @@ class StorageService {
     }
   }
 
-  Future<void> deletePhoto(String path) async {
-    try {
-      final file = File(path);
-      if (await file.exists()) {
-        await file.delete();
-        debugPrint('🗑️ Photo deleted: $path');
-      }
-    } catch (e) {
-      debugPrint('⚠️ Storage: error deleting photo: $e');
+  // ─── FIND MAX NUMBER FOR PREFIX (dengan stream) ──────────────
+
+  Future<int> _findMaxNumberForPrefix(Directory photosDir, String pureBase) async {
+    // Cek cache dulu
+    if (_maxNumberCache.containsKey(pureBase)) {
+      return _maxNumberCache[pureBase]!;
     }
+
+    int maxNumber = 0;
+    final RegExp regExp = RegExp(r'^' + RegExp.escape(pureBase) + r'(\d{0,3})\.jpg$');
+
+    // ✅ Scan direktori dengan stream, tidak load semua ke memory
+    await for (final entity in photosDir.list()) {
+      if (entity is File) {
+        final filename = entity.path.split('/').last;
+        final match = regExp.firstMatch(filename);
+        if (match != null) {
+          final numStr = match.group(1);
+          if (numStr != null && numStr.isNotEmpty) {
+            final num = int.tryParse(numStr) ?? 0;
+            if (num > maxNumber) maxNumber = num;
+          }
+        }
+      }
+    }
+
+    // Simpan di cache
+    _maxNumberCache[pureBase] = maxNumber;
+    return maxNumber;
+  }
+
+  // ─── CLEAR CACHE (opsional, saat file dihapus) ──────────────
+
+  void _clearCacheForPrefix(String pureBase) {
+    _maxNumberCache.remove(pureBase);
   }
 
   // ─── CLEANUP OLD FILES ────────────────────────────────────────
@@ -160,12 +176,20 @@ class StorageService {
       final cutoff = now.subtract(Duration(days: days));
       int deletedCount = 0;
 
-      await for (var entity in photosDir.list()) {
+      // ✅ Stream tidak load semua ke memory
+      await for (final entity in photosDir.list()) {
         if (entity is File && entity.path.endsWith('.jpg')) {
           final stat = await entity.stat();
           if (stat.modified.isBefore(cutoff)) {
+            // Hapus file
             await entity.delete();
             deletedCount++;
+
+            // Bersihkan cache untuk prefix yang terpengaruh
+            final filename = entity.path.split('/').last;
+            final baseName = filename.endsWith('.jpg') ? filename.substring(0, filename.length - 4) : filename;
+            final pureBase = baseName.replaceFirst(RegExp(r'\d+$'), '');
+            _clearCacheForPrefix(pureBase);
           }
         }
       }
@@ -174,6 +198,24 @@ class StorageService {
       }
     } catch (e) {
       debugPrint('⚠️ Error cleaning up old files: $e');
+    }
+  }
+
+  // ─── DELETE PHOTO (update cache) ─────────────────────────────
+
+  Future<void> deletePhoto(String path) async {
+    try {
+      final file = File(path);
+      if (await file.exists()) {
+        final filename = file.path.split('/').last;
+        final baseName = filename.endsWith('.jpg') ? filename.substring(0, filename.length - 4) : filename;
+        final pureBase = baseName.replaceFirst(RegExp(r'\d+$'), '');
+        await file.delete();
+        _clearCacheForPrefix(pureBase);
+        debugPrint('🗑️ Photo deleted: $path');
+      }
+    } catch (e) {
+      debugPrint('⚠️ Storage: error deleting photo: $e');
     }
   }
 
