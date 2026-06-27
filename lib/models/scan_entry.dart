@@ -12,7 +12,7 @@ class ScanEntry {
   final double? longitude;
   final String? locationName;
   final String? note;
-  final List<String>? photoPaths; // ✅ multiple photos support
+  final List<String>? photoPaths;
 
   ScanEntry({
     required this.id,
@@ -92,9 +92,13 @@ class ScanEntry {
     'photoPaths': photoPaths?.join(','),
   };
 
+  // ✅ Perbaikan: tambahkan orElse agar tidak crash jika type tidak dikenal
   factory ScanEntry.fromMap(Map<String, dynamic> map) => ScanEntry(
     id: map['id'],
-    type: ScanType.values.firstWhere((e) => e.name == map['type']),
+    type: ScanType.values.firstWhere(
+      (e) => e.name == map['type'],
+      orElse: () => ScanType.photo, // ← aman jika type null atau tidak dikenal
+    ),
     value: map['value'],
     barcodeFormat: map['barcodeFormat'],
     timestamp: DateTime.fromMillisecondsSinceEpoch(map['timestamp']),
