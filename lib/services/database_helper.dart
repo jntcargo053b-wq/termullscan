@@ -1,5 +1,5 @@
 // ============================================================
-// lib/services/database_helper.dart (FINAL)
+// lib/services/database_helper.dart (perbaikan search)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -54,7 +54,6 @@ class DatabaseHelper {
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
-      // Tambahkan kolom photoPaths untuk migrasi dari versi 1 ke 2
       await db.execute('ALTER TABLE scan_entries ADD COLUMN photoPaths TEXT');
     }
   }
@@ -103,8 +102,10 @@ class DatabaseHelper {
     final List<String> where = [];
     final List<dynamic> args = [];
 
+    // ✅ SEARCH: cari di value dan photoPaths
     if (searchQuery != null && searchQuery.isNotEmpty) {
-      where.add('value LIKE ?');
+      where.add('(value LIKE ? OR photoPaths LIKE ?)');
+      args.add('%$searchQuery%');
       args.add('%$searchQuery%');
     }
 
@@ -150,8 +151,10 @@ class DatabaseHelper {
     final List<String> where = [];
     final List<dynamic> args = [];
 
+    // ✅ SEARCH: sama seperti di getEntries
     if (searchQuery != null && searchQuery.isNotEmpty) {
-      where.add('value LIKE ?');
+      where.add('(value LIKE ? OR photoPaths LIKE ?)');
+      args.add('%$searchQuery%');
       args.add('%$searchQuery%');
     }
 
