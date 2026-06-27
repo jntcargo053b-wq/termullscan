@@ -1,34 +1,45 @@
-// ============================================================
-// android/build.gradle (ROOT) - Versi Stabil
-// ============================================================
+plugins {
+    id "com.android.application"
+    id "org.jetbrains.kotlin.android"
+    id "dev.flutter.flutter-gradle-plugin"
+}
 
-buildscript {
-    repositories {
-        google()
-        mavenCentral()
+android {
+    namespace "com.termulscan.whscanner"
+    compileSdk = 35
+
+    defaultConfig {
+        applicationId "com.termulscan.whscanner"
+        minSdk = 21
+        targetSdk = 35   // ✅ sesuaikan dengan compileSdk
+        versionCode = flutter.versionCode
+        versionName = flutter.versionName
     }
-    dependencies {
-        // Gunakan AGP 8.7.0 atau sesuaikan dengan Flutter 3.27
-        classpath 'com.android.tools.build:gradle:8.7.0'
-        // classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:2.1.0"  // jika pakai Kotlin
+
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.debug
+            minifyEnabled = false   // ✅ untuk sementara matikan agar tidak konflik
+            shrinkResources = false // ✅ matikan juga
+            // proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+        debug {
+            signingConfig = signingConfigs.debug
+            minifyEnabled = false
+            shrinkResources = false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
     }
 }
 
-allprojects {
-    repositories {
-        google()
-        mavenCentral()
-    }
-}
-
-rootProject.buildDir = '../build'
-subprojects {
-    project.buildDir = "${rootProject.buildDir}/${project.name}"
-}
-subprojects {
-    project.evaluationDependsOn(':app')
-}
-
-tasks.register('clean', Delete) {
-    delete rootProject.buildDir
+flutter {
+    source = "../.."
 }
