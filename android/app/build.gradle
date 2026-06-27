@@ -11,7 +11,7 @@ android {
     defaultConfig {
         applicationId "com.termulscan.whscanner"
         minSdk = 21
-        targetSdk = 35   // ✅ sesuaikan dengan compileSdk
+        targetSdk = 35
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
@@ -19,9 +19,10 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.debug
-            minifyEnabled = false   // ✅ untuk sementara matikan agar tidak konflik
-            shrinkResources = false // ✅ matikan juga
-            // proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            // ✅ Aktifkan optimasi
+            minifyEnabled = true
+            shrinkResources = true
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
         debug {
             signingConfig = signingConfigs.debug
