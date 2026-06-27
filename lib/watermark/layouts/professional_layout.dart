@@ -19,6 +19,9 @@ class ProfessionalLayout extends WatermarkLayout {
   @override
   WatermarkStyle get style => WatermarkStyle.professional;
 
+  // Warna accent korporat — biru abu netral, bukan brand-spesifik.
+  static const Color _accentColor = Color(0xFF4FA8E8);
+
   @override
   LayoutMetrics computeMetrics({
     required double photoWidth,
@@ -35,16 +38,17 @@ class ProfessionalLayout extends WatermarkLayout {
 
     // ✅ Gunakan data.fontSize, bukan auto-calc
     final fontSz = data.fontSize;
-    final lineH = fontSz * 1.4; // spasi antar baris proporsional
+    final lineH = fontSz * 1.45; // sedikit lebih lega untuk kesan rapi
 
     final overlayHeight = math.max(
-      photoHeight * 0.12, // minimal 12% dari foto
-      rowCount * lineH + padding * 1.6,
+      photoHeight * 0.14, // minimal 14% dari foto
+      rowCount * lineH + padding * 1.8,
     );
 
     final logoMaxSize = baseSize * 0.12;
-    final rightReserved = logoMaxSize + padding;
-    final textW = photoWidth - padding * 2 - rightReserved;
+    final rightReserved = logoMaxSize + padding * 1.4;
+    final accentBarSpace = baseSize * 0.006 + padding * 0.5;
+    final textW = photoWidth - padding * 2 - rightReserved - accentBarSpace;
 
     return LayoutMetrics(
       baseSize: baseSize,
@@ -71,30 +75,37 @@ class ProfessionalLayout extends WatermarkLayout {
     required WatermarkData data,
   }) {
     final padding = metrics.padding;
+    final baseSize = metrics.baseSize;
     final overlayHeight = metrics.stripHeight;
     double overlayTop;
     TextAlign textAlign;
+    final bool overlayAtBottom;
 
     switch (data.position) {
       case WatermarkPosition.bottomRight:
         overlayTop = photoHeight - overlayHeight;
         textAlign = TextAlign.right;
+        overlayAtBottom = true;
         break;
       case WatermarkPosition.bottomLeft:
         overlayTop = photoHeight - overlayHeight;
         textAlign = TextAlign.left;
+        overlayAtBottom = true;
         break;
       case WatermarkPosition.topRight:
         overlayTop = 0;
         textAlign = TextAlign.right;
+        overlayAtBottom = false;
         break;
       case WatermarkPosition.topLeft:
         overlayTop = 0;
         textAlign = TextAlign.left;
+        overlayAtBottom = false;
         break;
       default:
         overlayTop = photoHeight - overlayHeight;
         textAlign = TextAlign.right;
+        overlayAtBottom = true;
     }
 
     // ✅ Gambar foto full
@@ -107,36 +118,93 @@ class ProfessionalLayout extends WatermarkLayout {
         ..isAntiAlias = true,
     );
 
-    // ✅ Overlay transparan di atas foto
+    // --- Overlay gradient halus, lebih dalam & premium dari versi lama ---
     final gradientPaint = Paint()
       ..shader = ui.Gradient.linear(
         Offset(0, overlayTop),
         Offset(0, overlayTop + overlayHeight),
-        [
-          Colors.black.withOpacity(0.0),
-          Colors.black.withOpacity(data.backgroundOpacity),
-        ],
+        overlayAtBottom
+            ? [
+                Colors.black.withOpacity(0.0),
+                Colors.black.withOpacity(data.backgroundOpacity * 0.55),
+                Colors.black.withOpacity(data.backgroundOpacity),
+              ]
+            : [
+                Colors.black.withOpacity(data.backgroundOpacity),
+                Colors.black.withOpacity(data.backgroundOpacity * 0.55),
+                Colors.black.withOpacity(0.0),
+              ],
+        overlayAtBottom ? [0.0, 0.45, 1.0] : [0.0, 0.55, 1.0],
       );
     canvas.drawRect(
       Rect.fromLTWH(0, overlayTop, photoWidth, overlayHeight),
       gradientPaint,
     );
 
-    final textContentWidth = metrics.textAvailableWidth;
-    final double textX = textAlign == TextAlign.left
-        ? padding
-        : photoWidth - padding - textContentWidth;
-    double textY = overlayTop + padding;
+    // Garis tipis pemisah antara foto dan overlay — kesan "panel data".
+    final dividerY = overlayAtBottom ? overlayTop : overlayTop + overlayHeight;
+    canvas.drawLine(
+      Offset(0, dividerY),
+      Offset(photoWidth, dividerY),
+      Paint()
+        ..color = Colors.white.withOpacity(0.10)
+        ..strokeWidth = 1,
+    );
 
-    void drawText(String text, Color color, double fontSize,
-        {FontWeight fontWeight = FontWeight.w500}) {
+    final textContentWidth = metrics.textAvailableWidth;
+    final accentBarW = math.max(2.0, baseSize * 0.004);
+    final accentBarSpace = accentBarW + padding * 0.5;
+
+    final double textX = textAlign == TextAlign.left
+        ? padding + accentBarSpace
+        : photoWidth - padding - textContentWidth;
+    double textY = overlayTop + padding * 0.95;
+
+    // --- Accent bar vertikal di sisi teks — elemen khas dokumen korporat ---
+    final barX = textAlign == TextAlign.left
+        ? padding
+        : photoWidth - padding - accentBarW;
+    final textBlockHeight = metrics.textRowCount * metrics.lineHeight;
+    canvas.drawRect(
+      Rect.fromLTWH(
+        barX,
+        overlayTop + padding * 0.85,
+        accentBarW,
+        textBlockHeight,
+      ),
+      Paint()..color = _accentColor.withOpacity(0.9),
+    );
+
+    void drawLabelValue(
+      String label,
+      String value,
+      Color valueColor,
+      double fontSize, {
+      FontWeight fontWeight = FontWeight.w500,
+    }) {
+      // Label kecil huruf kapital — gaya field dokumen formal.
+      // Catatan: TextHelper.paintText tidak punya parameter letterSpacing,
+      // jadi spasi antar huruf disimulasikan manual lewat join karakter.
       TextHelper.paintText(
         canvas: canvas,
-        text: text,
+        text: _spaceOutLabel(label),
         x: textX,
         y: textY,
         maxWidth: textContentWidth,
-        color: color,
+        color: Colors.white.withOpacity(0.45),
+        fontSize: fontSize * 0.62,
+        fontWeight: FontWeight.w700,
+        maxLines: 1,
+        textAlign: textAlign,
+        fontFamily: data.fontFamily,
+      );
+      TextHelper.paintText(
+        canvas: canvas,
+        text: value,
+        x: textX,
+        y: textY + fontSize * 0.78,
+        maxWidth: textContentWidth,
+        color: valueColor,
         fontSize: fontSize,
         fontWeight: fontWeight,
         maxLines: 1,
@@ -147,14 +215,34 @@ class ProfessionalLayout extends WatermarkLayout {
     }
 
     if (data.hasBarcode) {
-      drawText('🏷 ${data.barcodeValue}', Colors.white, data.fontSize + 2,
-          fontWeight: FontWeight.w700);
+      drawLabelValue(
+        'KODE BARANG',
+        data.barcodeValue ?? '',
+        Colors.white,
+        data.fontSize + 1,
+        fontWeight: FontWeight.w700,
+      );
     }
     if (data.hasOperator) {
-      drawText('👤 ${data.operatorName}', Colors.white70, data.fontSize);
+      drawLabelValue(
+        'OPERATOR',
+        data.operatorName,
+        Colors.white.withOpacity(0.92),
+        data.fontSize,
+      );
     }
-    drawText('📅 ${data.formattedTimestamp}', Colors.white70, data.fontSize);
-    drawText('📍 ${data.displayLocation}', Colors.white60, data.fontSize);
+    drawLabelValue(
+      'WAKTU',
+      data.formattedTimestamp,
+      Colors.white.withOpacity(0.80),
+      data.fontSize,
+    );
+    drawLabelValue(
+      'LOKASI',
+      data.displayLocation,
+      Colors.white.withOpacity(0.70),
+      data.fontSize,
+    );
 
     if (logoImage != null) {
       final logoMaxH = metrics.logoMaxSize;
@@ -166,9 +254,25 @@ class ProfessionalLayout extends WatermarkLayout {
       double logoX = textAlign == TextAlign.left
           ? photoWidth - padding - drawW
           : padding;
-      double logoY = overlayTop == 0
+      double logoY = overlayAtBottom
           ? photoHeight - padding - drawH
           : padding;
+
+      // Card halus transparan di belakang logo agar tidak tenggelam
+      // di foto terang maupun gelap.
+      final cardPad = drawW * 0.12;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(
+            logoX - cardPad,
+            logoY - cardPad,
+            drawW + cardPad * 2,
+            drawH + cardPad * 2,
+          ),
+          Radius.circular(cardPad),
+        ),
+        Paint()..color = Colors.white.withOpacity(0.10),
+      );
 
       LogoWidget.paint(
         canvas: canvas,
@@ -177,9 +281,16 @@ class ProfessionalLayout extends WatermarkLayout {
         y: logoY,
         maxWidth: drawW,
         maxHeight: drawH,
-        opacity: 0.8,
+        opacity: 0.92,
       );
     }
+  }
+
+  /// TextHelper.paintText tidak mendukung letterSpacing, jadi untuk label
+  /// kapital kecil (mis. "KODE BARANG") kita simulasikan jarak antar huruf
+  /// secara manual dengan menyisipkan spasi tipis di antara karakter.
+  String _spaceOutLabel(String label) {
+    return label.split('').join('\u200a ');
   }
 
   @override
@@ -196,93 +307,210 @@ class ProfessionalLayout extends WatermarkLayout {
       data: previewData,
     );
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
+    final overlayFractionHeight = metrics.stripHeight / previewHeight;
+    final isBottom = previewData.position == WatermarkPosition.bottomRight ||
+        previewData.position == WatermarkPosition.bottomLeft ||
+        (previewData.position != WatermarkPosition.topLeft &&
+            previewData.position != WatermarkPosition.topRight);
+    final isLeftAligned = previewData.position == WatermarkPosition.bottomLeft ||
+        previewData.position == WatermarkPosition.topLeft;
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(6),
+      child: AspectRatio(
+        aspectRatio: previewWidth / previewHeight,
+        child: Stack(
           children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (previewData.hasOperator)
-                    _PreviewRow(label: 'Operator', value: previewData.operatorName),
-                  if (previewData.hasBarcode)
-                    _PreviewRow(label: 'Barcode', value: previewData.barcodeValue!),
-                  _PreviewRow(label: 'Tanggal', value: previewData.formattedTimestamp),
-                  _PreviewRow(label: 'Lokasi', value: previewData.displayLocation),
-                ],
+            // Simulasi foto dasar.
+            Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF33373D), Color(0xFF1B1E22)],
+                ),
+              ),
+              child: const Center(
+                child: Icon(Icons.image, color: Colors.white12, size: 28),
               ),
             ),
-            if (hasLogo && logoPath != null && logoPath.isNotEmpty) ...[
-              const Gap(8),
-              Image.file(
-                File(logoPath),
-                width: metrics.logoMaxSize * 0.6,
-                height: metrics.logoMaxSize * 0.6,
-                fit: BoxFit.contain,
-                errorBuilder: (_, __, ___) => const Icon(Icons.business, color: Colors.white24),
+            // Overlay gradient gelap di posisi yang sesuai.
+            Align(
+              alignment: isBottom ? Alignment.bottomCenter : Alignment.topCenter,
+              child: FractionallySizedBox(
+                heightFactor: overlayFractionHeight.clamp(0.18, 0.9),
+                widthFactor: 1.0,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: isBottom ? Alignment.topCenter : Alignment.bottomCenter,
+                      end: isBottom ? Alignment.bottomCenter : Alignment.topCenter,
+                      colors: [
+                        Colors.black.withOpacity(0.0),
+                        Colors.black.withOpacity(
+                          (previewData.backgroundOpacity).clamp(0.0, 1.0),
+                        ),
+                      ],
+                    ),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisAlignment: isLeftAligned
+                        ? MainAxisAlignment.start
+                        : MainAxisAlignment.end,
+                    children: [
+                      if (isLeftAligned) ...[
+                        _buildAccentBar(),
+                        const Gap(8),
+                        Expanded(child: _buildTextColumn(previewData, isLeftAligned)),
+                      ] else ...[
+                        Expanded(child: _buildTextColumn(previewData, isLeftAligned)),
+                        const Gap(8),
+                        _buildAccentBar(),
+                      ],
+                      if (hasLogo && logoPath != null && logoPath.isNotEmpty) ...[
+                        const Gap(8),
+                        Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.10),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Image.file(
+                            File(logoPath),
+                            width: metrics.logoMaxSize * 0.55,
+                            height: metrics.logoMaxSize * 0.55,
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, __, ___) =>
+                                const Icon(Icons.business, color: Colors.white38, size: 14),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
               ),
-            ],
+            ),
+            // Label nama layout.
+            Positioned(
+              top: 6,
+              left: 6,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade800.withOpacity(0.85),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  displayName,
+                  style: const TextStyle(
+                    color: Colors.grey,
+                    fontSize: 8,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
-        const Gap(6),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-          decoration: BoxDecoration(
-            color: Colors.grey.shade800,
-            borderRadius: BorderRadius.circular(4),
+      ),
+    );
+  }
+
+  Widget _buildAccentBar() {
+    return Container(
+      width: 2.5,
+      height: 36,
+      decoration: BoxDecoration(
+        color: _accentColor,
+        borderRadius: BorderRadius.circular(2),
+      ),
+    );
+  }
+
+  Widget _buildTextColumn(WatermarkData previewData, bool isLeftAligned) {
+    return Column(
+      crossAxisAlignment:
+          isLeftAligned ? CrossAxisAlignment.start : CrossAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (previewData.hasBarcode)
+          _PreviewField(
+            label: 'KODE BARANG',
+            value: previewData.barcodeValue ?? '',
+            valueColor: Colors.white,
+            bold: true,
+            alignEnd: !isLeftAligned,
           ),
-          child: Text(
-            displayName,
-            style: const TextStyle(
-              color: Colors.grey,
-              fontSize: 8,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.5,
-            ),
+        if (previewData.hasOperator)
+          _PreviewField(
+            label: 'OPERATOR',
+            value: previewData.operatorName,
+            valueColor: Colors.white.withOpacity(0.92),
+            alignEnd: !isLeftAligned,
           ),
+        _PreviewField(
+          label: 'WAKTU',
+          value: previewData.formattedTimestamp,
+          valueColor: Colors.white.withOpacity(0.80),
+          alignEnd: !isLeftAligned,
+        ),
+        _PreviewField(
+          label: 'LOKASI',
+          value: previewData.displayLocation,
+          valueColor: Colors.white.withOpacity(0.70),
+          alignEnd: !isLeftAligned,
         ),
       ],
     );
   }
 }
 
-class _PreviewRow extends StatelessWidget {
+class _PreviewField extends StatelessWidget {
   final String label;
   final String value;
-  const _PreviewRow({required this.label, required this.value});
+  final Color valueColor;
+  final bool bold;
+  final bool alignEnd;
+
+  const _PreviewField({
+    required this.label,
+    required this.value,
+    required this.valueColor,
+    this.bold = false,
+    this.alignEnd = false,
+  });
+
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 1.5),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.only(bottom: 3),
+      child: Column(
+        crossAxisAlignment:
+            alignEnd ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          SizedBox(
-            width: 60,
-            child: Text(
-              '$label:',
-              style: const TextStyle(
-                color: Color(0xFF8A95A5),
-                fontSize: 9,
-                fontWeight: FontWeight.w600,
-              ),
-              textAlign: TextAlign.right,
+          Text(
+            label,
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.45),
+              fontSize: 6.5,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.6,
             ),
           ),
-          const Gap(6),
-          Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(
-                color: Color(0xFF1A2A3A),
-                fontSize: 9,
-                fontWeight: FontWeight.w500,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+          Text(
+            value,
+            style: TextStyle(
+              color: valueColor,
+              fontSize: bold ? 10.5 : 9.5,
+              fontWeight: bold ? FontWeight.w800 : FontWeight.w500,
             ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: alignEnd ? TextAlign.right : TextAlign.left,
           ),
         ],
       ),
