@@ -1,5 +1,5 @@
 // ============================================================
-// lib/watermark/layouts/professional_layout.dart (FINAL - LOGO FIX)
+// lib/watermark/layouts/professional_layout.dart (FIXED OVERLAP)
 // ============================================================
 import 'dart:io';
 import 'dart:math' as math;
@@ -39,14 +39,14 @@ class ProfessionalLayout extends WatermarkLayout {
     rowCount++; // location
 
     final fontSz = data.fontSize;
-    final lineH = fontSz * 1.45;
+    // 🔧 Perbaiki lineHeight agar label+value tidak menumpuk
+    final lineH = fontSz * 1.9; // dari 1.45 → 1.9
 
     final overlayHeight = math.max(
       photoHeight * 0.14,
-      rowCount * lineH + padding * 1.8,
+      rowCount * lineH + padding * 2.0, // padding juga ditambah sedikit
     );
 
-    // ✅ LOGO: ukuran diperbesar dari 0.12 → 0.18
     final logoMaxSize = baseSize * 0.18;
     final rightReserved = logoMaxSize + padding * 1.4;
     final accentBarSpace = baseSize * 0.006 + padding * 0.5;
@@ -150,9 +150,12 @@ class ProfessionalLayout extends WatermarkLayout {
         ..strokeWidth = 1,
     );
 
-    final textContentWidth = metrics.textAvailableWidth;
+    // === Perhitungan ulang textContentWidth berdasarkan ada/tidak logo ===
+    final logoMaxSize = metrics.logoMaxSize;
     final accentBarW = math.max(2.0, baseSize * 0.004);
     final accentBarSpace = accentBarW + padding * 0.5;
+    final logoReserve = (logoImage != null) ? logoMaxSize + padding * 1.4 : 0.0;
+    final textContentWidth = photoWidth - padding * 2 - logoReserve - accentBarSpace;
 
     final double textX = textAlign == TextAlign.left
         ? padding + accentBarSpace
@@ -180,6 +183,7 @@ class ProfessionalLayout extends WatermarkLayout {
       double fontSize, {
       FontWeight fontWeight = FontWeight.w500,
     }) {
+      // Label (kecil, kapital)
       TextHelper.paintText(
         canvas: canvas,
         text: _spaceOutLabel(label),
@@ -193,6 +197,7 @@ class ProfessionalLayout extends WatermarkLayout {
         textAlign: textAlign,
         fontFamily: data.fontFamily,
       );
+      // Value
       TextHelper.paintText(
         canvas: canvas,
         text: value,
@@ -206,6 +211,7 @@ class ProfessionalLayout extends WatermarkLayout {
         textAlign: textAlign,
         fontFamily: data.fontFamily,
       );
+      // 🔧 Menggunakan metrics.lineHeight yang sudah diperbesar
       textY += metrics.lineHeight;
     }
 
@@ -239,9 +245,8 @@ class ProfessionalLayout extends WatermarkLayout {
       data.fontSize,
     );
 
-    // ─── LOGO ────────────────────────────────────────────────────
     if (logoImage != null) {
-      final logoMaxH = metrics.logoMaxSize;
+      final logoMaxH = logoMaxSize;
       final logoW = logoImage.width.toDouble();
       final logoH = logoImage.height.toDouble();
       final scale = math.min(logoMaxH / logoW, logoMaxH / logoH);
@@ -254,7 +259,6 @@ class ProfessionalLayout extends WatermarkLayout {
           ? photoHeight - padding - drawH
           : padding;
 
-      // ✅ Background card lebih gelap agar logo terlihat jelas
       final cardPad = drawW * 0.15;
       canvas.drawRRect(
         RRect.fromRectAndRadius(
@@ -269,7 +273,6 @@ class ProfessionalLayout extends WatermarkLayout {
         Paint()..color = Colors.black.withOpacity(0.35),
       );
 
-      // ✅ LOGO: opacity full 1.0 agar warna asli terlihat
       LogoWidget.paint(
         canvas: canvas,
         logoImage: logoImage,
@@ -286,6 +289,7 @@ class ProfessionalLayout extends WatermarkLayout {
     return label.split('').join('\u200a ');
   }
 
+  // ─── PREVIEW ──────────────────────────────────────────────────
   @override
   Widget buildPreview({
     required WatermarkData previewData,
