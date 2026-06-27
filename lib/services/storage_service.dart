@@ -1,5 +1,5 @@
 // ============================================================
-// lib/services/storage_service.dart (FINAL - dengan proteksi overwrite)
+// lib/services/storage_service.dart (FINAL - konsisten format)
 // ============================================================
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -87,22 +87,46 @@ class StorageService {
         await photosDir.create(recursive: true);
       }
 
-      // ✅ Jika name diberikan, gunakan langsung tanpa timestamp
-      // ✅ Cegah overwrite file dengan menambahkan suffix increment
       String fileName;
       if (name != null && name.isNotEmpty) {
-        // Pastikan ekstensi .jpg
+        // Ekstrak base name tanpa ekstensi dan tanpa angka di akhir
         String baseName = name.endsWith('.jpg') ? name.substring(0, name.length - 4) : name;
-        String ext = '.jpg';
+        // Hapus angka di akhir (jika ada) untuk mendapatkan base murni
+        String pureBase = baseName.replaceFirst(RegExp(r'\d+$'), '');
+        // Jika baseName sama dengan pureBase, berarti tidak ada angka
+        bool hasNumber = baseName != pureBase;
 
-        // Periksa apakah file sudah ada, tambahkan counter jika perlu
-        int counter = 0;
-        String candidate = '$baseName$ext';
-        while (await File('${photosDir.path}/$candidate').exists()) {
-          counter++;
-          candidate = '${baseName}_$counter$ext';
+        // Cek apakah file dengan nama persis sudah ada
+        String candidate = '$pureBase.jpg';
+        if (!await File('${photosDir.path}/$candidate').exists()) {
+          fileName = candidate;
+        } else {
+          // Cari file dengan pola pureBase + 0-3 digit (atau tanpa digit)
+          final existingFiles = await photosDir.list().toList();
+          int maxNumber = 1; // ABC.jpg dianggap angka 1 (foto pertama)
+          final RegExp regExp = RegExp(r'^' + RegExp.escape(pureBase) + r'(\d{0,3})\.jpg$');
+          for (var entity in existingFiles) {
+            if (entity is File) {
+              final filename = entity.path.split('/').last;
+              final match = regExp.firstMatch(filename);
+              if (match != null) {
+                final numStr = match.group(1);
+                if (numStr != null && numStr.isNotEmpty) {
+                  final num = int.tryParse(numStr) ?? 0;
+                  if (num > maxNumber) maxNumber = num;
+                }
+              }
+            }
+          }
+          // Jika file dengan angka sudah ada, maxNumber sudah mencakup semua
+          // Tapi kita perlu memastikan bahwa jika tidak ada file dengan angka, maxNumber tetap 1
+          // Karena kita sudah tahu pureBase.jpg ada, maka maxNumber minimal 1.
+          // Namun jika tidak ada file dengan angka sama sekali, maxNumber = 1.
+          // Maka nextNumber = 2.
+          int nextNumber = maxNumber + 1;
+          // Tapi jika sudah ada file dengan angka 999? Kita batasi? Tidak perlu.
+          fileName = '$pureBase${nextNumber.toString().padLeft(3, '0')}.jpg';
         }
-        fileName = candidate;
       } else {
         fileName = '${DateTime.now().millisecondsSinceEpoch}.jpg';
       }
