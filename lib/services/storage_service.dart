@@ -1,5 +1,5 @@
 // ============================================================
-// lib/services/storage_service.dart (FINAL - with cleanup)
+// lib/services/storage_service.dart (FINAL - optimized stream)
 // ============================================================
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -98,11 +98,10 @@ class StorageService {
         if (!await File('${photosDir.path}/$candidate').exists()) {
           fileName = candidate;
         } else {
-          // Cari file dengan pola pureBase + 0-3 digit (atau tanpa digit)
-          final existingFiles = await photosDir.list().toList();
+          // Scan direktori untuk mencari angka maksimum (gunakan stream, tidak load semua ke memori)
           int maxNumber = 1; // ABC.jpg dianggap angka 1 (foto pertama)
           final RegExp regExp = RegExp(r'^' + RegExp.escape(pureBase) + r'(\d{0,3})\.jpg$');
-          for (var entity in existingFiles) {
+          await for (var entity in photosDir.list()) {
             if (entity is File) {
               final filename = entity.path.split('/').last;
               final match = regExp.firstMatch(filename);
