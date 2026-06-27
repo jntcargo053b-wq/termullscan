@@ -1,3 +1,6 @@
+// ============================================================
+// lib/watermark/layouts/minimal_layout.dart (FINAL - PREMIUM)
+// ============================================================
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -19,6 +22,8 @@ class MinimalLayout extends WatermarkLayout {
   @override
   WatermarkStyle get style => WatermarkStyle.minimal;
 
+  static const Color _accentColor = Color(0xFFFFB74D); // soft amber
+
   @override
   LayoutMetrics computeMetrics({
     required double photoWidth,
@@ -28,23 +33,23 @@ class MinimalLayout extends WatermarkLayout {
     final baseSize = LayoutHelper.getBaseSize(photoWidth, photoHeight);
     final padding = LayoutHelper.padding(baseSize);
 
-    int lineCount = 1; // timestamp
+    int lineCount = 1;
     if (data.hasBarcode) lineCount++;
     if (data.hasOperator) lineCount++;
     lineCount++; // location
 
-    // ✅ Gunakan data.fontSize, bukan auto-calc
     final fontSz = data.fontSize;
-    final lineH = fontSz * 1.4; // spasi antar baris proporsional
+    final lineH = fontSz * 1.35;
 
     final overlayHeight = math.max(
-      photoHeight * 0.10, // minimal 10% dari foto
+      photoHeight * 0.10,
       lineCount * lineH + padding * 1.6,
     );
 
     final logoMaxSize = baseSize * 0.13;
-    final rightReserved = logoMaxSize + padding;
-    final textW = photoWidth - padding * 2 - rightReserved;
+    final rightReserved = logoMaxSize + padding * 1.4;
+    final accentBarSpace = baseSize * 0.006 + padding * 0.5;
+    final textW = photoWidth - padding * 2 - rightReserved - accentBarSpace;
 
     return LayoutMetrics(
       baseSize: baseSize,
@@ -54,8 +59,8 @@ class MinimalLayout extends WatermarkLayout {
       stripHeight: overlayHeight,
       logoMaxSize: logoMaxSize,
       textRowCount: lineCount,
-      canvasWidth: photoWidth,   // ✅ TETAP
-      canvasHeight: photoHeight, // ✅ TIDAK DIUBAH
+      canvasWidth: photoWidth,
+      canvasHeight: photoHeight,
       textAvailableWidth: textW,
     );
   }
@@ -71,33 +76,39 @@ class MinimalLayout extends WatermarkLayout {
     required WatermarkData data,
   }) {
     final padding = metrics.padding;
+    final baseSize = metrics.baseSize;
     final overlayHeight = metrics.stripHeight;
     double overlayTop;
     TextAlign textAlign;
+    final bool overlayAtBottom;
 
     switch (data.position) {
       case WatermarkPosition.bottomRight:
         overlayTop = photoHeight - overlayHeight;
         textAlign = TextAlign.right;
+        overlayAtBottom = true;
         break;
       case WatermarkPosition.bottomLeft:
         overlayTop = photoHeight - overlayHeight;
         textAlign = TextAlign.left;
+        overlayAtBottom = true;
         break;
       case WatermarkPosition.topRight:
         overlayTop = 0;
         textAlign = TextAlign.right;
+        overlayAtBottom = false;
         break;
       case WatermarkPosition.topLeft:
         overlayTop = 0;
         textAlign = TextAlign.left;
+        overlayAtBottom = false;
         break;
       default:
         overlayTop = photoHeight - overlayHeight;
         textAlign = TextAlign.right;
+        overlayAtBottom = true;
     }
 
-    // ✅ Gambar foto full
     canvas.drawImageRect(
       srcImage,
       Rect.fromLTWH(0, 0, photoWidth, photoHeight),
@@ -107,15 +118,21 @@ class MinimalLayout extends WatermarkLayout {
         ..isAntiAlias = true,
     );
 
-    // ✅ Overlay transparan di atas foto
+    // Gradien minimalis — tidak terlalu dramatis
     final gradientPaint = Paint()
       ..shader = ui.Gradient.linear(
         Offset(0, overlayTop),
         Offset(0, overlayTop + overlayHeight),
-        [
-          Colors.black.withOpacity(0.0),
-          Colors.black.withOpacity(data.backgroundOpacity),
-        ],
+        overlayAtBottom
+            ? [
+                Colors.black.withOpacity(0.0),
+                Colors.black.withOpacity(data.backgroundOpacity * 0.60),
+              ]
+            : [
+                Colors.black.withOpacity(data.backgroundOpacity * 0.60),
+                Colors.black.withOpacity(0.0),
+              ],
+        overlayAtBottom ? [0.0, 1.0] : [0.0, 1.0],
       );
     canvas.drawRect(
       Rect.fromLTWH(0, overlayTop, photoWidth, overlayHeight),
@@ -123,14 +140,32 @@ class MinimalLayout extends WatermarkLayout {
     );
 
     final textContentWidth = metrics.textAvailableWidth;
+    final accentBarW = math.max(2.0, baseSize * 0.003);
+    final accentBarSpace = accentBarW + padding * 0.5;
+
     final double textX = textAlign == TextAlign.left
-        ? padding
+        ? padding + accentBarSpace
         : photoWidth - padding - textContentWidth;
-    double textY = overlayTop + padding;
+    double textY = overlayTop + padding * 0.8;
+
+    // Accent bar — lebih tipis dan subtil, sesuai gaya minimal
+    final barX = textAlign == TextAlign.left
+        ? padding
+        : photoWidth - padding - accentBarW;
+    final textBlockHeight = metrics.textRowCount * metrics.lineHeight;
+    canvas.drawRect(
+      Rect.fromLTWH(
+        barX,
+        overlayTop + padding * 0.75,
+        accentBarW,
+        textBlockHeight,
+      ),
+      Paint()..color = _accentColor.withOpacity(0.7),
+    );
 
     void drawText(String text, Color color, double fontSize,
         {FontWeight fontWeight = FontWeight.w500, int maxLines = 1}) {
-      final tp = TextHelper.paintText(
+      TextHelper.paintText(
         canvas: canvas,
         text: text,
         x: textX,
@@ -143,18 +178,18 @@ class MinimalLayout extends WatermarkLayout {
         textAlign: textAlign,
         fontFamily: data.fontFamily,
       );
-      textY += tp + fontSize * 0.25;
+      textY += metrics.lineHeight;
     }
 
     if (data.hasBarcode) {
-      drawText(data.barcodeValue!, Colors.white, data.fontSize + 2,
+      drawText(data.barcodeValue!, Colors.white, data.fontSize + 1,
           fontWeight: FontWeight.w700);
     }
     if (data.hasOperator) {
-      drawText(data.operatorName, Colors.white70, data.fontSize);
+      drawText(data.operatorName, Colors.white.withOpacity(0.90), data.fontSize);
     }
-    drawText(data.formattedTimestamp, Colors.white70, data.fontSize - 1);
-    drawText(data.displayLocation, Colors.white60, data.fontSize - 1, maxLines: 1);
+    drawText(data.formattedTimestamp, Colors.white.withOpacity(0.80), data.fontSize - 1);
+    drawText(data.displayLocation, Colors.white.withOpacity(0.70), data.fontSize - 1);
 
     if (data.isManual) {
       drawText('• MANUAL ENTRY', const Color(0xFFFFB74D), data.fontSize - 2,
@@ -171,9 +206,23 @@ class MinimalLayout extends WatermarkLayout {
       double logoX = textAlign == TextAlign.left
           ? photoWidth - padding - drawW
           : padding;
-      double logoY = textAlign == TextAlign.left
+      double logoY = overlayAtBottom
           ? photoHeight - padding - drawH
           : padding;
+
+      final cardPad = drawW * 0.10;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(
+            logoX - cardPad,
+            logoY - cardPad,
+            drawW + cardPad * 2,
+            drawH + cardPad * 2,
+          ),
+          Radius.circular(cardPad),
+        ),
+        Paint()..color = Colors.white.withOpacity(0.08),
+      );
 
       LogoWidget.paint(
         canvas: canvas,
@@ -182,7 +231,7 @@ class MinimalLayout extends WatermarkLayout {
         y: logoY,
         maxWidth: drawW,
         maxHeight: drawH,
-        opacity: 1.0,
+        opacity: 0.9,
       );
     }
   }
@@ -201,84 +250,180 @@ class MinimalLayout extends WatermarkLayout {
       data: previewData,
     );
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
+    final overlayFractionHeight = metrics.stripHeight / previewHeight;
+    final isBottom = previewData.position == WatermarkPosition.bottomRight ||
+        previewData.position == WatermarkPosition.bottomLeft ||
+        (previewData.position != WatermarkPosition.topLeft &&
+            previewData.position != WatermarkPosition.topRight);
+    final isLeftAligned = previewData.position == WatermarkPosition.bottomLeft ||
+        previewData.position == WatermarkPosition.topLeft;
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(6),
+      child: AspectRatio(
+        aspectRatio: previewWidth / previewHeight,
+        child: Stack(
           children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (previewData.operatorName.isNotEmpty) ...[
-                    Text(
-                      previewData.operatorName,
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    const Gap(2),
-                  ],
-                  Text(
-                    previewData.barcodeValue ?? '8991234567890',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const Gap(2),
-                  Text(
-                    previewData.formattedTimestamp,
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 10,
-                    ),
-                  ),
-                  const Gap(2),
-                  Text(
-                    previewData.displayLocation,
-                    style: const TextStyle(
-                      color: Colors.white60,
-                      fontSize: 9,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
+            Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF33373D), Color(0xFF1B1E22)],
+                ),
+              ),
+              child: const Center(
+                child: Icon(Icons.image, color: Colors.white12, size: 28),
               ),
             ),
-            if (hasLogo && logoPath != null && logoPath.isNotEmpty) ...[
-              const Gap(8),
-              Image.file(
-                File(logoPath),
-                width: metrics.logoMaxSize,
-                height: metrics.logoMaxSize,
-                fit: BoxFit.contain,
-                errorBuilder: (_, __, ___) => const Icon(Icons.business, color: Colors.white24),
+            Align(
+              alignment: isBottom ? Alignment.bottomCenter : Alignment.topCenter,
+              child: FractionallySizedBox(
+                heightFactor: overlayFractionHeight.clamp(0.12, 0.8),
+                widthFactor: 1.0,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: isBottom ? Alignment.topCenter : Alignment.bottomCenter,
+                      end: isBottom ? Alignment.bottomCenter : Alignment.topCenter,
+                      colors: [
+                        Colors.black.withOpacity(0.0),
+                        Colors.black.withOpacity(
+                          (previewData.backgroundOpacity).clamp(0.0, 1.0),
+                        ),
+                      ],
+                    ),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    mainAxisAlignment: isLeftAligned
+                        ? MainAxisAlignment.start
+                        : MainAxisAlignment.end,
+                    children: [
+                      if (isLeftAligned) ...[
+                        _buildAccentBar(),
+                        const Gap(8),
+                        Expanded(child: _buildTextColumn(previewData, isLeftAligned)),
+                      ] else ...[
+                        Expanded(child: _buildTextColumn(previewData, isLeftAligned)),
+                        const Gap(8),
+                        _buildAccentBar(),
+                      ],
+                      if (hasLogo && logoPath != null && logoPath.isNotEmpty) ...[
+                        const Gap(8),
+                        Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.08),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Image.file(
+                            File(logoPath),
+                            width: metrics.logoMaxSize * 0.5,
+                            height: metrics.logoMaxSize * 0.5,
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, __, ___) =>
+                                const Icon(Icons.business, color: Colors.white38, size: 14),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
               ),
-            ],
+            ),
+            Positioned(
+              top: 6,
+              left: 6,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade800.withOpacity(0.85),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  displayName,
+                  style: const TextStyle(
+                    color: Colors.grey,
+                    fontSize: 8,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
-        const Gap(6),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-          decoration: BoxDecoration(
-            color: Colors.grey.shade800,
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Text(
-            displayName,
+      ),
+    );
+  }
+
+  Widget _buildAccentBar() {
+    return Container(
+      width: 2.0,
+      height: 28,
+      decoration: BoxDecoration(
+        color: _accentColor,
+        borderRadius: BorderRadius.circular(2),
+      ),
+    );
+  }
+
+  Widget _buildTextColumn(WatermarkData previewData, bool isLeftAligned) {
+    return Column(
+      crossAxisAlignment:
+          isLeftAligned ? CrossAxisAlignment.start : CrossAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (previewData.hasBarcode)
+          Text(
+            previewData.barcodeValue ?? '8991234567890',
             style: const TextStyle(
-              color: Colors.grey,
-              fontSize: 8,
+              color: Colors.white,
+              fontSize: 10,
               fontWeight: FontWeight.w700,
-              letterSpacing: 0.5,
             ),
+            textAlign: isLeftAligned ? TextAlign.left : TextAlign.right,
           ),
+        if (previewData.hasOperator)
+          Text(
+            previewData.operatorName,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 9,
+              fontWeight: FontWeight.w500,
+            ),
+            textAlign: isLeftAligned ? TextAlign.left : TextAlign.right,
+          ),
+        Text(
+          previewData.formattedTimestamp,
+          style: const TextStyle(
+            color: Colors.white60,
+            fontSize: 8,
+          ),
+          textAlign: isLeftAligned ? TextAlign.left : TextAlign.right,
         ),
+        Text(
+          previewData.displayLocation,
+          style: const TextStyle(
+            color: Colors.white54,
+            fontSize: 7.5,
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: isLeftAligned ? TextAlign.left : TextAlign.right,
+        ),
+        if (previewData.isManual)
+          Text(
+            '• MANUAL ENTRY',
+            style: const TextStyle(
+              color: Color(0xFFFFB74D),
+              fontSize: 7,
+              fontWeight: FontWeight.w700,
+            ),
+            textAlign: isLeftAligned ? TextAlign.left : TextAlign.right,
+          ),
       ],
     );
   }
