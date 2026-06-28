@@ -13,9 +13,8 @@ class WatermarkSettings extends ChangeNotifier {
   // ========== SINGLETON ==========
   static final WatermarkSettings _instance = WatermarkSettings._internal();
   factory WatermarkSettings() => _instance;
-  WatermarkSettings._internal();  // konstruktor privat kosong
+  WatermarkSettings._internal();
 
-  // ========== KEYS ==========
   static const String _keyOperatorName = 'watermark_operator_name';
   static const String _keyStyle = 'watermark_style';
   static const String _keyLogoPath = 'watermark_logo_path';
@@ -37,7 +36,6 @@ class WatermarkSettings extends ChangeNotifier {
 
   bool _loaded = false;
 
-  /// Panggil sekali sebelum runApp() untuk memuat data dari SharedPreferences.
   Future<void> load() async {
     if (_loaded) return;
     try {
@@ -66,7 +64,6 @@ class WatermarkSettings extends ChangeNotifier {
     }
   }
 
-  /// Simpan semua pengaturan ke SharedPreferences.
   Future<void> save() async {
     try {
       final prefs = await SharedPreferences.getInstance();
