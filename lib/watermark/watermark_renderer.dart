@@ -3,31 +3,13 @@
 // ============================================================
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
-import 'package:image/image.dart' as img;
-
-// ---- font bawaan dari package:image (ukuran terbatas) ----
-import 'package:image/fonts/arial_14.dart' as arial_14;
-import 'package:image/fonts/arial_24.dart' as arial_24;
-import 'package:image/fonts/arial_48.dart' as arial_48;
-
 import '../models/scan_entry.dart';
+import 'models/watermark_data.dart';
 import 'watermark_style.dart';
+import 'watermark_factory.dart';
 import 'watermark_settings.dart';
-
-/// Objek data yang dikirim ke isolate.
-class _RenderArgs {
-  final Uint8List imageBytes;
-  final Uint8List? logoBytes;
-  final WatermarkSettings settings;
-  final ScanEntry entry;
-  const _RenderArgs({
-    required this.imageBytes,
-    this.logoBytes,
-    required this.settings,
-    required this.entry,
-  });
-}
 
 class WatermarkRenderer {
   static const Set<WatermarkStyle> _stylesWithRealRenderer = {
@@ -38,221 +20,168 @@ class WatermarkRenderer {
   };
 
   /// Render watermark ke file output.
-  /// Berjalan **di background isolate** – aman untuk batch besar.
+  /// Proses terjadi di UI thread, namun dengan single decode & dispose dini
+  /// performa tetap ringan untuk gambar yang sudah di-resize ke 1600px.
   static Future<String?> render({
     required String imagePath,
     required String outputPath,
     required WatermarkSettings settings,
     required ScanEntry entry,
   }) async {
+    if (kDebugMode) {
+      debugPrint('🎯 ===== WATERMARK RENDER START =====');
+      debugPrint('  Style: ${settings.style.name}');
+      debugPrint('  Position: ${settings.position.name}');
+      debugPrint('  FontSize: ${settings.fontSize}');
+      debugPrint('  Opacity: ${settings.backgroundOpacity}');
+      debugPrint('  FontFamily: ${settings.fontFamily}');
+      debugPrint('  Operator: ${settings.operatorName}');
+      debugPrint('  Barcode: ${entry.value}');
+      debugPrint('======================================');
+    }
+
+    ui.Image? srcImage;
+    ui.Image? logoImage;
+    ui.Codec? codec;
+    ui.Codec? logoCodec;
+    ui.Image? outputImage;
+
     try {
-      // Baca file sumber (I/O ringan di UI thread)
-      final srcFile = File(imagePath);
-      if (!await srcFile.exists()) {
+      final file = File(imagePath);
+      if (!await file.exists()) {
         if (kDebugMode) debugPrint('❌ File tidak ditemukan: $imagePath');
         return null;
       }
-      final imageBytes = await srcFile.readAsBytes();
 
-      Uint8List? logoBytes;
-      if (settings.hasLogo && settings.logoPath != null) {
-        final logoFile = File(settings.logoPath!);
-        if (await logoFile.exists()) {
-          logoBytes = await logoFile.readAsBytes();
+      final imageBytes = await file.readAsBytes();
+
+      // ✅ Single decode – langsung ambil dimensi + gambar
+      codec = await ui.instantiateImageCodec(
+        imageBytes,
+        targetWidth: 1600,
+      );
+      final frame = await codec.getNextFrame();
+      srcImage = frame.image;
+
+      // Codec sudah tidak diperlukan – dispose segera
+      codec.dispose();
+      codec = null;
+
+      final photoWidth = srcImage.width.toDouble();
+      final photoHeight = srcImage.height.toDouble();
+
+      // 3. Muat logo opsional (juga single decode)
+      if (settings.hasLogo && settings.logoPath != null && settings.logoPath!.isNotEmpty) {
+        logoCodec = await _loadLogoCodec(settings.logoPath!, targetWidth: 1600);
+        if (logoCodec != null) {
+          final logoFrame = await logoCodec.getNextFrame();
+          logoImage = logoFrame.image;
+          logoCodec.dispose();
+          logoCodec = null;
         }
       }
 
-      // Jalankan seluruh rendering di isolate
-      final outputBytes = await compute(
-        _renderInIsolate,
-        _RenderArgs(
-          imageBytes: imageBytes,
-          logoBytes: logoBytes,
-          settings: settings,
-          entry: entry,
-        ),
+      // 4. Siapkan data watermark
+      final data = WatermarkData(
+        timestamp: entry.timestamp,
+        operatorName: settings.operatorName,
+        barcodeValue: entry.value,
+        barcodeFormat: entry.barcodeFormat,
+        latitude: entry.latitude,
+        longitude: entry.longitude,
+        locationName: entry.locationName,
+        logoPath: settings.logoPath,
+        position: settings.position,
+        fontSize: settings.fontSize,
+        backgroundOpacity: settings.backgroundOpacity,
+        fontFamily: settings.fontFamily,
       );
 
-      // Tulis hasil ke disk
-      final outFile = File(outputPath);
-      await outFile.writeAsBytes(outputBytes);
+      final layout = WatermarkFactory.create(settings.style);
+      if (kDebugMode) debugPrint('✅ Layout created: ${layout.runtimeType}');
+
+      // 5. Hitung ukuran kanvas
+      final metrics = layout.computeMetrics(
+        photoWidth: photoWidth,
+        photoHeight: photoHeight,
+        data: data,
+      );
+
+      if (metrics.canvasWidth <= 0 || metrics.canvasHeight <= 0) {
+        throw Exception('Canvas size invalid');
+      }
+
+      // 6. Gambar di canvas UI (picture recorder)
+      final recorder = ui.PictureRecorder();
+      final canvas = ui.Canvas(recorder);
+
+      layout.paintOnCanvas(
+        canvas: canvas,
+        metrics: metrics,
+        srcImage: srcImage,
+        photoWidth: photoWidth,
+        photoHeight: photoHeight,
+        logoImage: logoImage,
+        data: data,
+      );
+
+      final picture = recorder.endRecording();
+      final canvasWidth = metrics.canvasWidth.round();
+      final canvasHeight = metrics.canvasHeight.round();
+
+      // 7. Render gambar akhir
+      outputImage = await picture.toImage(canvasWidth, canvasHeight);
+
+      // 8. Encode ke PNG lalu tulis file
+      final byteData = await outputImage.toByteData(format: ui.ImageByteFormat.png);
+      outputImage.dispose();
+      outputImage = null; // hindari double dispose
+
+      if (byteData == null) {
+        if (kDebugMode) debugPrint('❌ Gagal encode PNG');
+        return null;
+      }
+
+      final outputFile = File(outputPath);
+      await outputFile.writeAsBytes(byteData.buffer.asUint8List());
 
       if (kDebugMode) {
-        debugPrint('✅ Watermark berhasil disimpan: $outputPath');
+        debugPrint('✅ Watermark saved with style: ${settings.style.name}');
+        debugPrint('   Output: $outputPath');
       }
       return outputPath;
     } catch (e, stack) {
-      if (kDebugMode) debugPrint('❌ Render error: $e\n$stack');
+      if (kDebugMode) debugPrint('❌ Error: $e\n$stack');
+      return null;
+    } finally {
+      // Pastikan semua native resource dibersihkan
+      codec?.dispose();
+      logoCodec?.dispose();
+      srcImage?.dispose();
+      logoImage?.dispose();
+      outputImage?.dispose();
+    }
+  }
+
+  /// Memuat logo dalam ukuran yang proporsional terhadap lebar target.
+  static Future<ui.Codec?> _loadLogoCodec(
+    String logoPath, {
+    required int targetWidth,
+  }) async {
+    try {
+      final logoFile = File(logoPath);
+      if (!await logoFile.exists()) return null;
+
+      final logoBytes = await logoFile.readAsBytes();
+      // Ukuran logo = ~15% dari lebar target, dibatasi 40–200 px
+      final logoTargetWidth = (targetWidth * 0.15).round().clamp(40, 200);
+      return await ui.instantiateImageCodec(
+        logoBytes,
+        targetWidth: logoTargetWidth,
+      );
+    } catch (e) {
+      if (kDebugMode) debugPrint('⚠️ Error memuat logo: $e');
       return null;
     }
   }
-}
-
-// ======================================================================
-// Fungsi top‑level (bebas) yang akan dijalankan di isolate terpisah
-// ======================================================================
-Uint8List _renderInIsolate(_RenderArgs args) {
-  // 1. Decode gambar sumber
-  final src = img.decodeImage(args.imageBytes);
-  if (src == null) throw Exception('Gagal decode gambar sumber');
-
-  // 2. Decode logo (jika ada)
-  img.Image? logo;
-  if (args.logoBytes != null) {
-    logo = img.decodeImage(args.logoBytes!);
-  }
-
-  // 3. Siapkan teks watermark
-  final barcode = args.entry.value;
-  final operator = args.settings.operatorName;
-  final timestamp = args.entry.timestamp.toIso8601String().substring(0, 19);
-
-  // Daftar baris teks (bisa disesuaikan per style)
-  final lines = <String>[];
-  if (args.settings.style == WatermarkStyle.minimal) {
-    lines.add('$barcode');
-    lines.add(operator);
-  } else {
-    lines.add('$barcode');
-    lines.add('Operator: $operator');
-    lines.add(timestamp);
-    if (args.entry.locationName != null && args.entry.locationName!.isNotEmpty) {
-      lines.add(args.entry.locationName!);
-    }
-  }
-
-  // 4. Pilih font bitmap berdasarkan fontSize
-  final font = _selectFont(args.settings.fontSize);
-
-  // 5. Hitung ukuran area teks
-  final textWidths = lines.map((l) => _measureText(l, font)).toList();
-  final textBlockWidth = textWidths.reduce((a, b) => a > b ? a : b);
-  final lineHeight = font.lineHeight + 4; // spasi antar baris
-  final textBlockHeight = lines.length * lineHeight;
-
-  // 6. Ukuran logo
-  int logoWidth = 0, logoHeight = 0;
-  if (logo != null) {
-    // logo di-resize max 120px lebar
-    final maxLogoW = 120;
-    if (logo.width > maxLogoW) {
-      logo = img.copyResize(logo, width: maxLogoW);
-    }
-    logoWidth = logo.width;
-    logoHeight = logo.height;
-  }
-
-  // 7. Hitung total dimensi watermark box
-  final padding = 20;
-  final spacing = 10; // antara logo & teks (jika ada)
-  final boxWidth = textBlockWidth + padding * 2 + (logo != null ? logoWidth + spacing : 0);
-  final boxHeight = (textBlockHeight > logoHeight ? textBlockHeight : logoHeight) + padding * 2;
-
-  // 8. Tentukan posisi di gambar
-  final pos = _calculatePosition(
-    imageW: src.width,
-    imageH: src.height,
-    boxW: boxWidth,
-    boxH: boxHeight,
-    position: args.settings.position,
-    margin: 20,
-  );
-
-  // 9. Gambar background semi-transparan
-  final bgColor = _colorFromOpacity(args.settings.backgroundOpacity);
-  img.fillRect(src, x: pos.dx, y: pos.dy, width: boxWidth, height: boxHeight, color: bgColor);
-
-  // 10. Gambar logo (jika ada)
-  int textStartX = pos.dx + padding;
-  if (logo != null) {
-    final logoY = pos.dy + (boxHeight - logoHeight) ~/ 2;
-    img.compositeImage(src, logo, dstX: textStartX, dstY: logoY);
-    textStartX += logoWidth + spacing;
-  }
-
-  // 11. Gambar teks
-  final textColor = img.ColorRgb8(255, 255, 255); // putih
-  for (int i = 0; i < lines.length; i++) {
-    final line = lines[i];
-    final textY = pos.dy + padding + i * lineHeight + font.ascent;
-    img.drawString(src, line, font: font, x: textStartX, y: textY, color: textColor);
-  }
-
-  // 12. Encode hasil
-  return img.encodePng(src);
-}
-
-// ====================== Helper Functions ======================
-
-/// Pilih font bitmap berdasarkan fontSize (14/24/48). Bisa diperluas.
-img.BitmapFont _selectFont(double fontSize) {
-  if (fontSize >= 36) return arial_48.font;
-  if (fontSize >= 20) return arial_24.font;
-  return arial_14.font;
-}
-
-/// Hitung lebar string dengan font tertentu.
-int _measureText(String text, img.BitmapFont font) {
-  int w = 0;
-  for (int i = 0; i < text.length; i++) {
-    final ch = text.codeUnitAt(i);
-    final glyph = font.glyphs[ch] ?? font.glyphs['?'.codeUnitAt(0)];
-    w += glyph?.xadvance ?? font.lineHeight ~/ 2;
-  }
-  return w;
-}
-
-/// Hasil koordinat
-class _Pos { final int dx, dy; const _Pos(this.dx, this.dy); }
-
-/// Hitung posisi kiri atas watermark box.
-_Pos _calculatePosition({
-  required int imageW,
-  required int imageH,
-  required int boxW,
-  required int boxH,
-  required WatermarkPosition position,
-  required int margin,
-}) {
-  int x, y;
-  switch (position) {
-    case WatermarkPosition.topLeft:
-      x = margin;
-      y = margin;
-      break;
-    case WatermarkPosition.topCenter:
-      x = (imageW - boxW) ~/ 2;
-      y = margin;
-      break;
-    case WatermarkPosition.topRight:
-      x = imageW - boxW - margin;
-      y = margin;
-      break;
-    case WatermarkPosition.center:
-      x = (imageW - boxW) ~/ 2;
-      y = (imageH - boxH) ~/ 2;
-      break;
-    case WatermarkPosition.bottomLeft:
-      x = margin;
-      y = imageH - boxH - margin;
-      break;
-    case WatermarkPosition.bottomCenter:
-      x = (imageW - boxW) ~/ 2;
-      y = imageH - boxH - margin;
-      break;
-    case WatermarkPosition.bottomRight:
-    default:
-      x = imageW - boxW - margin;
-      y = imageH - boxH - margin;
-  }
-  // Pastikan tidak keluar batas (basic clamp)
-  x = x.clamp(0, imageW - boxW);
-  y = y.clamp(0, imageH - boxH);
-  return _Pos(x, y);
-}
-
-/// Konversi opacity (0.0 - 1.0) ke warna RGBA hitam semi-transparan.
-int _colorFromOpacity(double opacity) {
-  final alpha = (opacity * 255).round().clamp(0, 255);
-  return img.ColorRgba8(0, 0, 0, alpha);
 }
