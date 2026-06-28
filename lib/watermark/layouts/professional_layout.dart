@@ -1,5 +1,5 @@
 // ============================================================
-// lib/watermark/layouts/professional_layout.dart (FIXED OVERLAP)
+// lib/watermark/layouts/professional_layout.dart (FINAL)
 // ============================================================
 import 'dart:io';
 import 'dart:math' as math;
@@ -39,12 +39,12 @@ class ProfessionalLayout extends WatermarkLayout {
     rowCount++; // location
 
     final fontSz = data.fontSize;
-    // 🔧 Perbaiki lineHeight agar label+value tidak menumpuk
-    final lineH = fontSz * 1.9; // dari 1.45 → 1.9
+    // ✅ lineHeight konsisten 1.7
+    final lineH = fontSz * 1.7;
 
     final overlayHeight = math.max(
       photoHeight * 0.14,
-      rowCount * lineH + padding * 2.0, // padding juga ditambah sedikit
+      rowCount * lineH + padding * 2.0,
     );
 
     final logoMaxSize = baseSize * 0.18;
@@ -150,7 +150,6 @@ class ProfessionalLayout extends WatermarkLayout {
         ..strokeWidth = 1,
     );
 
-    // === Perhitungan ulang textContentWidth berdasarkan ada/tidak logo ===
     final logoMaxSize = metrics.logoMaxSize;
     final accentBarW = math.max(2.0, baseSize * 0.004);
     final accentBarSpace = accentBarW + padding * 0.5;
@@ -183,7 +182,6 @@ class ProfessionalLayout extends WatermarkLayout {
       double fontSize, {
       FontWeight fontWeight = FontWeight.w500,
     }) {
-      // Label (kecil, kapital)
       TextHelper.paintText(
         canvas: canvas,
         text: _spaceOutLabel(label),
@@ -197,7 +195,6 @@ class ProfessionalLayout extends WatermarkLayout {
         textAlign: textAlign,
         fontFamily: data.fontFamily,
       );
-      // Value
       TextHelper.paintText(
         canvas: canvas,
         text: value,
@@ -211,7 +208,6 @@ class ProfessionalLayout extends WatermarkLayout {
         textAlign: textAlign,
         fontFamily: data.fontFamily,
       );
-      // 🔧 Menggunakan metrics.lineHeight yang sudah diperbesar
       textY += metrics.lineHeight;
     }
 
@@ -259,7 +255,8 @@ class ProfessionalLayout extends WatermarkLayout {
           ? photoHeight - padding - drawH
           : padding;
 
-      final cardPad = drawW * 0.15;
+      // ✅ cardPad diperbesar dari 0.15 → 0.25
+      final cardPad = drawW * 0.25;
       canvas.drawRRect(
         RRect.fromRectAndRadius(
           Rect.fromLTWH(
