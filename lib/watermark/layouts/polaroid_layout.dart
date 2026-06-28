@@ -1,3 +1,6 @@
+// ============================================================
+// lib/watermark/layouts/polaroid_layout.dart (FINAL)
+// ============================================================
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -20,7 +23,6 @@ class PolaroidLayout extends WatermarkLayout {
   @override
   WatermarkStyle get style => WatermarkStyle.polaroid;
 
-  // Border putih khas polaroid di sekeliling foto (selain strip bawah).
   static const double _frameBorderRatio = 0.018;
 
   @override
@@ -33,9 +35,8 @@ class PolaroidLayout extends WatermarkLayout {
     final padding = LayoutHelper.padding(baseSize);
     final rowCount = _countTextLines(data);
 
-    // ✅ Gunakan data.fontSize, bukan auto-calc
     final fontSz = data.fontSize;
-    final lineH = fontSz * 1.45;
+    final lineH = fontSz * 1.7; // ✅ konsisten 1.7
 
     final bottomStripHeight = math.max(
       photoHeight * 0.20,
@@ -47,10 +48,10 @@ class PolaroidLayout extends WatermarkLayout {
     final canvasW = photoWidth + padding * 2;
     final canvasH = photoHeight + padding + bottomStripHeight;
 
-    final logoMaxH = bottomStripHeight * 0.42;
+    final logoMaxH = bottomStripHeight * 0.55;
     final isManual = data.isManual;
     final rightReserved = (isManual ? baseSize * 0.11 : 0.0) +
-        (bottomStripHeight * 0.42);
+        (bottomStripHeight * 0.55);
     final textW = canvasW - padding * 2 - 14 - rightReserved;
 
     return LayoutMetrics(
@@ -85,7 +86,6 @@ class PolaroidLayout extends WatermarkLayout {
     final stripTop = photoHeight + padding;
     final frameBorder = math.max(10.0, baseSize * _frameBorderRatio);
 
-    // --- Kertas dasar polaroid (sedikit off-white, bukan putih flat) ---
     final paperRect = Rect.fromLTWH(0, 0, canvasWidth, canvasHeight);
     final paperShader = ui.Gradient.linear(
       paperRect.topLeft,
@@ -94,7 +94,6 @@ class PolaroidLayout extends WatermarkLayout {
     );
     canvas.drawRect(paperRect, Paint()..shader = paperShader);
 
-    // --- Shadow ganda: shadow tajam dekat + shadow lembut jauh ---
     final cardPath = Path()
       ..addRRect(RRect.fromRectAndRadius(
         paperRect,
@@ -103,7 +102,6 @@ class PolaroidLayout extends WatermarkLayout {
     canvas.drawShadow(cardPath, Colors.black.withOpacity(0.20), 6, true);
     canvas.drawShadow(cardPath, Colors.black.withOpacity(0.28), 22, true);
 
-    // --- Frame foto: border putih tebal khas polaroid ---
     final outerPhotoRect = Rect.fromLTWH(
       padding - frameBorder,
       padding - frameBorder,
@@ -119,7 +117,6 @@ class PolaroidLayout extends WatermarkLayout {
         ..strokeWidth = math.max(1.0, baseSize * 0.0012),
     );
 
-    // --- Area foto ---
     final photoRect = Rect.fromLTWH(padding, padding, photoWidth, photoHeight);
     canvas.save();
     canvas.clipRect(photoRect);
@@ -132,7 +129,6 @@ class PolaroidLayout extends WatermarkLayout {
         ..isAntiAlias = true,
     );
 
-    // Vignette halus + tint hangat ala film instan.
     final vignette = ui.Gradient.radial(
       photoRect.center,
       photoRect.longestSide * 0.62,
@@ -149,7 +145,6 @@ class PolaroidLayout extends WatermarkLayout {
     );
     canvas.restore();
 
-    // Garis tipis pemisah antara foto dan strip teks.
     canvas.drawLine(
       Offset(padding, stripTop),
       Offset(canvasWidth - padding, stripTop),
@@ -158,7 +153,6 @@ class PolaroidLayout extends WatermarkLayout {
         ..strokeWidth = 1,
     );
 
-    // --- Info teks ---
     final isManual = data.isManual;
     final hasLogo = logoImage != null;
     final rightReserved = (isManual ? baseSize * 0.11 : 0.0) +
@@ -178,7 +172,6 @@ class PolaroidLayout extends WatermarkLayout {
       lineHeight: metrics.lineHeight,
     );
 
-    // --- Badge MANUAL: gaya stempel, sedikit dirotasi ---
     if (isManual) {
       _paintManualBadge(
         canvas: canvas,
@@ -189,7 +182,6 @@ class PolaroidLayout extends WatermarkLayout {
       );
     }
 
-    // --- Logo ---
     if (hasLogo) {
       final logoMaxH = metrics.logoMaxSize;
       final logoW = logoImage!.width.toDouble();
@@ -202,6 +194,21 @@ class PolaroidLayout extends WatermarkLayout {
           ? stripTop + (stripHeight * 0.12) + (baseSize * 0.032) + 6
           : stripTop + (stripHeight - drawH) / 2;
 
+      // ✅ cardPad diperbesar (logo di polaroid menggunakan opacity, tapi tetap tambahkan background)
+      final cardPad = drawW * 0.20;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(
+            logoX - cardPad,
+            logoY.clamp(stripTop, stripTop + stripHeight - drawH) - cardPad,
+            drawW + cardPad * 2,
+            drawH + cardPad * 2,
+          ),
+          Radius.circular(cardPad * 0.8),
+        ),
+        Paint()..color = Colors.black.withOpacity(0.30),
+      );
+
       LogoWidget.paint(
         canvas: canvas,
         logoImage: logoImage,
@@ -209,8 +216,8 @@ class PolaroidLayout extends WatermarkLayout {
         y: logoY.clamp(stripTop, stripTop + stripHeight - drawH),
         maxWidth: drawW,
         maxHeight: drawH,
-        opacity: 0.30,
-        blendMode: BlendMode.modulate,
+        opacity: 0.85,
+        blendMode: BlendMode.srcOver,
       );
     }
   }
@@ -250,7 +257,6 @@ class PolaroidLayout extends WatermarkLayout {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Simulasi frame foto putih + vignette ringan.
           AspectRatio(
             aspectRatio: 4 / 3,
             child: Container(
@@ -348,7 +354,7 @@ class PolaroidLayout extends WatermarkLayout {
                 Container(
                   padding: const EdgeInsets.all(4),
                   decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.04),
+                    color: Colors.black.withOpacity(0.08),
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Image.file(
@@ -456,7 +462,6 @@ class PolaroidLayout extends WatermarkLayout {
     final badgeH = baseSize * 0.032;
 
     canvas.save();
-    // Rotasi ringan ala stempel ditempel manual.
     canvas.translate(x + badgeW / 2, y + badgeH / 2);
     canvas.rotate(-0.07);
     canvas.translate(-badgeW / 2, -badgeH / 2);
