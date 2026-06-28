@@ -1,11 +1,7 @@
-// ============================================================
-// lib/main.dart (load watermark settings sekali + Provider)
-// ============================================================
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:provider/provider.dart';               // ← TAMBAHKAN INI
 import 'package:path_provider/path_provider.dart';
 import 'theme/app_theme.dart';
 import 'screens/home_screen.dart';
@@ -17,11 +13,10 @@ import 'models/scan_entry.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // ─── Load watermark settings (sekali, singleton) ──────────
+  // Muat watermark settings (singleton) – cukup sekali
   final watermarkSettings = WatermarkSettings();
   await watermarkSettings.load();
 
-  // ─── Migrasi JSON → SQLite ──────────────────────────────────
   final storage = StorageService();
   try {
     final dir = await getApplicationDocumentsDirectory();
@@ -42,13 +37,9 @@ void main() async {
     debugPrint('⚠️ Migration error: $e (maybe no JSON data)');
   }
 
-  // ─── Cleanup old photos (45 days) ──────────────────────────
   await storage.cleanupOldFiles(days: 45);
-
-  // ─── Izin ────────────────────────────────────────────────────
   await PermissionService.requestAllPermissions();
 
-  // ─── Orientasi ──────────────────────────────────────────────
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
@@ -59,13 +50,8 @@ void main() async {
     systemNavigationBarColor: AppTheme.bg,
   ));
 
-  // ─── Jalankan app dengan Provider ──────────────────────────
-  runApp(
-    ChangeNotifierProvider.value(
-      value: watermarkSettings,   // ← SUNTIKAN SINGLETON KE WIDGET TREE
-      child: const WHScannerApp(),
-    ),
-  );
+  // Tidak perlu Provider, singleton bisa diakses dari mana saja
+  runApp(const WHScannerApp());
 }
 
 class WHScannerApp extends StatelessWidget {
