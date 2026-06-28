@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/photo_scan_screen.dart (FINAL)
+// lib/screens/photo_scan_screen.dart (FINAL - REACTIVE)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -301,13 +301,12 @@ class PhotoScanScreen extends StatefulWidget {
 class _PhotoScanScreenState extends State<PhotoScanScreen> {
   final ImagePicker _picker = ImagePicker();
   final StorageService _storage = StorageService();
-  final WatermarkSettings _wmSettings = WatermarkSettings();
+  final WatermarkSettings _wmSettings = WatermarkSettings(); // singleton
 
   bool _isSaving = false;
   bool _isCapturing = false;
   int _photoCount = 0;
   bool _cameraGranted = false;
-  bool _settingsLoaded = false;
 
   List<String> _photoPaths = [];
 
@@ -315,21 +314,12 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   void initState() {
     super.initState();
     _requestPermissions();
-    _initializeSettings();
+    // Tidak perlu load settings — sudah dilakukan di main.dart
   }
 
   @override
   void dispose() {
     super.dispose();
-  }
-
-  Future<void> _initializeSettings() async {
-    await _wmSettings.load();
-    if (mounted) {
-      setState(() {
-        _settingsLoaded = true;
-      });
-    }
   }
 
   Future<void> _requestPermissions() async {
@@ -378,9 +368,9 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (_) => const WatermarkSettingsSheet(),
-    ).then((_) {
-      if (mounted) setState(() {});
-    });
+    );
+    // Tidak perlu .then((_) => setState(() {})) karena ListenableBuilder
+    // akan otomatis rebuild saat settings berubah.
   }
 
   // ─── Helper: Resolve file name ─────────────────────────────
@@ -393,7 +383,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
   // ─── Apply watermark ────────────────────────────────────────
   Future<String> _applyWatermark(String imagePath, DateTime timestamp, int photoIndex) async {
-    // Settings sudah di-load di init, tidak perlu load ulang
     final fileName = _resolveFileName(photoIndex);
     final outputPath =
         '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.png';
@@ -789,28 +778,33 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
               onPressed: _finishBatch,
               tooltip: 'Selesai Batch',
             ),
-          IconButton(
-            onPressed: _openWatermarkSettings,
-            icon: Stack(
-              children: [
-                const Icon(Icons.tune, color: Colors.white),
-                if (_settingsLoaded && (_wmSettings.operatorName.isNotEmpty ||
-                    _wmSettings.hasLogo))
-                  Positioned(
-                    right: 0,
-                    top: 0,
-                    child: Container(
-                      width: 8,
-                      height: 8,
-                      decoration: const BoxDecoration(
-                        color: Colors.amber,
-                        shape: BoxShape.circle,
+          // ✅ Tombol pengaturan dengan indikator reaktif
+          ListenableBuilder(
+            listenable: _wmSettings,
+            builder: (context, _) {
+              return IconButton(
+                onPressed: _openWatermarkSettings,
+                icon: Stack(
+                  children: [
+                    const Icon(Icons.tune, color: Colors.white),
+                    if (_wmSettings.operatorName.isNotEmpty || _wmSettings.hasLogo)
+                      const Positioned(
+                        right: 0,
+                        top: 0,
+                        child: Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            color: Colors.amber,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-              ],
-            ),
-            tooltip: 'Pengaturan Watermark',
+                  ],
+                ),
+                tooltip: 'Pengaturan Watermark',
+              );
+            },
           ),
         ],
       ),
