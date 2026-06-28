@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/barcode_scan_screen.dart (FINAL - LIFECYCLE + REACTIVE)
+// lib/screens/barcode_scan_screen.dart (FINAL - NO CONST ERROR)
 // ============================================================
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -38,7 +38,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   bool _batchMode = false;
 
   final StorageService _storage = StorageService();
-  // Singleton – akan selalu mengembalikan instance yang sama
   final WatermarkSettings _wmSettings = WatermarkSettings();
   final MobileScannerController _scannerController = MobileScannerController();
 
@@ -47,7 +46,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _requestPermissions();
-    // Tidak perlu load settings lagi – sudah dilakukan di main.dart
   }
 
   @override
@@ -58,7 +56,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     super.dispose();
   }
 
-  // ─── LIFECYCLE ──────────────────────────────────────────────
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
@@ -79,7 +76,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     }
   }
 
-  // ─── INIT ────────────────────────────────────────────────────
   Future<void> _requestPermissions() async {
     await Permission.camera.request();
     await PermissionService.requestGalleryPermission();
@@ -128,7 +124,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     });
   }
 
-  // ─── SCAN ────────────────────────────────────────────────────
   Future<void> _onDetect(BarcodeCapture capture) async {
     if (!_scanning || _isSaving || _processingScan || _isTakingMultiple) return;
 
@@ -212,7 +207,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     }
   }
 
-  // ─── MANUAL INPUT ────────────────────────────────────────────
   void _showManualInput() {
     showModalBottomSheet(
       context: context,
@@ -280,14 +274,12 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     }
   }
 
-  // ─── BUILD ────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text('Scanner ($_scanCount)'),
         actions: [
-          // Tombol pengaturan – indikator akan selalu up-to-date
           ListenableBuilder(
             listenable: _wmSettings,
             builder: (context, _) {
@@ -300,14 +292,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
                       const Positioned(
                         right: 0,
                         top: 0,
-                        child: Container(
-                          width: 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                            color: Colors.amber,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
+                        child: Icon(Icons.circle, size: 8, color: Colors.amber),
                       ),
                   ],
                 ),
@@ -323,8 +308,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
             controller: _scannerController,
             onDetect: _onDetect,
           ),
-
-          // Barcode & counter batch
           if (_activeBarcode != null)
             Positioned(
               top: 12,
@@ -374,8 +357,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
                 ),
               ),
             ),
-
-          // Tag operator (hanya muncul saat tidak ada barcode aktif & tidak sedang saving/batch)
           if (!_isSaving &&
               !_isTakingMultiple &&
               _activeBarcode == null)
@@ -423,8 +404,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
                 },
               ),
             ),
-
-          // Tombol batch mode & manual input
           if (!_isSaving && !_isTakingMultiple && _activeBarcode == null)
             Positioned(
               bottom: 40,
@@ -468,8 +447,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
                 ],
               ),
             ),
-
-          // Overlay saving / processing
           if (_isSaving || _isTakingMultiple)
             const ColoredBox(
               color: Color(0x88000000),
