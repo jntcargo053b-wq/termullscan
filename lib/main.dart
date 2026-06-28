@@ -1,10 +1,11 @@
 // ============================================================
-// lib/main.dart (load watermark settings sekali)
+// lib/main.dart (load watermark settings sekali + Provider)
 // ============================================================
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';               // ← TAMBAHKAN INI
 import 'package:path_provider/path_provider.dart';
 import 'theme/app_theme.dart';
 import 'screens/home_screen.dart';
@@ -16,7 +17,7 @@ import 'models/scan_entry.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // ─── Load watermark settings (sekali) ──────────────────────
+  // ─── Load watermark settings (sekali, singleton) ──────────
   final watermarkSettings = WatermarkSettings();
   await watermarkSettings.load();
 
@@ -58,7 +59,13 @@ void main() async {
     systemNavigationBarColor: AppTheme.bg,
   ));
 
-  runApp(const WHScannerApp());
+  // ─── Jalankan app dengan Provider ──────────────────────────
+  runApp(
+    ChangeNotifierProvider.value(
+      value: watermarkSettings,   // ← SUNTIKAN SINGLETON KE WIDGET TREE
+      child: const WHScannerApp(),
+    ),
+  );
 }
 
 class WHScannerApp extends StatelessWidget {
