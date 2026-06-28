@@ -1,5 +1,5 @@
 // ============================================================
-// lib/watermark/layouts/minimal_layout.dart (FINAL - LOGO FIX)
+// lib/watermark/layouts/minimal_layout.dart (FINAL)
 // ============================================================
 import 'dart:io';
 import 'dart:math' as math;
@@ -22,7 +22,7 @@ class MinimalLayout extends WatermarkLayout {
   @override
   WatermarkStyle get style => WatermarkStyle.minimal;
 
-  static const Color _accentColor = Color(0xFFFFB74D); // soft amber
+  static const Color _accentColor = Color(0xFFFFB74D);
 
   @override
   LayoutMetrics computeMetrics({
@@ -39,14 +39,13 @@ class MinimalLayout extends WatermarkLayout {
     lineCount++; // location
 
     final fontSz = data.fontSize;
-    final lineH = fontSz * 1.35;
+    final lineH = fontSz * 1.7; // ✅ konsisten 1.7
 
     final overlayHeight = math.max(
       photoHeight * 0.10,
       lineCount * lineH + padding * 1.6,
     );
 
-    // ✅ LOGO: ukuran diperbesar dari 0.13 → 0.18
     final logoMaxSize = baseSize * 0.18;
     final rightReserved = logoMaxSize + padding * 1.4;
     final accentBarSpace = baseSize * 0.006 + padding * 0.5;
@@ -119,7 +118,6 @@ class MinimalLayout extends WatermarkLayout {
         ..isAntiAlias = true,
     );
 
-    // Gradien minimalis — tidak terlalu dramatis
     final gradientPaint = Paint()
       ..shader = ui.Gradient.linear(
         Offset(0, overlayTop),
@@ -149,7 +147,6 @@ class MinimalLayout extends WatermarkLayout {
         : photoWidth - padding - textContentWidth;
     double textY = overlayTop + padding * 0.8;
 
-    // Accent bar — lebih tipis dan subtil, sesuai gaya minimal
     final barX = textAlign == TextAlign.left
         ? padding
         : photoWidth - padding - accentBarW;
@@ -212,8 +209,8 @@ class MinimalLayout extends WatermarkLayout {
           ? photoHeight - padding - drawH
           : padding;
 
-      // ✅ Background card lebih gelap agar logo terlihat jelas
-      final cardPad = drawW * 0.15;
+      // ✅ cardPad diperbesar dari 0.15 → 0.25
+      final cardPad = drawW * 0.25;
       canvas.drawRRect(
         RRect.fromRectAndRadius(
           Rect.fromLTWH(
@@ -227,7 +224,6 @@ class MinimalLayout extends WatermarkLayout {
         Paint()..color = Colors.black.withOpacity(0.35),
       );
 
-      // ✅ LOGO: opacity full 1.0 agar warna asli terlihat
       LogoWidget.paint(
         canvas: canvas,
         logoImage: logoImage,
@@ -240,6 +236,7 @@ class MinimalLayout extends WatermarkLayout {
     }
   }
 
+  // ─── PREVIEW ──────────────────────────────────────────────────
   @override
   Widget buildPreview({
     required WatermarkData previewData,
