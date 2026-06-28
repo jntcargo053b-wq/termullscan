@@ -1,24 +1,16 @@
 // ============================================================
-// lib/screens/barcode_scan_screen.dart (FINAL - with callback dialog)
+// lib/screens/barcode_scan_screen.dart (FINAL - LIFECYCLE)
 // ============================================================
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:saver_gallery/saver_gallery.dart';
-import 'package:intl/intl.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:gap/gap.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
 import '../services/permission_service.dart';
-import '../config/app_config.dart';
-import '../watermark/watermark_renderer.dart';
 import '../watermark/watermark_settings.dart';
-import '../utils/image_compressor.dart';
-import '../utils/file_helper.dart';
 import 'watermark_settings_sheet.dart';
 import 'photo_scan_screen.dart';
 
@@ -29,7 +21,8 @@ class BarcodeScanScreen extends StatefulWidget {
   State<BarcodeScanScreen> createState() => _BarcodeScanScreenState();
 }
 
-class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
+class _BarcodeScanScreenState extends State<BarcodeScanScreen>
+    with WidgetsBindingObserver { // ✅ tambahkan observer
   bool _scanning = true;
   bool _isSaving = false;
   String? _lastCode;
@@ -41,30 +34,54 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   bool _resumeScheduled = false;
   bool _isTakingMultiple = false;
 
-  // BATCH MODE - DEFAULT SINGLE (false)
   String? _activeBarcode;
   int _batchPhotoCount = 0;
   bool _batchMode = false;
 
   final StorageService _storage = StorageService();
-  final ImagePicker _picker = ImagePicker();
   final WatermarkSettings _wmSettings = WatermarkSettings();
   final MobileScannerController _scannerController = MobileScannerController();
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this); // ✅ tambahkan observer
     _requestPermissions();
     _initializeSettings();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this); // ✅ hapus observer
     _scannerController.stop();
     _scannerController.dispose();
     super.dispose();
   }
 
+  // ─── LIFECYCLE ──────────────────────────────────────────────
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      // App masuk background → stop scanner
+      if (_scanning) {
+        _scannerController.stop();
+        if (mounted) {
+          setState(() {
+            _scanning = false;
+          });
+        }
+        debugPrint('📱 App background: scanner stopped');
+      }
+    } else if (state == AppLifecycleState.resumed) {
+      // App kembali ke foreground → resume scanner
+      if (!_scanning && !_isSaving && !_isTakingMultiple && !_sheetOpen) {
+        _resumeScanning();
+        debugPrint('📱 App foreground: scanner resumed');
+      }
+    }
+  }
+
+  // ─── INIT ────────────────────────────────────────────────────
   Future<void> _initializeSettings() async {
     await _wmSettings.load();
     if (mounted) {
@@ -121,6 +138,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     });
   }
 
+  // ─── SCAN ────────────────────────────────────────────────────
   Future<void> _onDetect(BarcodeCapture capture) async {
     if (!_scanning || _isSaving || _processingScan || _isTakingMultiple) return;
 
@@ -204,7 +222,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     }
   }
 
-  // ─── MANUAL INPUT (dengan callback) ──────────────────────────
+  // ─── MANUAL INPUT ────────────────────────────────────────────
   void _showManualInput() {
     showModalBottomSheet(
       context: context,
@@ -272,6 +290,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
     }
   }
 
+  // ─── BUILD ────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -462,7 +481,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen> {
   }
 }
 
-// ─── Manual Input Dialog (dengan callback) ──────────────────────
+// ─── Manual Input Dialog ──────────────────────────────────────
 class _ManualInputDialog extends StatefulWidget {
   final void Function(String code) onSubmitted;
 
