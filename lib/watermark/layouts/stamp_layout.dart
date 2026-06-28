@@ -1,5 +1,5 @@
 // ============================================================
-// lib/watermark/layouts/stamp_layout.dart (FINAL - VISIBILITY FIX)
+// lib/watermark/layouts/stamp_layout.dart (FINAL)
 // ============================================================
 import 'dart:io';
 import 'dart:math' as math;
@@ -38,11 +38,10 @@ class StampLayout extends WatermarkLayout {
     lineCount++; // location
 
     final fontSz = data.fontSize;
-    final lineH = fontSz * 1.4;
+    final lineH = fontSz * 1.7; // ✅ konsisten 1.7
 
     final panelHeight = lineCount * lineH + padding * 1.4;
 
-    // ✅ Ukuran logo diperbesar
     final logoMaxSize = baseSize * 0.18;
     final panelWidth = baseSize * 0.50;
     final textW = panelWidth - padding * 0.8;
@@ -86,7 +85,6 @@ class StampLayout extends WatermarkLayout {
     final stampColor = data.isManual ? const Color(0xFFE67E22) : const Color(0xFF2E8B57);
     final stampLabel = data.isManual ? 'MANUAL' : 'VERIFIED';
 
-    // ✅ Stempel lebih besar
     final stampW = baseSize * 0.35;
     final stampH = baseSize * 0.18;
     double stampCenterX, stampCenterY;
@@ -120,7 +118,6 @@ class StampLayout extends WatermarkLayout {
     final stampRect = Rect.fromCenter(center: Offset.zero, width: stampW, height: stampH);
     final strokeWidth = math.max(2.5, baseSize * 0.005);
 
-    // Background stempel
     canvas.drawRRect(
       RRect.fromRectAndRadius(stampRect, Radius.circular(stampH * 0.14)),
       Paint()
@@ -135,7 +132,6 @@ class StampLayout extends WatermarkLayout {
         ..strokeWidth = strokeWidth,
     );
 
-    // ✅ Teks VERIFIED / MANUAL lebih besar
     double textY = -stampH * 0.20;
     TextHelper.paintText(
       canvas: canvas,
@@ -190,7 +186,7 @@ class StampLayout extends WatermarkLayout {
     infoLines.add(data.displayLocation);
 
     final fontSize = data.fontSize;
-    final lineHeight = fontSize * 1.35;
+    final lineHeight = fontSize * 1.7; // ✅ konsisten
     final panelPadding = 12.0;
     final panelHeight = infoLines.length * lineHeight + panelPadding * 2;
     final panelWidth = metrics.textAvailableWidth + panelPadding * 2;
@@ -218,7 +214,6 @@ class StampLayout extends WatermarkLayout {
         panelY = photoHeight - padding - panelHeight - stampH - padding * 1.2;
     }
 
-    // Panel background
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromLTWH(panelX, panelY, panelWidth, panelHeight),
@@ -229,7 +224,6 @@ class StampLayout extends WatermarkLayout {
         ..style = PaintingStyle.fill,
     );
 
-    // Accent bar — warna sesuai stempel
     final accentBarW = math.max(3.0, baseSize * 0.004);
     canvas.drawRect(
       Rect.fromLTWH(
@@ -290,7 +284,8 @@ class StampLayout extends WatermarkLayout {
           logoY = padding;
       }
 
-      final cardPad = drawW * 0.15;
+      // ✅ cardPad diperbesar dari 0.10 → 0.25
+      final cardPad = drawW * 0.25;
       canvas.drawRRect(
         RRect.fromRectAndRadius(
           Rect.fromLTWH(
@@ -316,6 +311,7 @@ class StampLayout extends WatermarkLayout {
     }
   }
 
+  // ─── PREVIEW ──────────────────────────────────────────────────
   @override
   Widget buildPreview({
     required WatermarkData previewData,
