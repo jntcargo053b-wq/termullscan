@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/photo_scan_screen.dart (FINAL - REACTIVE)
+// lib/screens/photo_scan_screen.dart (FINAL - NO CONST ERROR)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -314,12 +314,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   void initState() {
     super.initState();
     _requestPermissions();
-    // Tidak perlu load settings — sudah dilakukan di main.dart
-  }
-
-  @override
-  void dispose() {
-    super.dispose();
   }
 
   Future<void> _requestPermissions() async {
@@ -369,11 +363,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       ),
       builder: (_) => const WatermarkSettingsSheet(),
     );
-    // Tidak perlu .then((_) => setState(() {})) karena ListenableBuilder
-    // akan otomatis rebuild saat settings berubah.
   }
 
-  // ─── Helper: Resolve file name ─────────────────────────────
   String _resolveFileName(int photoIndex) {
     if (widget.barcode == null) return 'photo_$photoIndex';
     return photoIndex == 1
@@ -381,7 +372,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         : '${widget.barcode}${photoIndex.toString().padLeft(3, '0')}';
   }
 
-  // ─── Apply watermark ────────────────────────────────────────
   Future<String> _applyWatermark(String imagePath, DateTime timestamp, int photoIndex) async {
     final fileName = _resolveFileName(photoIndex);
     final outputPath =
@@ -463,7 +453,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     }
   }
 
-  // ─── TAKE PHOTO ──────────────────────────────────────────────
   Future<void> _takePhoto() async {
     if (_isSaving || _isCapturing) return;
 
@@ -508,7 +497,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     await _processPhoto(xfile);
   }
 
-  // ─── PICK FROM GALLERY ──────────────────────────────────────
   Future<void> _pickFromGallery() async {
     if (_isSaving || _isCapturing) return;
 
@@ -550,7 +538,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     await _processPhoto(xfile);
   }
 
-  // ─── PROCESS PHOTO ──────────────────────────────────────────
   Future<void> _processPhoto(XFile xfile) async {
     String? watermarkedPath;
     String compressedPath = xfile.path;
@@ -578,7 +565,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         throw Exception('Gagal menyimpan file foto');
       }
 
-      // Mutasi dan setState digabung
       if (mounted) {
         setState(() {
           _photoPaths.add(savedPath);
@@ -635,7 +621,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     }
   }
 
-  // ─── FINISH BATCH ────────────────────────────────────────────
   Future<void> _finishBatch() async {
     if (widget.entryId != null && _photoPaths.isNotEmpty) {
       final barcodeEntry = await _storage.getEntry(widget.entryId!);
@@ -652,7 +637,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     }
   }
 
-  // ─── BATCH SUMMARY (Dialog lalu pop) ────────────────────────
   Future<void> _showBatchSummaryAndPop() async {
     if (!mounted) return;
     await showDialog(
@@ -693,7 +677,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         ],
       ),
     );
-    // Setelah dialog close, pop screen ini
     if (mounted) {
       Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
     }
@@ -733,7 +716,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     );
   }
 
-  // ─── BUILD ────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -778,7 +760,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
               onPressed: _finishBatch,
               tooltip: 'Selesai Batch',
             ),
-          // ✅ Tombol pengaturan dengan indikator reaktif
           ListenableBuilder(
             listenable: _wmSettings,
             builder: (context, _) {
@@ -791,14 +772,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                       const Positioned(
                         right: 0,
                         top: 0,
-                        child: Container(
-                          width: 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                            color: Colors.amber,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
+                        child: Icon(Icons.circle, size: 8, color: Colors.amber),
                       ),
                   ],
                 ),
