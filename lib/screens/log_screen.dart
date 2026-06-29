@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/log_screen.dart (FINAL – AMAN HAPUS BATCH)
+// lib/screens/log_screen.dart (FINAL – VIDEO SUPPORT)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -7,7 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:gap/gap.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:collection/collection.dart'; // ← untuk firstWhereOrNull
+import 'package:collection/collection.dart';
+import 'package:video_player/video_player.dart'; // ← video player
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
@@ -25,15 +26,12 @@ class _LogScreenState extends State<LogScreen> {
   bool _isLoading = true;
   bool _isLoadingMore = false;
 
-  // Selection state
   bool _isSelectionMode = false;
   final Set<String> _selectedIds = {};
 
-  // Filter state
   String _searchQuery = '';
   String _filterPeriod = 'Semua';
 
-  // Pagination
   int _currentPage = 0;
   final int _pageSize = 20;
   bool _hasMore = true;
@@ -118,7 +116,6 @@ class _LogScreenState extends State<LogScreen> {
     _debounceTimer?.cancel();
     _debounceTimer = Timer(const Duration(milliseconds: 300), () {
       _searchQuery = value.trim();
-      debugPrint('🔍 Search query: "$_searchQuery"');
       _currentPage = 0;
       _filteredEntries.clear();
       _hasMore = true;
@@ -159,7 +156,7 @@ class _LogScreenState extends State<LogScreen> {
     return _selectedIds.length == _filteredEntries.length;
   }
 
-  // ─── PREVIEW FOTO ──────────────────────────────────────────────────
+  // ─── PREVIEW FOTO ──────────────────────────────────────────
   void _showPhotoPreview(ScanEntry entry, {int initialIndex = 0}) {
     final List<String> paths = entry.photoPaths ?? [];
     if (paths.isEmpty && entry.type == ScanType.photo && entry.value.isNotEmpty) {
@@ -195,7 +192,27 @@ class _LogScreenState extends State<LogScreen> {
     );
   }
 
-  // ─── SHARE FOTO ──────────────────────────────────────────────────
+  // ─── PREVIEW VIDEO ─────────────────────────────────────────
+  void _showVideoPreview(ScanEntry entry) {
+    final path = entry.videoPath;
+    if (path == null || path.isEmpty || !File(path).existsSync()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('File video tidak ditemukan')),
+      );
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (_) => _VideoPreviewDialog(
+        videoPath: path,
+        barcode: entry.value,
+        timestamp: entry.timestamp,
+      ),
+    );
+  }
+
+  // ─── SHARE FOTO ──────────────────────────────────────────
   Future<void> _shareSelectedPhotos() async {
     if (_selectedIds.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -286,7 +303,7 @@ class _LogScreenState extends State<LogScreen> {
     }
   }
 
-  // ─── EXPORT TEXT ──────────────────────────────────────────────────
+  // ─── EXPORT TEXT ──────────────────────────────────────────
   Future<void> _exportAndShare() async {
     if (_filteredEntries.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -304,7 +321,7 @@ class _LogScreenState extends State<LogScreen> {
     }
   }
 
-  // ─── DELETE ──────────────────────────────────────────────────────
+  // ─── DELETE ──────────────────────────────────────────────
   Future<void> _deleteEntry(ScanEntry entry) async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -326,6 +343,7 @@ class _LogScreenState extends State<LogScreen> {
     );
     if (confirm == true) {
       await _storage.delete(entry.id);
+      // Hapus file
       if (entry.type == ScanType.photo) {
         final paths = entry.photoPaths ?? [];
         if (paths.isNotEmpty) {
@@ -334,6 +352,13 @@ class _LogScreenState extends State<LogScreen> {
           }
         } else if (entry.value.isNotEmpty) {
           try { final f = File(entry.value); if (await f.exists()) await f.delete(); } catch (_) {}
+        }
+      } else if (entry.type == ScanType.video) {
+        if (entry.videoPath != null) {
+          try { final f = File(entry.videoPath!); if (await f.exists()) await f.delete(); } catch (_) {}
+        }
+        if (entry.videoThumbnail != null) {
+          try { final f = File(entry.videoThumbnail!); if (await f.exists()) await f.delete(); } catch (_) {}
         }
       }
       _selectedIds.remove(entry.id);
@@ -362,23 +387,29 @@ class _LogScreenState extends State<LogScreen> {
       ),
     );
     if (confirm == true) {
-      // Hapus dari database dan bersihkan file
       for (final id in _selectedIds) {
-        // ✅ Gunakan firstWhereOrNull agar tidak crash jika ID sudah hilang
         final entry = _filteredEntries.firstWhereOrNull((e) => e.id == id);
-        if (entry != null && entry.type == ScanType.photo) {
-          final paths = entry.photoPaths ?? [];
-          if (paths.isNotEmpty) {
-            for (final path in paths) {
-              try { final f = File(path); if (await f.exists()) await f.delete(); } catch (_) {}
+        if (entry != null) {
+          if (entry.type == ScanType.photo) {
+            final paths = entry.photoPaths ?? [];
+            if (paths.isNotEmpty) {
+              for (final path in paths) {
+                try { final f = File(path); if (await f.exists()) await f.delete(); } catch (_) {}
+              }
+            } else if (entry.value.isNotEmpty) {
+              try { final f = File(entry.value); if (await f.exists()) await f.delete(); } catch (_) {}
             }
-          } else if (entry.value.isNotEmpty) {
-            try { final f = File(entry.value); if (await f.exists()) await f.delete(); } catch (_) {}
+          } else if (entry.type == ScanType.video) {
+            if (entry.videoPath != null) {
+              try { final f = File(entry.videoPath!); if (await f.exists()) await f.delete(); } catch (_) {}
+            }
+            if (entry.videoThumbnail != null) {
+              try { final f = File(entry.videoThumbnail!); if (await f.exists()) await f.delete(); } catch (_) {}
+            }
           }
         }
         await _storage.delete(id);
       }
-      // ✅ Hapus langsung dari list lokal dengan removeWhere (jauh lebih aman)
       _filteredEntries.removeWhere((e) => _selectedIds.contains(e.id));
       _selectedIds.clear();
       _toggleSelectionMode();
@@ -442,7 +473,7 @@ class _LogScreenState extends State<LogScreen> {
       ),
       body: Column(
         children: [
-          // ─── SEARCH & FILTER ──────────────────────────────────
+          // ─── SEARCH & FILTER ──────────────────────────────
           Padding(
             padding: const EdgeInsets.all(12),
             child: Column(
@@ -518,7 +549,7 @@ class _LogScreenState extends State<LogScreen> {
               ],
             ),
           ),
-          // ─── LIST ──────────────────────────────────────────────
+          // ─── LIST ──────────────────────────────────────────
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
@@ -578,7 +609,13 @@ class _LogScreenState extends State<LogScreen> {
                                       }
                                     });
                                   }
-                                : () => _showPhotoPreview(entry),
+                                : () {
+                                    if (entry.type == ScanType.video) {
+                                      _showVideoPreview(entry);
+                                    } else {
+                                      _showPhotoPreview(entry);
+                                    }
+                                  },
                             onDelete: () => _deleteEntry(entry),
                             dateFormat: _dateFormat,
                           );
@@ -591,12 +628,11 @@ class _LogScreenState extends State<LogScreen> {
   }
 }
 
-// ─── Filter Chip ──────────────────────────────────────────────────
+// ─── Filter Chip ──────────────────────────────────────────────
 class _FilterChip extends StatelessWidget {
   final String label;
   final bool selected;
   final VoidCallback onSelected;
-
   const _FilterChip({
     required this.label,
     required this.selected,
@@ -624,7 +660,7 @@ class _FilterChip extends StatelessWidget {
   }
 }
 
-// ─── Log Item ──────────────────────────────────────────────────
+// ─── Log Item (UPDATED UNTUK VIDEO) ─────────────────────────
 class _LogItem extends StatelessWidget {
   final ScanEntry entry;
   final bool isSelected;
@@ -643,8 +679,19 @@ class _LogItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isPhoto = entry.type == ScanType.photo;
-    final icon = isPhoto ? Icons.photo_camera : Icons.qr_code;
+    final isVideo = entry.type == ScanType.video;
+    final icon = isVideo
+        ? Icons.videocam
+        : isPhoto
+            ? Icons.photo_camera
+            : Icons.qr_code;
+    final avatarColor = isVideo
+        ? Colors.red.shade900
+        : isPhoto
+            ? Colors.blue.shade900
+            : Colors.amber.shade900;
     final hasPhoto = entry.photoPaths != null && entry.photoPaths!.isNotEmpty;
+    final hasVideo = entry.videoPath != null && entry.videoPath!.isNotEmpty;
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -670,9 +717,18 @@ class _LogItem extends StatelessWidget {
                   size: 22,
                 ),
               ),
-            CircleAvatar(
-              backgroundColor: isPhoto ? Colors.blue.shade900 : Colors.amber.shade900,
-              child: Icon(icon, color: Colors.white),
+            Stack(
+              children: [
+                CircleAvatar(
+                  backgroundColor: avatarColor,
+                  child: Icon(icon, color: Colors.white),
+                ),
+                if (isVideo && entry.videoThumbnail != null)
+                  CircleAvatar(
+                    backgroundColor: Colors.transparent,
+                    backgroundImage: FileImage(File(entry.videoThumbnail!)),
+                  ),
+              ],
             ),
           ],
         ),
@@ -689,13 +745,18 @@ class _LogItem extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
+            if (isVideo && entry.videoDuration != null) ...[
+              const Gap(6),
+              Icon(Icons.timer, size: 14, color: Colors.grey),
+              const Gap(2),
+              Text(
+                entry.videoDurationFormatted,
+                style: const TextStyle(color: Colors.grey, fontSize: 11),
+              ),
+            ],
             if (hasPhoto) ...[
               const Gap(6),
-              Icon(
-                Icons.photo_library,
-                size: 16,
-                color: Colors.amber.shade400,
-              ),
+              Icon(Icons.photo_library, size: 16, color: Colors.amber.shade400),
             ],
             if (entry.photoPaths != null && entry.photoPaths!.length > 1) ...[
               const Gap(2),
@@ -767,13 +828,12 @@ class _LogItem extends StatelessWidget {
   }
 }
 
-// ─── Photo Preview Dialog ──────────────────────────────────────
+// ─── Photo Preview Dialog ──────────────────────────────────
 class _PhotoPreviewDialog extends StatefulWidget {
   final List<String> paths;
   final int initialIndex;
   final String barcode;
   final DateTime timestamp;
-
   const _PhotoPreviewDialog({
     required this.paths,
     required this.initialIndex,
@@ -810,14 +870,11 @@ class _PhotoPreviewDialogState extends State<_PhotoPreviewDialog> {
       child: Column(
         mainAxisSize: MainAxisSize.max,
         children: [
-          // Header
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
               color: Colors.black.withOpacity(0.8),
-              border: Border(
-                bottom: BorderSide(color: Colors.grey.shade800),
-              ),
+              border: Border(bottom: BorderSide(color: Colors.grey.shade800)),
             ),
             child: Row(
               children: [
@@ -837,10 +894,7 @@ class _PhotoPreviewDialogState extends State<_PhotoPreviewDialog> {
                       ),
                       Text(
                         DateFormat('dd/MM/yyyy HH:mm:ss').format(widget.timestamp),
-                        style: const TextStyle(
-                          color: Colors.grey,
-                          fontSize: 11,
-                        ),
+                        style: const TextStyle(color: Colors.grey, fontSize: 11),
                       ),
                     ],
                   ),
@@ -852,13 +906,10 @@ class _PhotoPreviewDialogState extends State<_PhotoPreviewDialog> {
               ],
             ),
           ),
-          // Image
           Expanded(
             child: PageView.builder(
               controller: _pageController,
-              onPageChanged: (index) {
-                setState(() => _currentIndex = index);
-              },
+              onPageChanged: (index) => setState(() => _currentIndex = index),
               itemCount: widget.paths.length,
               itemBuilder: (context, index) {
                 final path = widget.paths[index];
@@ -890,14 +941,11 @@ class _PhotoPreviewDialogState extends State<_PhotoPreviewDialog> {
               },
             ),
           ),
-          // Footer
           Container(
             padding: const EdgeInsets.symmetric(vertical: 12),
             decoration: BoxDecoration(
               color: Colors.black.withOpacity(0.8),
-              border: Border(
-                top: BorderSide(color: Colors.grey.shade800),
-              ),
+              border: Border(top: BorderSide(color: Colors.grey.shade800)),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -906,12 +954,10 @@ class _PhotoPreviewDialogState extends State<_PhotoPreviewDialog> {
                   IconButton(
                     icon: const Icon(Icons.chevron_left, color: Colors.white),
                     onPressed: _currentIndex > 0
-                        ? () {
-                            _pageController.previousPage(
-                              duration: const Duration(milliseconds: 300),
-                              curve: Curves.easeInOut,
-                            );
-                          }
+                        ? () => _pageController.previousPage(
+                            duration: const Duration(milliseconds: 300),
+                            curve: Curves.easeInOut,
+                          )
                         : null,
                   ),
                   Container(
@@ -928,12 +974,10 @@ class _PhotoPreviewDialogState extends State<_PhotoPreviewDialog> {
                   IconButton(
                     icon: const Icon(Icons.chevron_right, color: Colors.white),
                     onPressed: _currentIndex < widget.paths.length - 1
-                        ? () {
-                            _pageController.nextPage(
-                              duration: const Duration(milliseconds: 300),
-                              curve: Curves.easeInOut,
-                            );
-                          }
+                        ? () => _pageController.nextPage(
+                            duration: const Duration(milliseconds: 300),
+                            curve: Curves.easeInOut,
+                          )
                         : null,
                   ),
                 ],
@@ -994,6 +1038,171 @@ class _PhotoPreviewDialogState extends State<_PhotoPreviewDialog> {
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     ),
                   ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── VIDEO PREVIEW DIALOG ─────────────────────────────────
+class _VideoPreviewDialog extends StatefulWidget {
+  final String videoPath;
+  final String barcode;
+  final DateTime timestamp;
+  const _VideoPreviewDialog({
+    required this.videoPath,
+    required this.barcode,
+    required this.timestamp,
+  });
+
+  @override
+  State<_VideoPreviewDialog> createState() => _VideoPreviewDialogState();
+}
+
+class _VideoPreviewDialogState extends State<_VideoPreviewDialog> {
+  late VideoPlayerController _controller;
+  bool _initialized = false;
+  bool _isPlaying = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = VideoPlayerController.file(File(widget.videoPath))
+      ..initialize().then((_) {
+        if (mounted) setState(() => _initialized = true);
+      });
+    _controller.addListener(() {
+      if (mounted && _controller.value.isPlaying != _isPlaying) {
+        setState(() => _isPlaying = _controller.value.isPlaying);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.black,
+      insetPadding: const EdgeInsets.all(8),
+      child: Column(
+        mainAxisSize: MainAxisSize.max,
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.8),
+              border: Border(bottom: BorderSide(color: Colors.grey.shade800)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        widget.barcode,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Text(
+                        DateFormat('dd/MM/yyyy HH:mm:ss').format(widget.timestamp),
+                        style: const TextStyle(color: Colors.grey, fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+          ),
+          // Video
+          Expanded(
+            child: _initialized
+                ? GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        if (_controller.value.isPlaying) {
+                          _controller.pause();
+                        } else {
+                          _controller.play();
+                        }
+                      });
+                    },
+                    child: Center(
+                      child: AspectRatio(
+                        aspectRatio: _controller.value.aspectRatio,
+                        child: VideoPlayer(_controller),
+                      ),
+                    ),
+                  )
+                : const Center(
+                    child: CircularProgressIndicator(),
+                  ),
+          ),
+          // Controls
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.8),
+              border: Border(top: BorderSide(color: Colors.grey.shade800)),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                IconButton(
+                  icon: Icon(
+                    _isPlaying ? Icons.pause : Icons.play_arrow,
+                    color: Colors.white,
+                  ),
+                  onPressed: () {
+                    if (_controller.value.isPlaying) {
+                      _controller.pause();
+                    } else {
+                      _controller.play();
+                    }
+                  },
+                ),
+                ElevatedButton.icon(
+                  onPressed: () async {
+                    try {
+                      final file = File(widget.videoPath);
+                      if (await file.exists()) {
+                        await Share.shareXFiles(
+                          [XFile(file.path)],
+                          text: '🎥 ${widget.barcode}\n${DateFormat('dd/MM/yyyy HH:mm:ss').format(widget.timestamp)}',
+                        );
+                      }
+                    } catch (e) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Gagal share: $e')),
+                      );
+                    }
+                  },
+                  icon: const Icon(Icons.share, size: 18),
+                  label: const Text('Share Video'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue.shade700,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  ),
+                ),
               ],
             ),
           ),
