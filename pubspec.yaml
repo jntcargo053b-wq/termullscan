@@ -41,8 +41,9 @@ dependencies:
   # ─── DATABASE (untuk pagination & indexing) ─────────────────────────
   sqflite: ^2.3.0
   path: ^1.9.0
+
   # ─── STATE MANAGEMENT ──────────────────────────────────────────────
-provider: ^6.1.1
+  provider: ^6.1.1
 
 dev_dependencies:
   flutter_test:
