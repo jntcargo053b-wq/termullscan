@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/log_screen.dart (FINAL - PREVIEW FOTO + SEARCH)
+// lib/screens/log_screen.dart (FINAL – AMAN HAPUS BATCH)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:gap/gap.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:collection/collection.dart'; // ← untuk firstWhereOrNull
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
@@ -361,9 +362,11 @@ class _LogScreenState extends State<LogScreen> {
       ),
     );
     if (confirm == true) {
+      // Hapus dari database dan bersihkan file
       for (final id in _selectedIds) {
-        final entry = _filteredEntries.firstWhere((e) => e.id == id);
-        if (entry.type == ScanType.photo) {
+        // ✅ Gunakan firstWhereOrNull agar tidak crash jika ID sudah hilang
+        final entry = _filteredEntries.firstWhereOrNull((e) => e.id == id);
+        if (entry != null && entry.type == ScanType.photo) {
           final paths = entry.photoPaths ?? [];
           if (paths.isNotEmpty) {
             for (final path in paths) {
@@ -375,8 +378,9 @@ class _LogScreenState extends State<LogScreen> {
         }
         await _storage.delete(id);
       }
+      // ✅ Hapus langsung dari list lokal dengan removeWhere (jauh lebih aman)
+      _filteredEntries.removeWhere((e) => _selectedIds.contains(e.id));
       _selectedIds.clear();
-      _loadEntries(refresh: true);
       _toggleSelectionMode();
     }
   }
