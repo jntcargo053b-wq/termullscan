@@ -1,5 +1,9 @@
+// ============================================================
+// lib/services/database_helper.dart (FINAL – AMAN & TRANSAKSIONAL)
+// ============================================================
 import 'dart:async';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path_provider/path_provider.dart';
@@ -13,7 +17,7 @@ class DatabaseHelper {
   static Database? _database;
 
   Future<Database> get database async {
-    if (_database != null) return _database!;
+    if (_database != null && _database!.isOpen) return _database!;
     _database = await _initDatabase();
     return _database!;
   }
@@ -24,6 +28,10 @@ class DatabaseHelper {
     return await openDatabase(
       path,
       version: 3,
+      onConfigure: (db) async {
+        // ✅ Aktifkan foreign key constraint
+        await db.execute('PRAGMA foreign_keys = ON');
+      },
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -63,162 +71,198 @@ class DatabaseHelper {
     }
   }
 
+  // ─── Safe operation wrapper ──────────────────────────
+  Future<T> _runWithProtection<T>(
+    Future<T> Function(Database db) action, {
+    bool useTransaction = false,
+  }) async {
+    try {
+      final db = await database;
+      if (useTransaction) {
+        return await db.transaction((txn) => action(txn));
+      } else {
+        return await action(db);
+      }
+    } on DatabaseException catch (e) {
+      debugPrint('❌ Database error: $e');
+      rethrow;
+    } catch (e) {
+      debugPrint('❌ Unexpected database error: $e');
+      rethrow;
+    }
+  }
+
   // ─── CRUD ──────────────────────────────────────────
 
   Future<void> insert(ScanEntry entry) async {
-    final db = await database;
-    await db.insert('scan_entries', entry.toMap(),
-        conflictAlgorithm: ConflictAlgorithm.replace);
+    await _runWithProtection((db) async {
+      await db.insert('scan_entries', entry.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace);
+    });
   }
 
+  /// Insert banyak data sekaligus – dalam satu transaksi atomik
   Future<void> insertAll(List<ScanEntry> entries) async {
-    final db = await database;
-    final batch = db.batch();
-    for (var entry in entries) {
-      batch.insert('scan_entries', entry.toMap(),
-          conflictAlgorithm: ConflictAlgorithm.replace);
-    }
-    await batch.commit();
+    await _runWithProtection((db) async {
+      for (final entry in entries) {
+        await db.insert('scan_entries', entry.toMap(),
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    }, useTransaction: true);
   }
 
   Future<List<ScanEntry>> getAll() async {
-    final db = await database;
-    final result = await db.query('scan_entries',
-        orderBy: 'timestamp DESC');
-    return result.map((map) => ScanEntry.fromMap(map)).toList();
+    return _runWithProtection((db) async {
+      final result = await db.query('scan_entries', orderBy: 'timestamp DESC');
+      return result.map((map) => ScanEntry.fromMap(map)).toList();
+    });
   }
 
   Future<ScanEntry?> getEntry(String id) async {
-    final db = await database;
-    final result = await db.query('scan_entries',
-        where: 'id = ?', whereArgs: [id], limit: 1);
-    if (result.isEmpty) return null;
-    return ScanEntry.fromMap(result.first);
+    return _runWithProtection((db) async {
+      final result = await db.query('scan_entries',
+          where: 'id = ?', whereArgs: [id], limit: 1);
+      if (result.isEmpty) return null;
+      return ScanEntry.fromMap(result.first);
+    });
   }
 
-  // ✅ Perbaikan: cari di value DAN photoPaths
   Future<List<ScanEntry>> getEntries({
     int limit = 20,
     int offset = 0,
     String? searchQuery,
     String? period,
   }) async {
-    final db = await database;
-    String sql = 'SELECT * FROM scan_entries';
-    final List<String> where = [];
-    final List<dynamic> args = [];
+    return _runWithProtection((db) async {
+      String sql = 'SELECT * FROM scan_entries';
+      final List<String> where = [];
+      final List<dynamic> args = [];
 
-    if (searchQuery != null && searchQuery.isNotEmpty) {
-      where.add('(value LIKE ? OR photoPaths LIKE ? OR videoPath LIKE ?)');
-      args.add('%$searchQuery%');
-      args.add('%$searchQuery%');
-      args.add('%$searchQuery%');
-    }
-
-    if (period != null && period != 'Semua') {
-      final now = DateTime.now();
-      DateTime start;
-      switch (period) {
-        case 'Hari ini':
-          start = DateTime(now.year, now.month, now.day);
-          break;
-        case 'Minggu ini':
-          start = now.subtract(Duration(days: now.weekday - 1));
-          start = DateTime(start.year, start.month, start.day);
-          break;
-        case 'Bulan ini':
-          start = DateTime(now.year, now.month, 1);
-          break;
-        default:
-          start = DateTime(0);
+      if (searchQuery != null && searchQuery.isNotEmpty) {
+        where.add('(value LIKE ? OR photoPaths LIKE ? OR videoPath LIKE ?)');
+        args.add('%$searchQuery%');
+        args.add('%$searchQuery%');
+        args.add('%$searchQuery%');
       }
-      where.add('timestamp >= ?');
-      args.add(start.millisecondsSinceEpoch);
-    }
 
-    if (where.isNotEmpty) {
-      sql += ' WHERE ' + where.join(' AND ');
-    }
+      if (period != null && period != 'Semua') {
+        final now = DateTime.now();
+        DateTime start;
+        switch (period) {
+          case 'Hari ini':
+            start = DateTime(now.year, now.month, now.day);
+            break;
+          case 'Minggu ini':
+            start = now.subtract(Duration(days: now.weekday - 1));
+            start = DateTime(start.year, start.month, start.day);
+            break;
+          case 'Bulan ini':
+            start = DateTime(now.year, now.month, 1);
+            break;
+          default:
+            start = DateTime(0);
+        }
+        where.add('timestamp >= ?');
+        args.add(start.millisecondsSinceEpoch);
+      }
 
-    sql += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
-    args.add(limit);
-    args.add(offset);
+      if (where.isNotEmpty) {
+        sql += ' WHERE ' + where.join(' AND ');
+      }
 
-    final List<Map<String, dynamic>> maps = await db.rawQuery(sql, args);
-    return maps.map((map) => ScanEntry.fromMap(map)).toList();
+      sql += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
+      args.add(limit);
+      args.add(offset);
+
+      final maps = await db.rawQuery(sql, args);
+      return maps.map((map) => ScanEntry.fromMap(map)).toList();
+    });
   }
 
-  // ✅ Perbaikan: cari di value DAN photoPaths
   Future<int> getCount({
     String? searchQuery,
     String? period,
   }) async {
-    final db = await database;
-    String sql = 'SELECT COUNT(*) as count FROM scan_entries';
-    final List<String> where = [];
-    final List<dynamic> args = [];
+    return _runWithProtection((db) async {
+      String sql = 'SELECT COUNT(*) as count FROM scan_entries';
+      final List<String> where = [];
+      final List<dynamic> args = [];
 
-    if (searchQuery != null && searchQuery.isNotEmpty) {
-      where.add('(value LIKE ? OR photoPaths LIKE ? OR videoPath LIKE ?)');
-      args.add('%$searchQuery%');
-      args.add('%$searchQuery%');
-      args.add('%$searchQuery%');
-    }
-
-    if (period != null && period != 'Semua') {
-      final now = DateTime.now();
-      DateTime start;
-      switch (period) {
-        case 'Hari ini':
-          start = DateTime(now.year, now.month, now.day);
-          break;
-        case 'Minggu ini':
-          start = now.subtract(Duration(days: now.weekday - 1));
-          start = DateTime(start.year, start.month, start.day);
-          break;
-        case 'Bulan ini':
-          start = DateTime(now.year, now.month, 1);
-          break;
-        default:
-          start = DateTime(0);
+      if (searchQuery != null && searchQuery.isNotEmpty) {
+        where.add('(value LIKE ? OR photoPaths LIKE ? OR videoPath LIKE ?)');
+        args.add('%$searchQuery%');
+        args.add('%$searchQuery%');
+        args.add('%$searchQuery%');
       }
-      where.add('timestamp >= ?');
-      args.add(start.millisecondsSinceEpoch);
-    }
 
-    if (where.isNotEmpty) {
-      sql += ' WHERE ' + where.join(' AND ');
-    }
+      if (period != null && period != 'Semua') {
+        final now = DateTime.now();
+        DateTime start;
+        switch (period) {
+          case 'Hari ini':
+            start = DateTime(now.year, now.month, now.day);
+            break;
+          case 'Minggu ini':
+            start = now.subtract(Duration(days: now.weekday - 1));
+            start = DateTime(start.year, start.month, start.day);
+            break;
+          case 'Bulan ini':
+            start = DateTime(now.year, now.month, 1);
+            break;
+          default:
+            start = DateTime(0);
+        }
+        where.add('timestamp >= ?');
+        args.add(start.millisecondsSinceEpoch);
+      }
 
-    final result = await db.rawQuery(sql, args);
-    return result.first['count'] as int;
+      if (where.isNotEmpty) {
+        sql += ' WHERE ' + where.join(' AND ');
+      }
+
+      final result = await db.rawQuery(sql, args);
+      return result.first['count'] as int;
+    });
   }
 
   Future<void> delete(String id) async {
-    final db = await database;
-    await db.delete('scan_entries', where: 'id = ?', whereArgs: [id]);
+    await _runWithProtection((db) async {
+      await db.delete('scan_entries', where: 'id = ?', whereArgs: [id]);
+    });
   }
 
+  /// Hapus semua data – dalam transaksi
   Future<void> deleteAll() async {
-    final db = await database;
-    await db.delete('scan_entries');
+    await _runWithProtection((db) async {
+      await db.delete('scan_entries');
+    }, useTransaction: true);
   }
 
   Future<void> update(ScanEntry entry) async {
-    final db = await database;
-    await db.update('scan_entries', entry.toMap(),
-        where: 'id = ?', whereArgs: [entry.id]);
+    await _runWithProtection((db) async {
+      await db.update('scan_entries', entry.toMap(),
+          where: 'id = ?', whereArgs: [entry.id]);
+    });
   }
 
   // ─── MIGRASI ──────────────────────────────────────
 
+  /// Migrasi dari JSON – transaksi sudah diterapkan
   Future<void> migrateFromJson(List<ScanEntry> entries) async {
-    final db = await database;
-    await db.transaction((txn) async {
-      for (var entry in entries) {
-        await txn.insert('scan_entries', entry.toMap(),
+    await _runWithProtection((db) async {
+      for (final entry in entries) {
+        await db.insert('scan_entries', entry.toMap(),
             conflictAlgorithm: ConflictAlgorithm.replace);
       }
-    });
+    }, useTransaction: true);
+  }
+
+  /// Tutup database secara aman
+  Future<void> close() async {
+    final db = _database;
+    if (db != null && db.isOpen) {
+      await db.close();
+      _database = null;
+    }
   }
 }
