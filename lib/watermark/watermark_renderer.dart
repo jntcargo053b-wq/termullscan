@@ -1,5 +1,5 @@
 // ============================================================
-// lib/watermark/watermark_renderer.dart (dart:ui – stabil)
+// lib/watermark/watermark_renderer.dart (dart:ui – stabil + companyName)
 // ============================================================
 import 'dart:io';
 import 'dart:typed_data';
@@ -74,6 +74,7 @@ class WatermarkRenderer {
       final data = WatermarkData(
         timestamp: entry.timestamp,
         operatorName: settings.operatorName,
+        companyName: settings.companyName, // ← DITAMBAHKAN
         barcodeValue: entry.value,
         barcodeFormat: entry.barcodeFormat,
         latitude: entry.latitude,
