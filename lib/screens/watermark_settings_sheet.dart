@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/watermark_settings_sheet.dart (FINAL)
+// lib/screens/watermark_settings_sheet.dart (FINAL – COMPANY + OPERATOR)
 // ============================================================
 import 'package:flutter/material.dart';
 import 'package:gap/gap.dart';
@@ -22,6 +22,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
   final ImagePicker _picker = ImagePicker();
   bool _isLoading = true;
   final TextEditingController _operatorController = TextEditingController();
+  final TextEditingController _companyController = TextEditingController(); // ← BARU
 
   final List<WatermarkStyle> _supportedStyles = [
     WatermarkStyle.minimal,
@@ -40,13 +41,15 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
     _settings = WatermarkSettings();
     await _settings.load();
     _operatorController.text = _settings.operatorName;
+    _companyController.text = _settings.companyName; // ← BARU
     if (mounted) setState(() => _isLoading = false);
   }
 
   Future<void> _saveAndClose() async {
     _settings.operatorName = _operatorController.text;
+    _settings.companyName = _companyController.text; // ← BARU
     await _settings.save();
-    debugPrint('💾 SAVED: style=${_settings.style.name}, position=${_settings.position.name}, fontSize=${_settings.fontSize}, fontFamily=${_settings.fontFamily}');
+    debugPrint('💾 SAVED: company=${_settings.companyName}, operator=${_settings.operatorName}, style=${_settings.style.name}');
     Navigator.pop(context);
   }
 
@@ -76,6 +79,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
   @override
   void dispose() {
     _operatorController.dispose();
+    _companyController.dispose(); // ← BARU
     super.dispose();
   }
 
@@ -91,6 +95,9 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
       operatorName: _operatorController.text.isNotEmpty 
           ? _operatorController.text 
           : _settings.operatorName,
+      companyName: _companyController.text.isNotEmpty 
+          ? _companyController.text 
+          : _settings.companyName, // ← BARU
       barcodeValue: '8991234567890',
       barcodeFormat: 'EAN-13',
       locationName: 'Jl. Sudirman No. 123, Jakarta',
@@ -141,6 +148,30 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
               ),
               const Gap(20),
 
+              // ─── Nama Perusahaan ─────────────────────────
+              const Text(
+                'Nama Perusahaan',
+                style: TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+              const Gap(6),
+              TextField(
+                controller: _companyController,
+                onChanged: (_) => setState(() {}),
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  hintText: 'Contoh: PT Dakota Cargo Express',
+                  hintStyle: const TextStyle(color: Colors.grey),
+                  filled: true,
+                  fillColor: const Color(0xFF2A2A2A),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                ),
+              ),
+              const Gap(16),
+
               // ─── Operator ──────────────────────────────────
               const Text(
                 'Nama Operator',
@@ -152,7 +183,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                 onChanged: (_) => setState(() {}),
                 style: const TextStyle(color: Colors.white),
                 decoration: InputDecoration(
-                  hintText: 'Contoh: PT Maju Jaya',
+                  hintText: 'Contoh: Andi',
                   hintStyle: const TextStyle(color: Colors.grey),
                   filled: true,
                   fillColor: const Color(0xFF2A2A2A),
