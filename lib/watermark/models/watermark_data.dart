@@ -4,6 +4,7 @@ import '../watermark_settings.dart';
 class WatermarkData {
   final DateTime timestamp;
   final String operatorName;
+  final String companyName; // ✅ BARU – nama perusahaan
   final String? barcodeValue;
   final String? barcodeFormat;
   final double? latitude;
@@ -13,11 +14,12 @@ class WatermarkData {
   final WatermarkPosition position;
   final double fontSize;
   final double backgroundOpacity;
-  final String fontFamily; // ✅ TAMBAHKAN
+  final String fontFamily;
 
   const WatermarkData({
     required this.timestamp,
     required this.operatorName,
+    this.companyName = '', // ✅ default kosong
     this.barcodeValue,
     this.barcodeFormat,
     this.latitude,
@@ -27,16 +29,18 @@ class WatermarkData {
     this.position = WatermarkPosition.bottomRight,
     this.fontSize = 14.0,
     this.backgroundOpacity = 0.55,
-    this.fontFamily = 'Roboto', // ✅ TAMBAHKAN
+    this.fontFamily = 'Roboto',
   });
 
   bool get hasBarcode => barcodeValue != null && barcodeValue!.isNotEmpty;
   bool get hasOperator => operatorName.isNotEmpty;
+  bool get hasCompany => companyName.isNotEmpty; // ✅ getter baru
   bool get hasLocation => locationName != null && locationName!.isNotEmpty;
   bool get isManual => barcodeFormat == 'MANUAL';
   bool get hasLogo => logoPath != null && logoPath!.isNotEmpty;
 
-  String get formattedTimestamp => DateFormat('dd/MM/yyyy HH:mm:ss').format(timestamp);
+  String get formattedTimestamp =>
+      DateFormat('dd/MM/yyyy HH:mm:ss').format(timestamp);
 
   String get displayLocation {
     if (locationName != null && locationName!.isNotEmpty) return locationName!;
