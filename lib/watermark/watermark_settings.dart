@@ -15,7 +15,9 @@ class WatermarkSettings extends ChangeNotifier {
   factory WatermarkSettings() => _instance;
   WatermarkSettings._internal();
 
+  // ========== KEYS ==========
   static const String _keyOperatorName = 'watermark_operator_name';
+  static const String _keyCompanyName = 'watermark_company_name'; // BARU
   static const String _keyStyle = 'watermark_style';
   static const String _keyLogoPath = 'watermark_logo_path';
   static const String _keyHasLogo = 'watermark_has_logo';
@@ -26,6 +28,7 @@ class WatermarkSettings extends ChangeNotifier {
 
   // ========== PROPERTIES ==========
   String operatorName = '';
+  String companyName = ''; // BARU
   WatermarkStyle style = WatermarkStyle.professional;
   String? logoPath;
   bool hasLogo = false;
@@ -41,6 +44,7 @@ class WatermarkSettings extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       operatorName = prefs.getString(_keyOperatorName) ?? '';
+      companyName = prefs.getString(_keyCompanyName) ?? ''; // BARU
       final styleIndex = prefs.getInt(_keyStyle) ?? WatermarkStyle.professional.index;
       final values = WatermarkStyle.values;
       style = (styleIndex >= 0 && styleIndex < values.length)
@@ -68,6 +72,7 @@ class WatermarkSettings extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_keyOperatorName, operatorName);
+      await prefs.setString(_keyCompanyName, companyName); // BARU
       await prefs.setInt(_keyStyle, style.index);
       if (logoPath != null) {
         await prefs.setString(_keyLogoPath, logoPath!);
@@ -88,6 +93,12 @@ class WatermarkSettings extends ChangeNotifier {
   // ========== SETTERS ==========
   Future<void> setOperatorName(String name) async {
     operatorName = name;
+    notifyListeners();
+    await save();
+  }
+
+  Future<void> setCompanyName(String name) async {  // BARU
+    companyName = name;
     notifyListeners();
     await save();
   }
