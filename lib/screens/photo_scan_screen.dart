@@ -1,8 +1,8 @@
 // ============================================================
-// lib/screens/photo_scan_screen.dart (FINAL - PRODUCTION READY)
+// lib/screens/photo_scan_screen.dart (FINAL – FIXED & OPTIMISED)
 // ============================================================
 import 'dart:async';
-import 'dart:io' show Platform;
+import 'dart:io'; // ✅ WAJIB untuk File, Platform, dll.
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -10,7 +10,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:gap/gap.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:saver_gallery/saver_gallery.dart';
-import 'package:device_info_plus/device_info_plus.dart'; // ✅ untuk SDK Android
+import 'package:device_info_plus/device_info_plus.dart'; // ✅ untuk Android SDK version
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
 import '../services/permission_service.dart';
@@ -304,16 +304,14 @@ class PhotoScanScreen extends StatefulWidget {
 class _PhotoScanScreenState extends State<PhotoScanScreen> {
   final ImagePicker _picker = ImagePicker();
   final StorageService _storage = StorageService();
-  final WatermarkSettings _wmSettings = WatermarkSettings();
+  final WatermarkSettings _wmSettings = WatermarkSettings(); // singleton
 
   bool _isSaving = false;
   bool _isCapturing = false;
+  bool _processingRequest = false; // mutex anti double‑tap
   int _photoCount = 0;
   bool _cameraGranted = false;
   final List<String> _photoPaths = [];
-
-  // ✅ Mutex anti double-tap
-  bool _processingRequest = false;
 
   @override
   void initState() {
@@ -321,15 +319,13 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     _requestPermissions();
   }
 
-  // ─── PERMISSION HANDLING (Android 14+ & permanently denied) ────
+  // ─── PERMISSION HANDLING (Android 14+ aware) ─────────────────
   Future<void> _requestPermissions() async {
     // Kamera
     final cameraStatus = await Permission.camera.status;
-    if (cameraStatus.isGranted) {
-      if (mounted) setState(() => _cameraGranted = true);
-    } else {
+    if (!cameraStatus.isGranted) {
       if (cameraStatus.isPermanentlyDenied) {
-        _showError('Izin kamera ditolak permanen. Silakan buka pengaturan aplikasi.');
+        _showError('Izin kamera ditolak permanen. Buka pengaturan.');
         await openAppSettings();
         return;
       }
@@ -339,12 +335,16 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         _showError('Izin kamera diperlukan untuk mengambil foto');
         return;
       }
+    } else {
+      if (mounted) setState(() => _cameraGranted = true);
     }
 
-    // Galeri – untuk Android 10+ tidak perlu storage permission
+    // Galeri – untuk Android 10+ (API 29) tidak perlu storage permission
     if (Platform.isAndroid) {
       final sdkInt = await _getAndroidSdkVersion();
-      if (sdkInt >= 29) return; // Scoped storage sudah aman
+      if (sdkInt >= 29) {
+        return; // Scoped storage aman tanpa izin tambahan
+      }
     }
     await PermissionService.requestGalleryPermission();
   }
@@ -355,8 +355,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       final info = await DeviceInfoPlugin().androidInfo;
       return info.version.sdkInt;
     } catch (_) {
-      // Fallback aman: anggap SDK >= 29 (tidak meminta izin storage)
-      return 29;
+      return 29; // fallback aman
     }
   }
 
@@ -368,7 +367,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       return true;
     }
     if (status.isPermanentlyDenied) {
-      _showError('Izin kamera ditolak permanen. Silakan buka pengaturan aplikasi.');
+      _showError('Izin kamera ditolak permanen. Buka pengaturan.');
       await openAppSettings();
       return false;
     }
@@ -398,7 +397,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         : '${widget.barcode}${photoIndex.toString().padLeft(3, '0')}';
   }
 
-  // ─── WATERMARK ───────────────────────────────────────────────
+  // ─── WATERMARK ──────────────────────────────────────────────
   Future<String> _applyWatermark(String imagePath, DateTime timestamp, int photoIndex) async {
     final fileName = _resolveFileName(photoIndex);
     final outputPath =
@@ -450,7 +449,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         androidExistNotSave: false,
       );
 
-      // ✅ Tidak ada delay statis – SaverGallery sudah blocking
+      // Delay 500ms dihapus – SaverGallery sudah blocking
       return result.isSuccess;
     } catch (e) {
       debugPrint('❌ Error _saveToGallery: $e');
@@ -458,90 +457,76 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     }
   }
 
-  // ─── TAKE PHOTO (dengan mutex) ──────────────────────────────
+  // ─── TAKE PHOTO (dengan mutex anti double‑tap) ────────────────
   Future<void> _takePhoto() async {
-    if (_processingRequest) return;
+    if (_isSaving || _isCapturing || _processingRequest) return;
+    if (!await _ensureCameraPermission()) return;
+
     _processingRequest = true;
+    setState(() {
+      _isSaving = true;
+      _isCapturing = true;
+    });
 
     try {
-      if (_isSaving || _isCapturing) return;
-      if (!await _ensureCameraPermission()) return;
-
-      if (!mounted) return;
-      setState(() {
-        _isSaving = true;
-        _isCapturing = true;
-      });
-
       final xfile = await _picker.pickImage(
         source: ImageSource.camera,
         maxWidth: AppConfig.maxWidth,
         imageQuality: AppConfig.imageQuality,
         preferredCameraDevice: CameraDevice.rear,
       );
-
       if (!mounted) return;
-      if (xfile != null) {
-        await _processPhoto(xfile);
-      } else {
-        // User membatalkan
-      }
+      if (xfile != null) await _processPhoto(xfile);
     } catch (e) {
       _showError('Gagal membuka kamera');
     } finally {
+      _processingRequest = false;
       if (mounted) {
         setState(() {
           _isSaving = false;
           _isCapturing = false;
         });
       }
-      _processingRequest = false;
     }
   }
 
-  // ─── PICK FROM GALLERY (dengan mutex) ──────────────────────
+  // ─── PICK FROM GALLERY ──────────────────────────────────────
   Future<void> _pickFromGallery() async {
-    if (_processingRequest) return;
+    if (_isSaving || _isCapturing || _processingRequest) return;
+
     _processingRequest = true;
+    setState(() {
+      _isSaving = true;
+      _isCapturing = true;
+    });
 
     try {
-      if (_isSaving || _isCapturing) return;
-
-      if (!mounted) return;
-      setState(() {
-        _isSaving = true;
-        _isCapturing = true;
-      });
-
       final xfile = await _picker.pickImage(
         source: ImageSource.gallery,
         maxWidth: AppConfig.maxWidth,
         imageQuality: AppConfig.imageQuality,
       );
-
       if (!mounted) return;
-      if (xfile != null) {
-        await _processPhoto(xfile);
-      }
+      if (xfile != null) await _processPhoto(xfile);
     } catch (e) {
       _showError('Gagal membuka galeri');
     } finally {
+      _processingRequest = false;
       if (mounted) {
         setState(() {
           _isSaving = false;
           _isCapturing = false;
         });
       }
-      _processingRequest = false;
     }
   }
 
   // ─── PROCESS PHOTO ──────────────────────────────────────────
   Future<void> _processPhoto(XFile xfile) async {
-    if (!mounted) return;
-
     String? watermarkedPath;
     String compressedPath = xfile.path;
+
+    if (!mounted) return;
 
     try {
       final fileSize = await File(xfile.path).length();
@@ -549,30 +534,29 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         throw Exception('Ukuran foto terlalu besar (>20MB)');
       }
 
-      // 1. Kompresi
       compressedPath = await ImageCompressor.compressIfNeeded(xfile.path);
 
       final timestamp = DateTime.now();
       final photoIndex = _photoCount + 1;
 
-      // 2. Watermark
       watermarkedPath = await _applyWatermark(compressedPath, timestamp, photoIndex);
 
       if (!await File(watermarkedPath).exists()) {
         throw Exception('File watermark tidak ditemukan');
       }
 
-      // 3. Simpan permanen
       final name = _resolveFileName(photoIndex);
       final savedPath = await _storage.savePhoto(watermarkedPath, name: name);
       if (savedPath.isEmpty) throw Exception('Gagal menyimpan file foto');
 
-      // ✅ Hapus file watermark sementara setelah berhasil disalin
-      if (watermarkedPath != savedPath && await FileHelper.isTemporaryFile(watermarkedPath)) {
-        try { await File(watermarkedPath).delete(); } catch (_) {}
+      // ✅ Hapus file watermark sementara jika berbeda dengan yang disimpan
+      if (watermarkedPath != savedPath &&
+          await FileHelper.isTemporaryFile(watermarkedPath)) {
+        try {
+          await File(watermarkedPath).delete();
+        } catch (_) {}
       }
 
-      // 4. Update state
       if (mounted) {
         setState(() {
           _photoPaths.add(savedPath);
@@ -580,21 +564,18 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         });
       }
 
-      // 5. Update database (jika ada batch entry)
+      // Update database entry setelah state terupdate
       if (widget.entryId != null) {
+        if (!mounted) return;
         final barcodeEntry = await _storage.getEntry(widget.entryId!);
-        if (!mounted) return; // ✅ guard setelah async
-        if (barcodeEntry != null) {
+        if (barcodeEntry != null && mounted) {
           final updated = barcodeEntry.copyWith(photoPaths: List.from(_photoPaths));
           await _storage.update(updated);
         }
       }
 
-      // 6. Simpan ke galeri
-      if (!mounted) return;
       await _saveToGallery(savedPath);
 
-      // 7. Mode single: langsung kembali
       if (!widget.batchMode) {
         _showSuccess();
         if (mounted) {
@@ -603,7 +584,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         return;
       }
 
-      // 8. Mode batch: tampilkan snackbar
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -616,12 +596,11 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     } catch (e, stack) {
       debugPrint('Error processing photo: $e\n$stack');
       _showError('Gagal memproses foto: ${e.toString().split(':').last}');
-      // Bersihkan file sementara jika gagal
       if (watermarkedPath != null && watermarkedPath != compressedPath) {
         try { await File(watermarkedPath).delete(); } catch (_) {}
       }
     } finally {
-      // Bersihkan file kompresi sementara
+      // Bersihkan file sementara
       if (compressedPath != xfile.path && await FileHelper.isTemporaryFile(compressedPath)) {
         try { await File(compressedPath).delete(); } catch (_) {}
       }
@@ -634,9 +613,9 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   // ─── FINISH BATCH ────────────────────────────────────────────
   Future<void> _finishBatch() async {
     if (widget.entryId != null && _photoPaths.isNotEmpty) {
-      final barcodeEntry = await _storage.getEntry(widget.entryId!);
       if (!mounted) return;
-      if (barcodeEntry != null) {
+      final barcodeEntry = await _storage.getEntry(widget.entryId!);
+      if (barcodeEntry != null && mounted) {
         final updated = barcodeEntry.copyWith(photoPaths: List.from(_photoPaths));
         await _storage.update(updated);
       }
@@ -673,8 +652,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                     width: 40,
                     height: 40,
                     fit: BoxFit.cover,
-                    cacheWidth: 80,
-                    cacheHeight: 80,
+                    cacheWidth: 100,
+                    cacheHeight: 100,
                   ),
                 );
               }).toList(),
