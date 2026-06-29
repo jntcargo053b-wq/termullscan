@@ -1,6 +1,3 @@
-// ============================================================
-// lib/services/database_helper.dart (FINAL – AMAN & TRANSAKSIONAL)
-// ============================================================
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -73,7 +70,7 @@ class DatabaseHelper {
 
   // ─── Safe operation wrapper ──────────────────────────
   Future<T> _runWithProtection<T>(
-    Future<T> Function(Database db) action, {
+    Future<T> Function(DatabaseExecutor db) action, {
     bool useTransaction = false,
   }) async {
     try {
@@ -101,7 +98,6 @@ class DatabaseHelper {
     });
   }
 
-  /// Insert banyak data sekaligus – dalam satu transaksi atomik
   Future<void> insertAll(List<ScanEntry> entries) async {
     await _runWithProtection((db) async {
       for (final entry in entries) {
@@ -231,7 +227,6 @@ class DatabaseHelper {
     });
   }
 
-  /// Hapus semua data – dalam transaksi
   Future<void> deleteAll() async {
     await _runWithProtection((db) async {
       await db.delete('scan_entries');
@@ -247,7 +242,6 @@ class DatabaseHelper {
 
   // ─── MIGRASI ──────────────────────────────────────
 
-  /// Migrasi dari JSON – transaksi sudah diterapkan
   Future<void> migrateFromJson(List<ScanEntry> entries) async {
     await _runWithProtection((db) async {
       for (final entry in entries) {
@@ -257,7 +251,6 @@ class DatabaseHelper {
     }, useTransaction: true);
   }
 
-  /// Tutup database secara aman
   Future<void> close() async {
     final db = _database;
     if (db != null && db.isOpen) {
