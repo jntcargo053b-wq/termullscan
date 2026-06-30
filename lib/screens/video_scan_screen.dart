@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/video_scan_screen.dart (FINAL – CAMERA 0.10.5+5 FIX)
+// lib/screens/video_scan_screen.dart (FINAL – CAMERA READY FLAG)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -40,6 +40,7 @@ class _VideoScanScreenState extends State<VideoScanScreen>
   bool _isStopping = false;
   bool _isSaving = false;
   bool _isWatermarking = false;
+  bool _cameraReady = false;   // ✅ cegah tap sebelum kamera siap
   String _statusText = '';
   int _recordedSeconds = 0;
   Timer? _timer;
@@ -61,7 +62,6 @@ class _VideoScanScreenState extends State<VideoScanScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
-    // Jangan panggil stopVideoRecording di sini – lifecycle yang menangani
     _cameraController?.dispose();
     _cameraController = null;
     if (_recordedFile != null) {
@@ -75,6 +75,7 @@ class _VideoScanScreenState extends State<VideoScanScreen>
     if (state == AppLifecycleState.inactive) {
       final controller = _cameraController;
       _cameraController = null;
+      _cameraReady = false;
 
       if (_isRecording && controller != null) {
         unawaited(_stopRecordingAndSave(showPreviewAfter: false).whenComplete(() {
@@ -88,8 +89,9 @@ class _VideoScanScreenState extends State<VideoScanScreen>
     }
   }
 
-  // ─── INISIALISASI KAMERA (FIX) ──────────────────────────
+  // ─── INISIALISASI KAMERA ──────────────────────────────
   Future<void> _initCamera() async {
+    _cameraReady = false;
     try {
       final cam = await Permission.camera.request();
       final mic = await Permission.microphone.request();
@@ -131,10 +133,9 @@ class _VideoScanScreenState extends State<VideoScanScreen>
         selectedCamera,
         ResolutionPreset.medium,
         enableAudio: true,
-        imageFormatGroup: ImageFormatGroup.yuv420, // stabil di Android
+        imageFormatGroup: ImageFormatGroup.yuv420,
       );
 
-      // Gunakan variabel lokal untuk listener
       final controller = _cameraController!;
       controller.addListener(() {
         if (!mounted) return;
@@ -152,10 +153,10 @@ class _VideoScanScreenState extends State<VideoScanScreen>
         throw Exception(controller.value.errorDescription);
       }
 
-      // Beri waktu surface benar-benar siap
       await Future.delayed(const Duration(milliseconds: 300));
 
       if (!mounted) return;
+      _cameraReady = true;
       setState(() {
         _statusText = 'Siap merekam';
       });
@@ -163,6 +164,7 @@ class _VideoScanScreenState extends State<VideoScanScreen>
       debugPrint('✅ Kamera siap');
     } catch (e, stack) {
       debugPrint('❌ Gagal buka kamera: $e\n$stack');
+      _cameraReady = false;
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error kamera: $e')),
@@ -172,15 +174,12 @@ class _VideoScanScreenState extends State<VideoScanScreen>
     }
   }
 
-  // ─── REKAM / STOP ────────────────────────────────────────
+  // ─── REKAM / STOP ────────────────────────────────────
   Future<void> _toggleRecording() async {
+    if (!_cameraReady) return;   // ✅ kamera belum siap → abaikan tap
+
     final controller = _cameraController;
-    if (controller == null || !controller.value.isInitialized) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Kamera belum siap')),
-      );
-      return;
-    }
+    if (controller == null || !controller.value.isInitialized) return;
     if (_isStopping) return;
 
     if (_isRecording) {
@@ -201,18 +200,9 @@ class _VideoScanScreenState extends State<VideoScanScreen>
 
   Future<void> _startRecording() async {
     final controller = _cameraController;
-    if (controller == null) return;
-    if (!controller.value.isInitialized) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Kamera belum siap')),
-      );
-      return;
-    }
-    if (controller.value.isTakingPicture || controller.value.isRecordingVideo) {
-      return;
-    }
+    if (controller == null || !controller.value.isInitialized) return;
+    if (controller.value.isTakingPicture || controller.value.isRecordingVideo) return;
 
-    // ⏱️ Tunggu ImageReader benar-benar siap (CameraX fix)
     await Future.delayed(const Duration(milliseconds: 500));
     if (!mounted) return;
     if (!controller.value.isInitialized) return;
@@ -256,7 +246,7 @@ class _VideoScanScreenState extends State<VideoScanScreen>
     }
   }
 
-  // ─── STOP & SIMPAN ─────────────────────────────────────
+  // ─── STOP & SIMPAN ─────────────────────────────────
   Future<void> _stopRecordingAndSave({required bool showPreviewAfter}) async {
     if (!_isRecording || _isStopping) return;
     _isStopping = true;
@@ -308,7 +298,7 @@ class _VideoScanScreenState extends State<VideoScanScreen>
     }
   }
 
-  // ─── SIMPAN ───────────────────────────────────────────
+  // ─── SIMPAN ───────────────────────────────────────
   Future<void> _saveVideo(XFile videoFile) async {
     if (!mounted) return;
     setState(() => _isSaving = true);
@@ -481,7 +471,7 @@ class _VideoScanScreenState extends State<VideoScanScreen>
                   padding: const EdgeInsets.symmetric(vertical: 20),
                   child: Center(
                     child: GestureDetector(
-                      onTap: _toggleRecording,
+                      onTap: _cameraReady ? _toggleRecording : null, // ✅ hanya responsif jika kamera siap
                       child: Container(
                         width: 80, height: 80,
                         decoration: BoxDecoration(
