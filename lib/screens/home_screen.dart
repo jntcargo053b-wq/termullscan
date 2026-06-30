@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:gap/gap.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:file_picker/file_picker.dart'; // ← tambahkan dependency
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 import 'barcode_scan_screen.dart';
@@ -16,22 +18,85 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final StorageService _storage = StorageService();
- 
+
   int _scanCount = 0;
+  int _storageUsedBytes = 0;
+  bool _isBackupLoading = false;
+  bool _isRestoreLoading = false;
 
   @override
   void initState() {
     super.initState();
-    _loadCount();
+    _loadData();
   }
 
-  Future<void> _loadCount() async {
-    // ✅ Gunakan getCount() untuk menghitung total tanpa load semua data
+  Future<void> _loadData() async {
     final count = await _storage.getCount();
+    final used = await _storage.getTotalStorageUsed();
     if (mounted) {
       setState(() {
         _scanCount = count;
+        _storageUsedBytes = used;
       });
+    }
+  }
+
+  String _formatStorage(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+  }
+
+  Future<void> _backup() async {
+    setState(() => _isBackupLoading = true);
+    try {
+      final zipPath = await _storage.backup();
+      if (zipPath.isNotEmpty) {
+        await _storage.shareBackup(zipPath);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Gagal backup: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isBackupLoading = false);
+    }
+  }
+
+  Future<void> _restore() async {
+    // Pilih file ZIP
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['zip'],
+    );
+    if (result == null || result.files.isEmpty) return;
+
+    setState(() => _isRestoreLoading = true);
+    try {
+      final filePath = result.files.single.path!;
+      final success = await _storage.restore(filePath);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(success ? 'Restore berhasil' : 'Restore gagal'),
+            backgroundColor: success ? Colors.green : Colors.red,
+          ),
+        );
+      }
+      if (success) await _loadData(); // refresh data
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isRestoreLoading = false);
     }
   }
 
@@ -59,6 +124,26 @@ class _HomeScreenState extends State<HomeScreen> {
                       color: Colors.grey[400],
                     ),
               ).animate().fadeIn(delay: 100.ms),
+              const Gap(8),
+              // ─── STORAGE INDICATOR ────────────────────────
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade800,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.sd_storage, size: 14, color: Colors.grey),
+                    const Gap(6),
+                    Text(
+                      'Penyimpanan: ${_formatStorage(_storageUsedBytes)}',
+                      style: const TextStyle(color: Colors.grey, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ).animate().fadeIn(delay: 200.ms),
               const Gap(32),
               Expanded(
                 child: Column(
@@ -75,9 +160,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             builder: (_) => const BarcodeScanScreen(),
                           ),
                         );
-                        if (result != null) {
-                          await _loadCount();
-                        }
+                        if (result != null) await _loadData();
                       },
                     ),
                     const Gap(16),
@@ -92,9 +175,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             builder: (_) => const PhotoScanScreen(),
                           ),
                         );
-                        if (result != null) {
-                          await _loadCount();
-                        }
+                        if (result != null) await _loadData();
                       },
                     ),
                     const Gap(16),
@@ -109,11 +190,52 @@ class _HomeScreenState extends State<HomeScreen> {
                             builder: (_) => const LogScreen(),
                           ),
                         );
-                        if (result != null) {
-                          await _loadCount();
-                        }
+                        if (result != null) await _loadData();
                       },
                     ),
+                    const Gap(24),
+                    // ─── BACKUP & RESTORE BUTTONS ─────────────
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: _isBackupLoading ? null : _backup,
+                            icon: _isBackupLoading
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.backup, size: 18),
+                            label: Text(_isBackupLoading ? 'Backup...' : 'Backup'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.blue.shade700,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                            ),
+                          ),
+                        ),
+                        const Gap(12),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _isRestoreLoading ? null : _restore,
+                            icon: _isRestoreLoading
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.restore, size: 18),
+                            label: Text(_isRestoreLoading ? 'Restore...' : 'Restore'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: Colors.white,
+                              side: const BorderSide(color: Colors.grey),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ).animate().fadeIn(delay: 400.ms),
                   ],
                 ),
               ),
