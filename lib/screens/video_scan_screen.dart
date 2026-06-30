@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/video_scan_screen.dart (FINAL – SURFACE FIX)
+// lib/screens/video_scan_screen.dart (FINAL – ATTEMPT TO INVOKE FIX)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -61,7 +61,6 @@ class _VideoScanScreenState extends State<VideoScanScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
-    // Jangan dispose controller saat masih recording
     if (_isRecording) {
       _cameraController?.stopVideoRecording().catchError((_) {});
     }
@@ -94,7 +93,6 @@ class _VideoScanScreenState extends State<VideoScanScreen>
   // ─── INISIALISASI KAMERA ──────────────────────────────────
   Future<void> _initCamera() async {
     try {
-      // 1. Izin
       final cam = await Permission.camera.request();
       final mic = await Permission.microphone.request();
       if (!cam.isGranted || !mic.isGranted) {
@@ -107,7 +105,6 @@ class _VideoScanScreenState extends State<VideoScanScreen>
         return;
       }
 
-      // 2. Daftar kamera
       _cameras = await availableCameras();
       if (_cameras == null || _cameras!.isEmpty) {
         if (mounted) {
@@ -119,7 +116,6 @@ class _VideoScanScreenState extends State<VideoScanScreen>
         return;
       }
 
-      // 3. Pilih kamera belakang, fallback depan
       CameraDescription selectedCamera;
       try {
         selectedCamera = _cameras!.firstWhere(
@@ -133,25 +129,20 @@ class _VideoScanScreenState extends State<VideoScanScreen>
 
       debugPrint('📷 Kamera: ${selectedCamera.name}');
 
-      // 4. Buat controller dengan resolusi rendah untuk stabilitas maksimal
       _cameraController = CameraController(
         selectedCamera,
-        ResolutionPreset.low, // LOW untuk kompatibilitas terbaik
+        ResolutionPreset.low, // stabilitas maksimum
         enableAudio: true,
-        // JANGAN set imageFormatGroup
       );
 
-      // 5. Tambahkan listener error
       _cameraController!.addListener(() {
         if (_cameraController!.value.hasError) {
           debugPrint('❌ Camera error: ${_cameraController!.value.errorDescription}');
         }
       });
 
-      // 6. Inisialisasi
       await _cameraController!.initialize();
 
-      // 7. Prepare for video recording (Android)
       if (Platform.isAndroid) {
         try {
           await _cameraController!.prepareForVideoRecording();
@@ -179,7 +170,9 @@ class _VideoScanScreenState extends State<VideoScanScreen>
 
   // ─── REKAM / STOP ────────────────────────────────────────
   Future<void> _toggleRecording() async {
-    if (_cameraController == null || !_cameraController!.value.isInitialized) {
+    // Hindari akses controller null
+    final controller = _cameraController;
+    if (controller == null || !controller.value.isInitialized) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Kamera belum siap')),
       );
@@ -204,20 +197,24 @@ class _VideoScanScreenState extends State<VideoScanScreen>
   }
 
   Future<void> _startRecording() async {
+    final controller = _cameraController;
+    if (controller == null || !controller.value.isInitialized) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Kamera belum siap')),
+      );
+      return;
+    }
+    if (controller.value.isRecordingVideo) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Sudah merekam')),
+      );
+      return;
+    }
+
     try {
-      if (_cameraController == null || !_cameraController!.value.isInitialized) {
-        throw Exception('Kamera belum siap');
-      }
-      if (_cameraController!.value.isRecordingVideo) {
-        throw Exception('Sedang merekam');
-      }
-
-      // Tunggu sebentar untuk memastikan surface siap
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      await _cameraController!.startVideoRecording();
-
-      debugPrint('🎥 isRecordingVideo = ${_cameraController!.value.isRecordingVideo}');
+      debugPrint('🎬 Memulai startVideoRecording...');
+      await controller.startVideoRecording();
+      debugPrint('🎥 isRecordingVideo = ${controller.value.isRecordingVideo}');
 
       setState(() {
         _isRecording = true;
@@ -267,13 +264,20 @@ class _VideoScanScreenState extends State<VideoScanScreen>
     }
 
     try {
+      debugPrint('🛑 Menghentikan rekaman...');
       final XFile videoFile = await controller.stopVideoRecording();
+      debugPrint('✅ Rekaman berhenti, file: ${videoFile.path}');
+
       if (!mounted) return;
 
       final file = File(videoFile.path);
-      if (!await file.exists() || await file.length() < 1000) {
+      final exists = await file.exists();
+      final size = exists ? await file.length() : 0;
+      debugPrint('📁 File: exists=$exists, size=$size');
+
+      if (!exists || size < 1000) {
         await file.delete().catchError((_) {});
-        throw Exception('Video terlalu pendek / gagal tersimpan');
+        throw Exception('Video terlalu pendek / file kosong');
       }
 
       setState(() {
@@ -293,8 +297,8 @@ class _VideoScanScreenState extends State<VideoScanScreen>
       }
 
       await _saveVideo(videoFile);
-    } catch (e) {
-      debugPrint('❌ Stop recording error: $e');
+    } catch (e, stack) {
+      debugPrint('❌ Stop recording error: $e\n$stack');
       if (mounted) {
         setState(() => _statusText = 'Gagal: $e');
         ScaffoldMessenger.of(context).showSnackBar(
@@ -308,6 +312,7 @@ class _VideoScanScreenState extends State<VideoScanScreen>
 
   // ─── SIMPAN ───────────────────────────────────────────
   Future<void> _saveVideo(XFile videoFile) async {
+    if (!mounted) return;
     setState(() => _isSaving = true);
     try {
       final fileSize = await File(videoFile.path).length();
@@ -372,8 +377,8 @@ class _VideoScanScreenState extends State<VideoScanScreen>
           Navigator.pop(context, {'entry': entry});
         }
       }
-    } catch (e) {
-      debugPrint('❌ Save error: $e');
+    } catch (e, stack) {
+      debugPrint('❌ Save error: $e\n$stack');
       if (mounted) {
         setState(() => _isSaving = false);
         ScaffoldMessenger.of(context).showSnackBar(
