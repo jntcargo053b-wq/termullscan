@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:ffmpeg_kit_flutter_new_min_gpl/ffmpeg_kit.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:path_provider/path_provider.dart'; // ✅ tambahan
 import '../watermark/watermark_settings.dart';
 import '../watermark/watermark_style.dart';
 import '../models/scan_entry.dart';
@@ -21,7 +22,6 @@ class VideoWatermarkService {
       final layout = _StyleLayout.forStyle(settings.style, settings.position);
 
       final blockLineHeight = settings.fontSize + 8;
-      // ✅ Konversi eksplisit ke double
       final blockHeight = (lines.isEmpty)
           ? 0.0
           : (lines.length * blockLineHeight).toDouble() + (layout.padding * 2);
@@ -135,11 +135,12 @@ class VideoWatermarkService {
     return lines;
   }
 
+  // ✅ _getFontPath sekarang menyimpan font ke direktori dokumen
   static Future<String> _getFontPath(String fontFamily) async {
     final assetPath = _assetFontPath(fontFamily);
-    final tempDir = Directory.systemTemp;
+    final dir = await getApplicationDocumentsDirectory();
     final safeName = fontFamily.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
-    final destFile = File('${tempDir.path}/ffmpeg_font_$safeName.ttf');
+    final destFile = File('${dir.path}/ffmpeg_font_$safeName.ttf');
     if (!await destFile.exists()) {
       final fontData = await rootBundle.load(assetPath);
       await destFile.writeAsBytes(
