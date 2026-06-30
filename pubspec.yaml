@@ -12,7 +12,7 @@ dependencies:
 
   # ─── CORE ──────────────────────────────────────────────────────────────
   shared_preferences: ^2.2.2
-  path_provider: ^2.1.1
+  path_provider: ^2.1.1          # ← perbaiki nama package (sebelumnya "path_provider")
   permission_handler: ^11.3.1
   image_picker: ^1.1.2
   intl: ^0.19.0
@@ -46,10 +46,11 @@ dependencies:
   camera: ^0.10.5+5
   video_player: ^2.8.5
   video_thumbnail: ^0.5.6
-  ffmpeg_kit_flutter_new_min_gpl: ^4.1.0   # ← ganti dari 2.1.1
+  ffmpeg_kit_flutter_new_min_gpl: ^4.1.0
 
-  # ─── BACKUP & ARCHIVE ──────────────────────────────────────────────
+  # ─── BACKUP & RESTORE ────────────────────────────────────────────────
   archive: ^3.6.1
+  file_picker: ^8.0.0             # ← tambahkan untuk memilih file restore
 
   # ─── COLLECTION (untuk firstWhereOrNull) ────────────────────────────
   collection: ^1.18.0
