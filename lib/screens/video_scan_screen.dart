@@ -1,14 +1,15 @@
 // ============================================================
-// lib/screens/video_scan_screen.dart (FINAL – DURASI 20s, MIN 3s)
+// lib/screens/video_scan_screen.dart (FINAL – FIX IMPORTS)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:camera/camera.dart';
+import 'package:camera/camera.dart' hide ImageFormat; // hindari bentrok
 import 'package:gap/gap.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
+import 'package:path_provider/path_provider.dart'; // tambahan
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
 import '../services/video_watermark_service.dart';
@@ -36,6 +37,7 @@ class _VideoScanScreenState extends State<VideoScanScreen>
   CameraController? _cameraController;
   List<CameraDescription>? _cameras;
   bool _isRecording = false;
+  bool _isStopping = false;
   bool _isSaving = false;
   bool _isWatermarking = false;
   String _statusText = '';
@@ -44,8 +46,8 @@ class _VideoScanScreenState extends State<VideoScanScreen>
   XFile? _recordedFile;
   final StorageService _storage = StorageService();
 
-  static const int _maxDurationSeconds = 20;   // maksimal 20 detik
-  static const int _minDurationSeconds = 3;    // minimal 3 detik
+  static const int _maxDurationSeconds = 20;
+  static const int _minDurationSeconds = 3;
   static const int _maxVideoSizeBytes = 50 * 1024 * 1024;
 
   @override
@@ -70,7 +72,6 @@ class _VideoScanScreenState extends State<VideoScanScreen>
     super.dispose();
   }
 
-  // ─── LIFECYCLE (AMAN) ──────────────────────────────────────
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.inactive) {
@@ -133,9 +134,9 @@ class _VideoScanScreenState extends State<VideoScanScreen>
 
   Future<void> _toggleRecording() async {
     if (_cameraController == null || !_cameraController!.value.isInitialized) return;
+    if (_isStopping) return;
 
     if (_isRecording) {
-      // Cegah stop jika durasi kurang dari minimal
       if (_recordedSeconds < _minDurationSeconds) {
         final sisa = _minDurationSeconds - _recordedSeconds;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -146,7 +147,6 @@ class _VideoScanScreenState extends State<VideoScanScreen>
         );
         return;
       }
-      // Durasi sudah mencukupi, hentikan rekaman
       await _stopRecordingAndSave(showPreviewAfter: true);
     } else {
       await _startRecording();
@@ -163,13 +163,16 @@ class _VideoScanScreenState extends State<VideoScanScreen>
       });
 
       _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-        if (mounted) {
-          setState(() {
-            _recordedSeconds++;
-          });
-          if (_recordedSeconds >= _maxDurationSeconds) {
-            // Otomatis berhenti jika sudah mencapai durasi maksimal
-            _stopRecordingAndSave(showPreviewAfter: true);
+        if (!mounted) {
+          timer.cancel();
+          return;
+        }
+        setState(() => _recordedSeconds++);
+
+        if (_recordedSeconds >= _maxDurationSeconds) {
+          timer.cancel();
+          if (_isRecording && !_isStopping) {
+            unawaited(_stopRecordingAndSave(showPreviewAfter: true));
           }
         }
       });
@@ -184,14 +187,21 @@ class _VideoScanScreenState extends State<VideoScanScreen>
   }
 
   Future<void> _stopRecordingAndSave({required bool showPreviewAfter}) async {
-    if (!_isRecording) return;
+    if (!_isRecording || _isStopping) return;
+    _isStopping = true;
+    _timer?.cancel();
 
     final controller = _cameraController;
-    if (controller == null || !controller.value.isRecordingVideo) return;
+    if (controller == null || !controller.value.isRecordingVideo) {
+      _isStopping = false;
+      return;
+    }
 
     try {
-      _timer?.cancel();
       final XFile videoFile = await controller.stopVideoRecording();
+
+      if (!mounted) return;
+
       setState(() {
         _isRecording = false;
         _recordedFile = videoFile;
@@ -220,6 +230,8 @@ class _VideoScanScreenState extends State<VideoScanScreen>
           SnackBar(content: Text('Error: $e')),
         );
       }
+    } finally {
+      _isStopping = false;
     }
   }
 
