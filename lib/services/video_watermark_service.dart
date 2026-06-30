@@ -2,7 +2,7 @@ import 'dart:io';
 import 'package:ffmpeg_kit_flutter_new_min_gpl/ffmpeg_kit.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
-import 'package:path_provider/path_provider.dart'; // ✅ tambahan
+import 'package:path_provider/path_provider.dart'; // ✅ wajib
 import '../watermark/watermark_settings.dart';
 import '../watermark/watermark_style.dart';
 import '../models/scan_entry.dart';
@@ -47,9 +47,11 @@ class VideoWatermarkService {
           blockHeight: blockHeight,
         );
 
+        // ⚠️ Untuk sementara fontfile dinonaktifkan untuk memastikan font bukan penyebab gagal.
+        // Setelah watermark berhasil, aktifkan kembali dengan menambah "fontfile='$escapedFontPath':"
         filterParts.add(
           "drawtext=text='$escapedText':"
-          "fontfile='$escapedFontPath':"
+          // "fontfile='$escapedFontPath':"   // <-- sementara dimatikan untuk tes
           "fontcolor=$color:"
           "fontsize=$fontSize:"
           "x=$xExpr:"
@@ -74,25 +76,40 @@ class VideoWatermarkService {
 
       final filterComplex = buffer.toString();
 
-      final command = "-i '$inputPath' "
+      // ✅ Perintah FFmpeg yang lengkap dengan codec video & audio
+      final command =
+          "-i \"$inputPath\" "
           "-filter_complex \"$filterComplex\" "
           "-map \"[outv]\" "
           "-map 0:a? "
-          "-c:a copy "
+          "-c:v libx264 "          // wajib re-encode video
+          "-preset ultrafast "     // cepat, kualitas cukup untuk POD
+          "-pix_fmt yuv420p "     // kompatibel di semua device
+          "-c:a aac "             // audio codec
+          "-b:a 128k "            // bitrate audio
+          "-movflags +faststart " // untuk web/mobile preview
           "-y "
-          "'$outputPath'";
+          "\"$outputPath\"";
 
       debugPrint('🎬 FFmpeg command: $command');
 
       final session = await FFmpegKit.execute(command);
       final returnCode = await session.getReturnCode();
 
+      // 📊 Logging detail untuk debugging
+      debugPrint('🔢 ReturnCode = ${returnCode?.getValue()}');
+      final output = await session.getOutput();
+      if (output != null && output.isNotEmpty) {
+        debugPrint('📤 Output: $output');
+      }
+      final logs = await session.getAllLogsAsString();
+      debugPrint('📜 Full logs: $logs');
+
       if (returnCode?.isValueSuccess() == true) {
         debugPrint('✅ Video watermark berhasil: $outputPath');
         return outputPath;
       } else {
-        final logs = await session.getAllLogsAsString();
-        debugPrint('❌ FFmpeg gagal. Logs: $logs');
+        debugPrint('❌ FFmpeg gagal. Logs di atas menunjukkan penyebabnya.');
         return null;
       }
     } catch (e) {
@@ -100,6 +117,10 @@ class VideoWatermarkService {
       return null;
     }
   }
+
+  // ─────────────────────────────────────────────────────────
+  // Helper methods (tidak berubah signifikan)
+  // ─────────────────────────────────────────────────────────
 
   static List<_TextLine> _buildTextLines(
       ScanEntry entry, WatermarkSettings settings) {
@@ -135,7 +156,6 @@ class VideoWatermarkService {
     return lines;
   }
 
-  // ✅ _getFontPath sekarang menyimpan font ke direktori dokumen
   static Future<String> _getFontPath(String fontFamily) async {
     final assetPath = _assetFontPath(fontFamily);
     final dir = await getApplicationDocumentsDirectory();
@@ -198,6 +218,7 @@ class VideoWatermarkService {
   }
 }
 
+// ─── Helper classes ──────────────────────────────
 class _TextLine {
   final String text;
   final double sizeOffset;
