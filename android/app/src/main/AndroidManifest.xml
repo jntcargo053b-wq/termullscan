@@ -5,6 +5,9 @@
     <!-- Izin Kamera -->
     <uses-permission android:name="android.permission.CAMERA" />
 
+    <!-- ✅ Izin Mikrofon (wajib untuk merekam video dengan audio) -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
     <!-- Izin Lokasi (opsional, bisa dihapus) -->
     <!-- <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" /> -->
     <!-- <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" /> -->
