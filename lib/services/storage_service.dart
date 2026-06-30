@@ -1,12 +1,19 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:uuid/uuid.dart';
+import 'package:archive/archive.dart';
 import '../models/scan_entry.dart';
 import 'database_helper.dart';
 
 class StorageService {
+  // ========== SINGLETON ==========
+  static final StorageService _instance = StorageService._internal();
+  factory StorageService() => _instance;
+  StorageService._internal();
+
   final Uuid _uuid = const Uuid();
   final DatabaseHelper _db = DatabaseHelper();
 
@@ -15,65 +22,44 @@ class StorageService {
 
   String generateId() => _uuid.v4();
 
-  // ─── CRUD ──────────────────────────────────────────────────────
+  // ================================================================
+  // CRUD
+  // ================================================================
 
-  Future<void> add(ScanEntry entry) async {
-    await _db.insert(entry);
-  }
+  Future<void> add(ScanEntry entry) async => _db.insert(entry);
+  Future<void> update(ScanEntry entry) async => _db.update(entry);
+  Future<void> delete(String id) async => _db.delete(id);
+  Future<void> deleteAll() async => _db.deleteAll();
 
-  Future<void> update(ScanEntry entry) async {
-    await _db.update(entry);
-  }
+  // ================================================================
+  // QUERY
+  // ================================================================
 
-  Future<void> delete(String id) async {
-    await _db.delete(id);
-  }
-
-  Future<void> deleteAll() async {
-    await _db.deleteAll();
-  }
-
-  // ─── QUERY ────────────────────────────────────────────────────
-
-  Future<List<ScanEntry>> loadAll() async {
-    return await _db.getAll();
-  }
+  Future<List<ScanEntry>> loadAll() => _db.getAll();
 
   Future<List<ScanEntry>> getEntries({
     int limit = 20,
     int offset = 0,
     String? searchQuery,
     String? period,
-  }) async {
-    return await _db.getEntries(
-      limit: limit,
-      offset: offset,
-      searchQuery: searchQuery,
-      period: period,
-    );
-  }
+  }) async => _db.getEntries(
+        limit: limit,
+        offset: offset,
+        searchQuery: searchQuery,
+        period: period,
+      );
 
-  Future<int> getCount({
-    String? searchQuery,
-    String? period,
-  }) async {
-    return await _db.getCount(
-      searchQuery: searchQuery,
-      period: period,
-    );
-  }
+  Future<int> getCount({String? searchQuery, String? period}) async =>
+      _db.getCount(searchQuery: searchQuery, period: period);
 
-  Future<ScanEntry?> getEntry(String id) async {
-    return await _db.getEntry(id);
-  }
+  Future<ScanEntry?> getEntry(String id) async => _db.getEntry(id);
 
-  // ─── MIGRASI ──────────────────────────────────────────────────
+  Future<void> migrateFromJson(List<ScanEntry> entries) async =>
+      _db.migrateFromJson(entries);
 
-  Future<void> migrateFromJson(List<ScanEntry> entries) async {
-    await _db.migrateFromJson(entries);
-  }
-
-  // ─── PHOTO ────────────────────────────────────────────────────
+  // ================================================================
+  // PHOTO
+  // ================================================================
 
   Future<String> savePhoto(String sourcePath, {String? name}) async {
     try {
@@ -89,7 +75,9 @@ class StorageService {
 
       String fileName;
       if (name != null && name.isNotEmpty) {
-        String baseName = name.endsWith('.jpg') ? name.substring(0, name.length - 4) : name;
+        String baseName = name.endsWith('.jpg')
+            ? name.substring(0, name.length - 4)
+            : name;
         String pureBase = baseName.replaceFirst(RegExp(r'\d+$'), '');
         String candidate = '$pureBase.jpg';
 
@@ -97,7 +85,6 @@ class StorageService {
           fileName = candidate;
           _maxNumberCache.remove(pureBase);
         } else {
-          // ✅ Optimasi: gunakan stream, tidak toList()
           int maxNumber = await _findMaxNumberForPrefixStream(photosDir, pureBase);
           if (maxNumber == 0) maxNumber = 1;
           int nextNumber = maxNumber + 1;
@@ -120,14 +107,15 @@ class StorageService {
     }
   }
 
-  // ✅ Optimasi: gunakan stream untuk scan direktori
-  Future<int> _findMaxNumberForPrefixStream(Directory photosDir, String pureBase) async {
+  Future<int> _findMaxNumberForPrefixStream(
+      Directory photosDir, String pureBase) async {
     if (_maxNumberCache.containsKey(pureBase)) {
       return _maxNumberCache[pureBase]!;
     }
 
     int maxNumber = 0;
-    final RegExp regExp = RegExp(r'^' + RegExp.escape(pureBase) + r'(\d*)\.jpg$');
+    final RegExp regExp =
+        RegExp(r'^' + RegExp.escape(pureBase) + r'(\d*)\.jpg$');
 
     await for (final entity in photosDir.list()) {
       if (entity is File) {
@@ -147,8 +135,18 @@ class StorageService {
     return maxNumber;
   }
 
-  // ─── CLEANUP ────────────────────────────────────────────────────
+  // ================================================================
+  // CLEANUP
+  // ================================================================
 
+  /// Jalankan cleanup di background isolate (via compute).
+  Future<void> cleanupOldFilesInBackground({int days = 90}) async {
+    final dir = await getApplicationDocumentsDirectory();
+    final photosDir = '${dir.path}/photos';
+    await compute(_cleanupInIsolate, _CleanupArgs(photosDir, days));
+  }
+
+  /// Versi synchronous untuk dipanggil langsung (jika diperlukan).
   Future<void> cleanupOldFiles({int days = 90}) async {
     try {
       final dir = await getApplicationDocumentsDirectory();
@@ -166,7 +164,9 @@ class StorageService {
             await entity.delete();
             deletedCount++;
             final filename = entity.path.split('/').last;
-            final base = filename.endsWith('.jpg') ? filename.substring(0, filename.length - 4) : filename;
+            final base = filename.endsWith('.jpg')
+                ? filename.substring(0, filename.length - 4)
+                : filename;
             final pureBase = base.replaceFirst(RegExp(r'\d+$'), '');
             _maxNumberCache.remove(pureBase);
           }
@@ -185,7 +185,9 @@ class StorageService {
       final file = File(path);
       if (await file.exists()) {
         final filename = file.path.split('/').last;
-        final base = filename.endsWith('.jpg') ? filename.substring(0, filename.length - 4) : filename;
+        final base = filename.endsWith('.jpg')
+            ? filename.substring(0, filename.length - 4)
+            : filename;
         final pureBase = base.replaceFirst(RegExp(r'\d+$'), '');
         await file.delete();
         _maxNumberCache.remove(pureBase);
@@ -196,7 +198,9 @@ class StorageService {
     }
   }
 
-  // ─── VIDEO ────────────────────────────────────────────────────
+  // ================================================================
+  // VIDEO
+  // ================================================================
 
   Future<String> saveVideo(String sourcePath, {String? name}) async {
     try {
@@ -225,14 +229,123 @@ class StorageService {
     }
   }
 
-  // ─── EXPORT ────────────────────────────────────────────────────
+  // ================================================================
+  // STORAGE INDICATOR
+  // ================================================================
+
+  Future<int> getTotalStorageUsed() async {
+    int totalBytes = 0;
+    final appDir = await getApplicationDocumentsDirectory();
+
+    final photosDir = Directory(join(appDir.path, 'photos'));
+    if (await photosDir.exists()) {
+      await for (final entity in photosDir.list()) {
+        if (entity is File) totalBytes += await entity.length();
+      }
+    }
+
+    final videosDir = Directory(join(appDir.path, 'videos'));
+    if (await videosDir.exists()) {
+      await for (final entity in videosDir.list()) {
+        if (entity is File) totalBytes += await entity.length();
+      }
+    }
+
+    return totalBytes;
+  }
+
+  // ================================================================
+  // BACKUP & RESTORE
+  // ================================================================
+
+  Future<String> backup() async {
+    final appDir = await getApplicationDocumentsDirectory();
+    final dbFile = File(join(appDir.path, 'scan_log.db'));
+    final photosDir = Directory(join(appDir.path, 'photos'));
+    final videosDir = Directory(join(appDir.path, 'videos'));
+
+    final archive = Archive();
+
+    if (await dbFile.exists()) {
+      final bytes = await dbFile.readAsBytes();
+      archive.addFile(ArchiveFile('scan_log.db', bytes.length, Stream.value(bytes)));
+    }
+
+    if (await photosDir.exists()) {
+      await for (final entity in photosDir.list()) {
+        if (entity is File) {
+          final bytes = await entity.readAsBytes();
+          archive.addFile(ArchiveFile(
+            'photos/${entity.path.split('/').last}',
+            bytes.length,
+            Stream.value(bytes),
+          ));
+        }
+      }
+    }
+
+    if (await videosDir.exists()) {
+      await for (final entity in videosDir.list()) {
+        if (entity is File) {
+          final bytes = await entity.readAsBytes();
+          archive.addFile(ArchiveFile(
+            'videos/${entity.path.split('/').last}',
+            bytes.length,
+            Stream.value(bytes),
+          ));
+        }
+      }
+    }
+
+    final zipData = ZipEncoder().encode(archive);
+    final backupDir = await getApplicationDocumentsDirectory();
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final zipPath = '${backupDir.path}/termulscan_backup_$timestamp.zip';
+    await File(zipPath).writeAsBytes(zipData);
+
+    debugPrint('✅ Backup berhasil: $zipPath');
+    return zipPath;
+  }
+
+  Future<bool> restore(String zipPath) async {
+    try {
+      final bytes = await File(zipPath).readAsBytes();
+      final archive = ZipDecoder().decodeBytes(bytes);
+
+      final appDir = await getApplicationDocumentsDirectory();
+
+      for (final file in archive) {
+        if (file.isFile) {
+          final filePath = join(appDir.path, file.name);
+          await File(filePath).parent.create(recursive: true);
+          await File(filePath).writeAsBytes(file.content as List<int>);
+        }
+      }
+
+      debugPrint('✅ Restore berhasil dari $zipPath');
+      return true;
+    } catch (e) {
+      debugPrint('❌ Restore gagal: $e');
+      return false;
+    }
+  }
+
+  Future<void> shareBackup(String zipPath) async {
+    await Share.shareXFiles([XFile(zipPath)], text: 'Backup TermulScan');
+  }
+
+  // ================================================================
+  // EXPORT TXT
+  // ================================================================
 
   Future<String> exportTxt(List<ScanEntry> entries) async {
     final dir = await getApplicationDocumentsDirectory();
-    final file = File('${dir.path}/scan_export_${DateTime.now().millisecondsSinceEpoch}.txt');
+    final file = File(
+        '${dir.path}/scan_export_${DateTime.now().millisecondsSinceEpoch}.txt');
     final buffer = StringBuffer();
     for (var entry in entries) {
-      buffer.writeln('${entry.timestamp} | ${entry.type} | ${entry.value} | ${entry.barcodeFormat ?? ''} | ${entry.locationName ?? ''}');
+      buffer.writeln(
+          '${entry.timestamp} | ${entry.type} | ${entry.value} | ${entry.barcodeFormat ?? ''} | ${entry.locationName ?? ''}');
     }
     await file.writeAsString(buffer.toString());
     return file.path;
@@ -246,5 +359,38 @@ class StorageService {
     } catch (e) {
       debugPrint('⚠️ Share error: $e');
     }
+  }
+}
+
+// ================================================================
+// ISOLATE CLEANUP HELPER
+// ================================================================
+
+class _CleanupArgs {
+  final String photosDir;
+  final int days;
+  _CleanupArgs(this.photosDir, this.days);
+}
+
+Future<void> _cleanupInIsolate(_CleanupArgs args) async {
+  final dir = Directory(args.photosDir);
+  if (!await dir.exists()) return;
+
+  final now = DateTime.now();
+  final cutoff = now.subtract(Duration(days: args.days));
+  int deletedCount = 0;
+
+  await for (final entity in dir.list()) {
+    if (entity is File && entity.path.endsWith('.jpg')) {
+      final stat = await entity.stat();
+      if (stat.modified.isBefore(cutoff)) {
+        await entity.delete();
+        deletedCount++;
+      }
+    }
+  }
+
+  if (deletedCount > 0) {
+    debugPrint('🧹 Isolate deleted $deletedCount old files');
   }
 }
