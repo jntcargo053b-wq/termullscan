@@ -3,10 +3,13 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:gap/gap.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:video_thumbnail/video_thumbnail.dart';
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
+import '../services/video_watermark_service.dart';
+import '../watermark/watermark_settings.dart';
 import '../theme/app_theme.dart';
 
 class VideoScanScreen extends StatefulWidget {
@@ -31,9 +34,13 @@ class _VideoScanScreenState extends State<VideoScanScreen>
   List<CameraDescription>? _cameras;
   bool _isRecording = false;
   bool _isSaving = false;
+  bool _isWatermarking = false;
   int _recordedSeconds = 0;
   Timer? _timer;
   final StorageService _storage = StorageService();
+
+  static const int _maxDurationSeconds = 120;
+  static const int _maxVideoSizeBytes = 50 * 1024 * 1024;
 
   @override
   void initState() {
@@ -46,7 +53,11 @@ class _VideoScanScreenState extends State<VideoScanScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
+    if (_isRecording) {
+      _cameraController?.stopVideoRecording().catchError((_) {});
+    }
     _cameraController?.dispose();
+    _cameraController = null;
     super.dispose();
   }
 
@@ -54,17 +65,33 @@ class _VideoScanScreenState extends State<VideoScanScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.inactive) {
       _cameraController?.dispose();
+      _cameraController = null;
+      if (_isRecording) {
+        _timer?.cancel();
+        if (mounted) {
+          setState(() {
+            _isRecording = false;
+            _recordedSeconds = 0;
+          });
+        }
+      }
     } else if (state == AppLifecycleState.resumed) {
-      _initCamera();
+      if (_cameraController == null) {
+        _initCamera();
+      }
     }
   }
 
   Future<void> _initCamera() async {
-    final status = await Permission.camera.request();
-    if (!status.isGranted) {
+    final camStatus = await Permission.camera.request();
+    final micStatus = await Permission.microphone.request();
+
+    if (!camStatus.isGranted || !micStatus.isGranted) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Izin kamera diperlukan')),
+          const SnackBar(
+            content: Text('Izin kamera dan mikrofon diperlukan untuk merekam video'),
+          ),
         );
         Navigator.pop(context);
       }
@@ -82,7 +109,7 @@ class _VideoScanScreenState extends State<VideoScanScreen>
         (c) => c.lensDirection == CameraLensDirection.back,
         orElse: () => _cameras!.first,
       ),
-      ResolutionPreset.high,
+      ResolutionPreset.medium,
       enableAudio: true,
     );
 
@@ -107,10 +134,6 @@ class _VideoScanScreenState extends State<VideoScanScreen>
 
   Future<void> _startRecording() async {
     try {
-      final dir = await getApplicationDocumentsDirectory();
-      final timestamp = DateTime.now().millisecondsSinceEpoch;
-      final videoPath = '${dir.path}/video_$timestamp.mp4';
-
       await _cameraController!.startVideoRecording();
       setState(() {
         _isRecording = true;
@@ -122,8 +145,7 @@ class _VideoScanScreenState extends State<VideoScanScreen>
           setState(() {
             _recordedSeconds++;
           });
-          if (_recordedSeconds >= 120) {
-            // maksimal 2 menit
+          if (_recordedSeconds >= _maxDurationSeconds) {
             _stopRecording();
           }
         }
@@ -137,6 +159,7 @@ class _VideoScanScreenState extends State<VideoScanScreen>
   }
 
   Future<void> _stopRecording() async {
+    if (!_isRecording) return;
     try {
       _timer?.cancel();
       final XFile videoFile = await _cameraController!.stopVideoRecording();
@@ -145,9 +168,27 @@ class _VideoScanScreenState extends State<VideoScanScreen>
         _isSaving = true;
       });
 
-      // Simpan video
+      final fileSize = await File(videoFile.path).length();
+      if (fileSize > _maxVideoSizeBytes) {
+        try { await File(videoFile.path).delete(); } catch (_) {}
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Video terlalu besar (${(fileSize / (1024 * 1024)).toStringAsFixed(1)} MB). Maksimal 50 MB.',
+              ),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        setState(() => _isSaving = false);
+        return;
+      }
+
       final savedPath = await _storage.saveVideo(videoFile.path, name: widget.barcode);
       if (savedPath.isNotEmpty) {
+        final thumbnailPath = await _generateThumbnail(savedPath);
+
         final entry = ScanEntry(
           id: _storage.generateId(),
           type: ScanType.video,
@@ -155,15 +196,53 @@ class _VideoScanScreenState extends State<VideoScanScreen>
           timestamp: DateTime.now(),
           videoPath: savedPath,
           videoDuration: _recordedSeconds,
-          videoThumbnail: await _generateThumbnail(savedPath),
+          videoThumbnail: thumbnailPath,
         );
         await _storage.add(entry);
+
+        ScanEntry finalEntry = entry;
+
+        if (mounted) {
+          setState(() {
+            _isSaving = false;
+            _isWatermarking = true;
+          });
+
+          final wmOutputPath = '$savedPath.wm.mp4';
+          try {
+            final wmResult = await VideoWatermarkService.addWatermark(
+              inputPath: savedPath,
+              outputPath: wmOutputPath,
+              entry: entry,
+              settings: WatermarkSettings(),
+            );
+
+            if (wmResult != null) {
+              finalEntry = entry.copyWith(
+                videoPath: wmResult,
+                videoThumbnail: thumbnailPath,
+              );
+              await _storage.update(finalEntry);
+            }
+          } catch (e) {
+            debugPrint('Watermark error: $e');
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Gagal menambahkan watermark: $e')),
+              );
+            }
+          }
+
+          if (mounted) {
+            setState(() => _isWatermarking = false);
+          }
+        }
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Video tersimpan')),
           );
-          Navigator.pop(context, {'entry': entry});
+          Navigator.pop(context, {'entry': finalEntry});
         }
       } else {
         if (mounted) {
@@ -187,12 +266,11 @@ class _VideoScanScreenState extends State<VideoScanScreen>
   }
 
   Future<String?> _generateThumbnail(String videoPath) async {
-    // Untuk sementara, gunakan video_thumbnail package
-    // (akan diaktifkan setelah dependency ditambahkan)
     try {
+      final docsDir = await getApplicationDocumentsDirectory();
       final thumbnail = await VideoThumbnail.thumbnailFile(
         video: videoPath,
-        thumbnailPath: (await getApplicationDocumentsDirectory()).path,
+        thumbnailPath: docsDir.path,
         imageFormat: ImageFormat.JPEG,
         maxHeight: 200,
         quality: 75,
@@ -207,6 +285,12 @@ class _VideoScanScreenState extends State<VideoScanScreen>
   String _formatDuration(int seconds) {
     final min = seconds ~/ 60;
     final sec = seconds % 60;
+    return '${min.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}';
+  }
+
+  String _formatMaxDuration() {
+    final min = _maxDurationSeconds ~/ 60;
+    final sec = _maxDurationSeconds % 60;
     return '${min.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}';
   }
 
@@ -239,7 +323,7 @@ class _VideoScanScreenState extends State<VideoScanScreen>
                   const Icon(Icons.fiber_manual_record, size: 16, color: Colors.white),
                   const Gap(4),
                   Text(
-                    _formatDuration(_recordedSeconds),
+                    '${_formatDuration(_recordedSeconds)} / ${_formatMaxDuration()}',
                     style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                   ),
                 ],
@@ -250,14 +334,34 @@ class _VideoScanScreenState extends State<VideoScanScreen>
       body: Column(
         children: [
           Expanded(
-            child: CameraPreview(_cameraController!),
+            child: Stack(
+              children: [
+                CameraPreview(_cameraController!),
+                if (_isRecording)
+                  Positioned(
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    child: LinearProgressIndicator(
+                      value: _recordedSeconds / _maxDurationSeconds,
+                      backgroundColor: Colors.white24,
+                      valueColor: const AlwaysStoppedAnimation<Color>(Colors.red),
+                      minHeight: 4,
+                    ),
+                  ),
+                if (_isWatermarking)
+                  const Center(
+                    child: CircularProgressIndicator(),
+                  ),
+              ],
+            ),
           ),
           if (_isSaving)
             const Padding(
               padding: EdgeInsets.all(20),
               child: CircularProgressIndicator(),
             )
-          else
+          else if (!_isWatermarking)
             SafeArea(
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 20),
