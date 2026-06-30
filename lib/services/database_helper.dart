@@ -26,7 +26,6 @@ class DatabaseHelper {
       path,
       version: 3,
       onConfigure: (db) async {
-        // ✅ Aktifkan foreign key constraint
         await db.execute('PRAGMA foreign_keys = ON');
       },
       onCreate: _onCreate,
@@ -123,11 +122,14 @@ class DatabaseHelper {
     });
   }
 
+  // ✅ getEntries dengan sorting + pencarian note & lokasi
   Future<List<ScanEntry>> getEntries({
     int limit = 20,
     int offset = 0,
     String? searchQuery,
     String? period,
+    String sortField = 'timestamp',
+    String sortDir = 'DESC',
   }) async {
     return _runWithProtection((db) async {
       String sql = 'SELECT * FROM scan_entries';
@@ -135,7 +137,9 @@ class DatabaseHelper {
       final List<dynamic> args = [];
 
       if (searchQuery != null && searchQuery.isNotEmpty) {
-        where.add('(value LIKE ? OR photoPaths LIKE ? OR videoPath LIKE ?)');
+        where.add('(value LIKE ? OR photoPaths LIKE ? OR videoPath LIKE ? OR note LIKE ? OR locationName LIKE ?)');
+        args.add('%$searchQuery%');
+        args.add('%$searchQuery%');
         args.add('%$searchQuery%');
         args.add('%$searchQuery%');
         args.add('%$searchQuery%');
@@ -166,7 +170,16 @@ class DatabaseHelper {
         sql += ' WHERE ' + where.join(' AND ');
       }
 
-      sql += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
+      String orderBy;
+      switch (sortField) {
+        case 'value':
+          orderBy = 'value $sortDir';
+          break;
+        case 'timestamp':
+        default:
+          orderBy = 'timestamp $sortDir';
+      }
+      sql += ' ORDER BY $orderBy LIMIT ? OFFSET ?';
       args.add(limit);
       args.add(offset);
 
@@ -175,6 +188,7 @@ class DatabaseHelper {
     });
   }
 
+  // ✅ getCount dengan pencarian note & lokasi
   Future<int> getCount({
     String? searchQuery,
     String? period,
@@ -185,7 +199,9 @@ class DatabaseHelper {
       final List<dynamic> args = [];
 
       if (searchQuery != null && searchQuery.isNotEmpty) {
-        where.add('(value LIKE ? OR photoPaths LIKE ? OR videoPath LIKE ?)');
+        where.add('(value LIKE ? OR photoPaths LIKE ? OR videoPath LIKE ? OR note LIKE ? OR locationName LIKE ?)');
+        args.add('%$searchQuery%');
+        args.add('%$searchQuery%');
         args.add('%$searchQuery%');
         args.add('%$searchQuery%');
         args.add('%$searchQuery%');
@@ -239,8 +255,6 @@ class DatabaseHelper {
           where: 'id = ?', whereArgs: [entry.id]);
     });
   }
-
-  // ─── MIGRASI ──────────────────────────────────────
 
   Future<void> migrateFromJson(List<ScanEntry> entries) async {
     await _runWithProtection((db) async {
