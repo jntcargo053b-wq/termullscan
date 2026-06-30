@@ -45,6 +45,7 @@ class _VideoScanScreenState extends State<VideoScanScreen>
   Timer? _timer;
   XFile? _recordedFile;
   final StorageService _storage = StorageService();
+  final WatermarkSettings _wmSettings = WatermarkSettings();
 
   static const int _maxDurationSeconds = 20;
   static const int _minDurationSeconds = 3;
@@ -292,7 +293,7 @@ class _VideoScanScreenState extends State<VideoScanScreen>
         inputPath: savedPath,
         outputPath: wmOutputPath,
         entry: entry,
-        settings: WatermarkSettings(),
+        settings: _wmSettings,
       );
 
       if (wmResult != null) {
