@@ -15,11 +15,6 @@ dependencies:
   path_provider: ^2.1.1
   permission_handler: ^11.3.1
   image_picker: ^1.1.2
-
-  # ─── VIDEO ──────────────────────────────────────────────────
-  camera: ^0.10.5+5
-  video_player: ^2.8.5
-  video_thumbnail: ^0.5.3
   intl: ^0.19.0
   uuid: ^4.3.1
   device_info_plus: ^9.1.0
@@ -46,6 +41,15 @@ dependencies:
   # ─── DATABASE (untuk pagination & indexing) ─────────────────────────
   sqflite: ^2.3.0
   path: ^1.9.0
+
+  # ─── VIDEO ──────────────────────────────────────────────────────────
+  camera: ^0.10.5+5
+  video_player: ^2.8.5
+  video_thumbnail: ^0.5.6
+  ffmpeg_kit_flutter: ^6.0.3
+
+  # ─── COLLECTION (untuk firstWhereOrNull) ────────────────────────────
+  collection: ^1.18.0
 
 dev_dependencies:
   flutter_test:
