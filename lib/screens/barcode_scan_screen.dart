@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/barcode_scan_screen.dart (FINAL - NO CONST ERROR)
+// lib/screens/barcode_scan_screen.dart (FINAL - + VIDEO BUTTON)
 // ============================================================
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -13,6 +13,7 @@ import '../services/permission_service.dart';
 import '../watermark/watermark_settings.dart';
 import 'watermark_settings_sheet.dart';
 import 'photo_scan_screen.dart';
+import 'video_scan_screen.dart';   // ← tambahan
 
 class BarcodeScanScreen extends StatefulWidget {
   const BarcodeScanScreen({super.key});
@@ -427,6 +428,35 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
                       style: const TextStyle(color: Colors.white70, fontSize: 12),
                     ),
                   ),
+                  const Gap(8),
+                  // ─── TOMBOL REKAM VIDEO ───────────────────────────
+                  TextButton.icon(
+                    onPressed: () async {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => VideoScanScreen(
+                            barcode: _activeBarcode ?? _lastCode,
+                            batchMode: _batchMode,
+                          ),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.videocam, color: Colors.white70, size: 18),
+                    label: const Text(
+                      'Rekam Video',
+                      style: TextStyle(color: Colors.white70, fontSize: 13),
+                    ),
+                    style: TextButton.styleFrom(
+                      backgroundColor: const Color(0x88000000),
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(20),
+                        side: const BorderSide(color: Colors.white24),
+                      ),
+                    ),
+                  ),
+                  // ─── AKHIR TOMBOL REKAM VIDEO ──────────────────────
                   const Gap(8),
                   TextButton.icon(
                     onPressed: _showManualInput,
