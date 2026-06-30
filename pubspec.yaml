@@ -38,7 +38,7 @@ dependencies:
   # ─── SVG ──────────────────────────────────────────────────────────────
   flutter_svg: ^2.0.10+1
 
-  # ─── DATABASE (untuk pagination & indexing) ─────────────────────────
+  # ─── DATABASE ─────────────────────────────────────────────────────────
   sqflite: ^2.3.0
   path: ^1.9.0
 
@@ -46,7 +46,10 @@ dependencies:
   camera: ^0.10.5+5
   video_player: ^2.8.5
   video_thumbnail: ^0.5.6
-  ffmpeg_kit_flutter_new_min_gpl: ^2.1.1
+  ffmpeg_kit_flutter_new_min_gpl: ^4.1.0   # ← ganti dari 2.1.1
+
+  # ─── BACKUP & ARCHIVE ──────────────────────────────────────────────
+  archive: ^3.6.1
 
   # ─── COLLECTION (untuk firstWhereOrNull) ────────────────────────────
   collection: ^1.18.0
