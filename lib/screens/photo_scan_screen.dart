@@ -1,26 +1,296 @@
 // ============================================================
-// lib/screens/video_scan_screen.dart (FINAL – DOUBLE-STOP GUARD)
+// lib/screens/photo_scan_screen.dart (FINAL – MEMORY SAFE BATCH)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:camera/camera.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_animate/flutter_animate.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:gap/gap.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:video_player/video_player.dart';
-import 'package:video_thumbnail/video_thumbnail.dart';
+import 'package:saver_gallery/saver_gallery.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
-import '../services/video_watermark_service.dart';
-import '../watermark/watermark_settings.dart';
+import '../services/permission_service.dart';
+import '../config/app_config.dart';
 import '../theme/app_theme.dart';
+import '../watermark/watermark_renderer.dart';
+import '../watermark/watermark_settings.dart';
+import '../utils/image_compressor.dart';
+import '../utils/file_helper.dart';
+import 'watermark_settings_sheet.dart';
 
-class VideoScanScreen extends StatefulWidget {
+// ─── WIDGET: Camera Icon ──────────────────────────────────────
+class _CameraIconWidget extends StatelessWidget {
+  final bool batchMode;
+  final int photoCount;
+  const _CameraIconWidget({required this.batchMode, required this.photoCount});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 120,
+      height: 120,
+      decoration: BoxDecoration(
+        color: AppTheme.accentOrange.withOpacity(0.1),
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: AppTheme.accentOrange.withOpacity(0.4),
+          width: 2,
+        ),
+      ),
+      child: batchMode
+          ? Stack(
+              alignment: Alignment.center,
+              children: [
+                const Icon(Icons.camera_alt, size: 52, color: AppTheme.accentOrange),
+                if (photoCount > 0)
+                  Positioned(
+                    bottom: 4,
+                    right: 4,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: const BoxDecoration(
+                        color: AppTheme.accentOrange,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Text(
+                        '$photoCount',
+                        style: const TextStyle(
+                          color: Colors.black,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            )
+          : const Icon(Icons.camera_alt, size: 52, color: AppTheme.accentOrange),
+    ).animate().scale(duration: 400.ms, curve: Curves.elasticOut);
+  }
+}
+
+// ─── WIDGET: Header ───────────────────────────────────────────
+class _HeaderWidget extends StatelessWidget {
+  final bool batchMode;
+  final int photoCount;
+  final String? barcode;
+  const _HeaderWidget({
+    required this.batchMode,
+    required this.photoCount,
+    this.barcode,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text(
+          batchMode ? 'Ambil Foto Batch' : 'Siap Ambil Foto',
+          style: Theme.of(context).textTheme.titleLarge,
+        ).animate().fadeIn(delay: 100.ms),
+        const Gap(8),
+        Text(
+          batchMode
+              ? '$photoCount foto diambil untuk ${barcode ?? 'tanpa barcode'}'
+              : 'Foto otomatis disertai timestamp & watermark',
+          style: Theme.of(context).textTheme.bodyMedium,
+          textAlign: TextAlign.center,
+        ).animate().fadeIn(delay: 200.ms),
+      ],
+    );
+  }
+}
+
+// ─── WIDGET: Photo Thumbnails (optimised memory) ─────────────
+class _PhotoThumbnailsWidget extends StatelessWidget {
+  final List<String> photoPaths;
+  const _PhotoThumbnailsWidget({required this.photoPaths});
+
+  static const int _maxThumbnails = 20;
+
+  @override
+  Widget build(BuildContext context) {
+    if (photoPaths.isEmpty) return const SizedBox.shrink();
+
+    final displayPaths = photoPaths.length > _maxThumbnails
+        ? photoPaths.sublist(photoPaths.length - _maxThumbnails)
+        : photoPaths;
+
+    return Column(
+      children: [
+        const Gap(16),
+        SizedBox(
+          height: 60,
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            itemCount: displayPaths.length,
+            itemBuilder: (context, index) {
+              return Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.file(
+                    File(displayPaths[index]),
+                    width: 60,
+                    height: 60,
+                    fit: BoxFit.cover,
+                    cacheWidth: 150,
+                    cacheHeight: 150,
+                    errorBuilder: (_, __, ___) => Container(
+                      width: 60,
+                      height: 60,
+                      color: Colors.grey[800],
+                      child: const Icon(Icons.broken_image, size: 24),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ─── WIDGET: Action Buttons ──────────────────────────────────
+class _ActionButtonsWidget extends StatelessWidget {
+  final VoidCallback onTakePhoto;
+  final VoidCallback onPickGallery;
+  final bool isSaving;
+  final bool isCapturing;
+  const _ActionButtonsWidget({
+    required this.onTakePhoto,
+    required this.onPickGallery,
+    required this.isSaving,
+    required this.isCapturing,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bool disabled = isSaving || isCapturing;
+    return Column(
+      children: [
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: disabled ? null : onTakePhoto,
+            icon: disabled
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                        color: Colors.black, strokeWidth: 2),
+                  )
+                : const Icon(Icons.camera_alt, size: 22),
+            label: Text(disabled ? 'Menyimpan...' : 'Ambil Foto'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.accentOrange,
+              foregroundColor: Colors.black,
+              padding: const EdgeInsets.symmetric(vertical: 18),
+              textStyle: const TextStyle(
+                  fontWeight: FontWeight.w700, fontSize: 15),
+            ),
+          ),
+        ).animate().fadeIn(delay: 250.ms),
+        const Gap(14),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: disabled ? null : onPickGallery,
+            icon: const Icon(Icons.photo_library_outlined, size: 20),
+            label: const Text('Pilih dari Galeri'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppTheme.accentOrange,
+              side: BorderSide(
+                  color: AppTheme.accentOrange.withOpacity(0.6)),
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              textStyle: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+        ).animate().fadeIn(delay: 300.ms),
+      ],
+    );
+  }
+}
+
+// ─── WIDGET: Batch Finish Button ─────────────────────────────
+class _BatchFinishButtonWidget extends StatelessWidget {
+  final int photoCount;
+  final VoidCallback onFinish;
+  const _BatchFinishButtonWidget({
+    required this.photoCount,
+    required this.onFinish,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (photoCount == 0) return const SizedBox.shrink();
+    return Column(
+      children: [
+        const Gap(16),
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: onFinish,
+            icon: const Icon(Icons.done_all, size: 20),
+            label: Text('Selesai Batch (${photoCount} foto)'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green.shade700,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              textStyle: const TextStyle(
+                  fontWeight: FontWeight.w600, fontSize: 15),
+            ),
+          ),
+        ).animate().fadeIn(delay: 350.ms),
+      ],
+    );
+  }
+}
+
+// ─── WIDGET: Info Box ─────────────────────────────────────────
+class _InfoBoxWidget extends StatelessWidget {
+  final bool batchMode;
+  const _InfoBoxWidget({required this.batchMode});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.info_outline, size: 16, color: AppTheme.accentBlue),
+          const Gap(10),
+          Expanded(
+            child: Text(
+              batchMode
+                  ? 'Ambil banyak foto untuk satu barcode. Tekan "Selesai Batch" jika sudah.'
+                  : 'Setiap foto otomatis dicatat: waktu & watermark',
+              style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    ).animate().fadeIn(delay: 350.ms);
+  }
+}
+
+// ─── MAIN STATE ──────────────────────────────────────────────
+class PhotoScanScreen extends StatefulWidget {
   final String? barcode;
   final bool batchMode;
   final String? entryId;
-
-  const VideoScanScreen({
+  const PhotoScanScreen({
     super.key,
     this.barcode,
     this.batchMode = false,
@@ -28,594 +298,485 @@ class VideoScanScreen extends StatefulWidget {
   });
 
   @override
-  State<VideoScanScreen> createState() => _VideoScanScreenState();
+  State<PhotoScanScreen> createState() => _PhotoScanScreenState();
 }
 
-class _VideoScanScreenState extends State<VideoScanScreen>
-    with WidgetsBindingObserver {
-  CameraController? _cameraController;
-  List<CameraDescription>? _cameras;
-  bool _isRecording = false;
-  bool _isStopping = false; // ✅ proteksi double-stop
-  bool _isSaving = false;
-  bool _isWatermarking = false;
-  String _statusText = '';
-  int _recordedSeconds = 0;
-  Timer? _timer;
-  XFile? _recordedFile;
+class _PhotoScanScreenState extends State<PhotoScanScreen> {
+  final ImagePicker _picker = ImagePicker();
   final StorageService _storage = StorageService();
+  final WatermarkSettings _wmSettings = WatermarkSettings();
 
-  static const int _maxDurationSeconds = 20;
-  static const int _minDurationSeconds = 3;
-  static const int _maxVideoSizeBytes = 50 * 1024 * 1024;
+  bool _isSaving = false;
+  bool _isCapturing = false;
+  bool _processingRequest = false;
+  int _photoCount = 0;
+  bool _cameraGranted = false;
+  final List<String> _photoPaths = [];
+
+  static const int _maxCachedPaths = 100;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    _initCamera();
+    _requestPermissions();
   }
 
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _timer?.cancel();
-    if (_isRecording) {
-      _cameraController?.stopVideoRecording().catchError((_) {});
-    }
-    _cameraController?.dispose();
-    _cameraController = null;
-    if (_recordedFile != null) {
-      File(_recordedFile!.path).delete().catchError((_) {});
-    }
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.inactive) {
-      final controller = _cameraController;
-      _cameraController = null;
-
-      if (_isRecording && controller != null) {
-        unawaited(_stopRecordingAndSave(showPreviewAfter: false).whenComplete(() {
-          controller.dispose();
-        }));
-      } else {
-        controller?.dispose();
-      }
-    } else if (state == AppLifecycleState.resumed) {
-      if (_cameraController == null) {
-        _initCamera();
-      }
-    }
-  }
-
-  Future<void> _initCamera() async {
-    final camStatus = await Permission.camera.request();
-    final micStatus = await Permission.microphone.request();
-
-    if (!camStatus.isGranted || !micStatus.isGranted) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Izin kamera dan mikrofon diperlukan untuk merekam video'),
-          ),
-        );
-        Navigator.pop(context);
-      }
-      return;
-    }
-
-    _cameras = await availableCameras();
-    if (_cameras == null || _cameras!.isEmpty) {
-      if (mounted) Navigator.pop(context);
-      return;
-    }
-
-    _cameraController = CameraController(
-      _cameras!.firstWhere(
-        (c) => c.lensDirection == CameraLensDirection.back,
-        orElse: () => _cameras!.first,
-      ),
-      ResolutionPreset.medium,
-      enableAudio: true,
-    );
-
-    try {
-      await _cameraController!.initialize();
-      if (mounted) setState(() {});
-    } catch (e) {
-      debugPrint('Camera init error: $e');
-      if (mounted) Navigator.pop(context);
-    }
-  }
-
-  Future<void> _toggleRecording() async {
-    if (_cameraController == null || !_cameraController!.value.isInitialized) return;
-    if (_isStopping) return; // abaikan saat sedang berhenti
-
-    if (_isRecording) {
-      if (_recordedSeconds < _minDurationSeconds) {
-        final sisa = _minDurationSeconds - _recordedSeconds;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Rekam minimal $_minDurationSeconds detik. Tunggu $sisa detik lagi.'),
-            duration: const Duration(seconds: 2),
-          ),
-        );
+  Future<void> _requestPermissions() async {
+    final cameraStatus = await Permission.camera.status;
+    if (!cameraStatus.isGranted) {
+      if (cameraStatus.isPermanentlyDenied) {
+        _showError('Izin kamera ditolak permanen. Buka pengaturan.');
+        await openAppSettings();
         return;
       }
-      await _stopRecordingAndSave(showPreviewAfter: true);
+      final result = await Permission.camera.request();
+      if (mounted) setState(() => _cameraGranted = result.isGranted);
+      if (!result.isGranted && mounted) {
+        _showError('Izin kamera diperlukan untuk mengambil foto');
+        return;
+      }
     } else {
-      await _startRecording();
+      if (mounted) setState(() => _cameraGranted = true);
     }
+
+    if (Platform.isAndroid) {
+      final sdkInt = await _getAndroidSdkVersion();
+      if (sdkInt >= 29) return;
+    }
+    await PermissionService.requestGalleryPermission();
   }
 
-  Future<void> _startRecording() async {
+  Future<int> _getAndroidSdkVersion() async {
+    if (!Platform.isAndroid) return 0;
     try {
-      await _cameraController!.startVideoRecording();
-      setState(() {
-        _isRecording = true;
-        _recordedSeconds = 0;
-        _statusText = 'Merekam...';
-      });
-
-      _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-        if (!mounted) {
-          timer.cancel();
-          return;
-        }
-        setState(() => _recordedSeconds++);
-
-        if (_recordedSeconds >= _maxDurationSeconds) {
-          timer.cancel(); // ✅ hentikan timer segera
-          if (_isRecording && !_isStopping) {
-            unawaited(_stopRecordingAndSave(showPreviewAfter: true));
-          }
-        }
-      });
-    } catch (e) {
-      debugPrint('Start recording error: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal merekam: $e')),
-        );
-      }
+      final info = await DeviceInfoPlugin().androidInfo;
+      return info.version.sdkInt;
+    } catch (_) {
+      return 29;
     }
   }
 
-  Future<void> _stopRecordingAndSave({required bool showPreviewAfter}) async {
-    // ✅ cegah double-stop
-    if (!_isRecording || _isStopping) return;
-    _isStopping = true;
-    _timer?.cancel();
+  Future<bool> _ensureCameraPermission() async {
+    if (_cameraGranted) return true;
+    final status = await Permission.camera.status;
+    if (status.isGranted) {
+      if (mounted) setState(() => _cameraGranted = true);
+      return true;
+    }
+    if (status.isPermanentlyDenied) {
+      _showError('Izin kamera ditolak permanen. Buka pengaturan.');
+      await openAppSettings();
+      return false;
+    }
+    final result = await Permission.camera.request();
+    final granted = result.isGranted;
+    if (mounted) setState(() => _cameraGranted = granted);
+    if (!granted) _showError('Izin kamera ditolak');
+    return granted;
+  }
 
-    final controller = _cameraController;
-    if (controller == null || !controller.value.isRecordingVideo) {
-      _isStopping = false;
-      return;
+  void _openWatermarkSettings() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1E1E1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => const WatermarkSettingsSheet(),
+    );
+  }
+
+  String _resolveFileName(int photoIndex) {
+    if (widget.barcode == null) return 'photo_$photoIndex';
+    return photoIndex == 1
+        ? widget.barcode!
+        : '${widget.barcode}${photoIndex.toString().padLeft(3, '0')}';
+  }
+
+  Future<String> _applyWatermark(String imagePath, DateTime timestamp, int photoIndex) async {
+    final fileName = _resolveFileName(photoIndex);
+    final outputPath =
+        '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.png';
+
+    final tempEntry = ScanEntry(
+      id: _storage.generateId(),
+      type: ScanType.photo,
+      value: fileName,
+      barcodeFormat: null,
+      timestamp: timestamp,
+      latitude: null,
+      longitude: null,
+      locationName: null,
+    );
+
+    final result = await WatermarkRenderer.render(
+      imagePath: imagePath,
+      outputPath: outputPath,
+      settings: _wmSettings,
+      entry: tempEntry,
+    );
+
+    if (result != null && result != imagePath) {
+      final file = File(imagePath);
+      try {
+        if (await FileHelper.isTemporaryFile(imagePath)) {
+          await file.delete();
+          debugPrint('✅ Cache file deleted: $imagePath');
+        }
+      } catch (e) {
+        debugPrint('⚠️ Error deleting file: $e');
+      }
     }
 
+    return result ?? imagePath;
+  }
+
+  Future<bool> _saveToGallery(String filePath) async {
     try {
-      final XFile videoFile = await controller.stopVideoRecording();
+      final file = File(filePath);
+      if (!await file.exists()) return false;
 
-      // ✅ periksa mounted sebelum setState
-      if (!mounted) return;
+      final String filename = file.path.split('/').last;
+      final result = await SaverGallery.saveFile(
+        file: filePath,
+        name: filename,
+        androidRelativePath: 'Pictures/TERMULScan',
+        androidExistNotSave: false,
+      );
 
-      setState(() {
-        _isRecording = false;
-        _recordedFile = videoFile;
-        _statusText = 'Memproses video...';
-      });
-
-      if (showPreviewAfter && mounted) {
-        final shouldSave = await _showPreviewDialog(videoFile.path);
-        if (!mounted) return;
-        if (shouldSave != true) {
-          await File(videoFile.path).delete();
-          setState(() {
-            _recordedFile = null;
-            _statusText = '';
-          });
-          return;
-        }
-      }
-
-      await _saveVideo(videoFile);
+      return result.isSuccess;
     } catch (e) {
-      debugPrint('Stop recording error: $e');
-      if (mounted) {
-        setState(() => _statusText = 'Gagal: $e');
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
-      }
-    } finally {
-      _isStopping = false;
+      debugPrint('❌ Error _saveToGallery: $e');
+      return false;
     }
   }
 
-  Future<void> _saveVideo(XFile videoFile) async {
+  Future<void> _takePhoto() async {
+    if (_isSaving || _isCapturing || _processingRequest) return;
+    if (!await _ensureCameraPermission()) return;
+
+    _processingRequest = true;
     setState(() {
       _isSaving = true;
-      _statusText = 'Menyimpan video...';
+      _isCapturing = true;
     });
 
     try {
-      final fileSize = await File(videoFile.path).length();
-      if (fileSize > _maxVideoSizeBytes) {
-        await File(videoFile.path).delete();
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Video terlalu besar (${(fileSize / (1024 * 1024)).toStringAsFixed(1)} MB). Maksimal 50 MB.',
-              ),
-              backgroundColor: Colors.red,
-            ),
-          );
-          setState(() {
-            _isSaving = false;
-            _statusText = '';
-            _recordedFile = null;
-          });
-        }
-        return;
-      }
-
-      final savedPath = await _storage.saveVideo(videoFile.path, name: widget.barcode);
-      if (savedPath.isEmpty) throw Exception('Gagal menyimpan video');
-
-      final thumbnailPath = await _generateThumbnail(savedPath);
-
-      final entry = ScanEntry(
-        id: _storage.generateId(),
-        type: ScanType.video,
-        value: widget.barcode ?? 'video_${DateTime.now().millisecondsSinceEpoch}',
-        timestamp: DateTime.now(),
-        videoPath: savedPath,
-        videoDuration: _recordedSeconds,
-        videoThumbnail: thumbnailPath,
+      final xfile = await _picker.pickImage(
+        source: ImageSource.camera,
+        maxWidth: AppConfig.maxWidth,
+        imageQuality: AppConfig.imageQuality,
+        preferredCameraDevice: CameraDevice.rear,
       );
-      await _storage.add(entry);
-
-      if (mounted) {
-        setState(() {
-          _isSaving = false;
-          _isWatermarking = true;
-          _statusText = 'Menambahkan watermark...';
-        });
-      }
-
-      final wmOutputPath = '$savedPath.wm.mp4';
-      final wmResult = await VideoWatermarkService.addWatermark(
-        inputPath: savedPath,
-        outputPath: wmOutputPath,
-        entry: entry,
-        settings: WatermarkSettings(),
-      );
-
-      if (wmResult != null) {
-        await File(savedPath).delete();
-        final updatedEntry = entry.copyWith(
-          videoPath: wmResult,
-          videoThumbnail: thumbnailPath,
-        );
-        await _storage.update(updatedEntry);
-
-        if (mounted) {
-          setState(() {
-            _isWatermarking = false;
-            _statusText = 'Video tersimpan';
-          });
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Video berhasil disimpan dengan watermark')),
-          );
-          Navigator.pop(context, {'entry': updatedEntry});
-        }
-      } else {
-        if (mounted) {
-          setState(() {
-            _isWatermarking = false;
-            _statusText = 'Watermark gagal, video mentah disimpan';
-          });
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Watermark gagal, video mentah disimpan')),
-          );
-          Navigator.pop(context, {'entry': entry});
-        }
-      }
+      if (!mounted) return;
+      if (xfile != null) await _processPhoto(xfile);
     } catch (e) {
-      debugPrint('Save video error: $e');
+      _showError('Gagal membuka kamera');
+    } finally {
+      _processingRequest = false;
       if (mounted) {
         setState(() {
           _isSaving = false;
-          _isWatermarking = false;
-          _statusText = 'Gagal menyimpan';
+          _isCapturing = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal menyimpan video: $e')),
-        );
       }
-    } finally {
-      if (mounted) setState(() => _recordedFile = null);
     }
   }
 
-  Future<bool?> _showPreviewDialog(String videoPath) async {
-    return showDialog<bool>(
+  Future<void> _pickFromGallery() async {
+    if (_isSaving || _isCapturing || _processingRequest) return;
+
+    _processingRequest = true;
+    setState(() {
+      _isSaving = true;
+      _isCapturing = true;
+    });
+
+    try {
+      final xfile = await _picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: AppConfig.maxWidth,
+        imageQuality: AppConfig.imageQuality,
+      );
+      if (!mounted) return;
+      if (xfile != null) await _processPhoto(xfile);
+    } catch (e) {
+      _showError('Gagal membuka galeri');
+    } finally {
+      _processingRequest = false;
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+          _isCapturing = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _processPhoto(XFile xfile) async {
+    String? watermarkedPath;
+    String compressedPath = xfile.path;
+
+    if (!mounted) return;
+
+    try {
+      final fileSize = await File(xfile.path).length();
+      if (fileSize > 20 * 1024 * 1024) {
+        throw Exception('Ukuran foto terlalu besar (>20MB)');
+      }
+
+      compressedPath = await ImageCompressor.compressIfNeeded(xfile.path);
+
+      final timestamp = DateTime.now();
+      final photoIndex = _photoCount + 1;
+
+      watermarkedPath = await _applyWatermark(compressedPath, timestamp, photoIndex);
+
+      if (!await File(watermarkedPath).exists()) {
+        throw Exception('File watermark tidak ditemukan');
+      }
+
+      final name = _resolveFileName(photoIndex);
+      final savedPath = await _storage.savePhoto(watermarkedPath, name: name);
+      if (savedPath.isEmpty) throw Exception('Gagal menyimpan file foto');
+
+      if (watermarkedPath != savedPath &&
+          await FileHelper.isTemporaryFile(watermarkedPath)) {
+        try { await File(watermarkedPath).delete(); } catch (_) {}
+      }
+
+      if (mounted) {
+        setState(() {
+          _photoPaths.add(savedPath);
+          _photoCount++;
+          if (_photoPaths.length > _maxCachedPaths) {
+            _photoPaths.removeAt(0);
+          }
+        });
+      }
+
+      if (widget.entryId != null) {
+        if (!mounted) return;
+        final barcodeEntry = await _storage.getEntry(widget.entryId!);
+        if (barcodeEntry != null && mounted) {
+          final updated = barcodeEntry.copyWith(photoPaths: List.from(_photoPaths));
+          await _storage.update(updated);
+        }
+      }
+
+      await _saveToGallery(savedPath);
+
+      if (!widget.batchMode) {
+        _showSuccess();
+        if (mounted) Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
+        return;
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('📸 Foto ${_photoCount} berhasil (${widget.barcode ?? 'tanpa barcode'})'),
+            duration: const Duration(seconds: 1),
+            backgroundColor: Colors.green.shade700,
+          ),
+        );
+      }
+    } catch (e, stack) {
+      debugPrint('Error processing photo: $e\n$stack');
+      _showError('Gagal memproses foto: ${e.toString().split(':').last}');
+      if (watermarkedPath != null && watermarkedPath != compressedPath) {
+        try { await File(watermarkedPath).delete(); } catch (_) {}
+      }
+    } finally {
+      if (compressedPath != xfile.path && await FileHelper.isTemporaryFile(compressedPath)) {
+        try { await File(compressedPath).delete(); } catch (_) {}
+      }
+      if (await FileHelper.isTemporaryFile(xfile.path)) {
+        try { await File(xfile.path).delete(); } catch (_) {}
+      }
+    }
+  }
+
+  Future<void> _finishBatch() async {
+    if (widget.entryId != null && _photoPaths.isNotEmpty) {
+      if (!mounted) return;
+      final barcodeEntry = await _storage.getEntry(widget.entryId!);
+      if (barcodeEntry != null && mounted) {
+        final updated = barcodeEntry.copyWith(photoPaths: List.from(_photoPaths));
+        await _storage.update(updated);
+      }
+    }
+
+    if (_photoPaths.isNotEmpty) {
+      await _showBatchSummaryAndPop();
+    } else {
+      if (mounted) Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
+    }
+  }
+
+  Future<void> _showBatchSummaryAndPop() async {
+    if (!mounted) return;
+    await showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (_) => _VideoPreviewDialog(
-        videoPath: videoPath,
-        onSave: () => Navigator.pop(context, true),
-        onRetake: () {
-          File(videoPath).delete().catchError((_) {});
-          Navigator.pop(context, false);
-        },
+      builder: (_) => AlertDialog(
+        title: Text('✅ Selesai Batch (${widget.barcode ?? ''})'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Total foto: $_photoCount'),
+            const Gap(8),
+            Wrap(
+              spacing: 4,
+              runSpacing: 4,
+              children: _photoPaths.take(10).map((path) {
+                return ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: Image.file(
+                    File(path),
+                    width: 40,
+                    height: 40,
+                    fit: BoxFit.cover,
+                    cacheWidth: 100,
+                    cacheHeight: 100,
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+    if (mounted) Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
+  }
+
+  void _showSuccess() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: Colors.green.shade700,
+        duration: const Duration(seconds: 2),
+        content: const Row(
+          children: [
+            Icon(Icons.check_circle, color: Colors.white, size: 18),
+            Gap(8),
+            Expanded(child: Text('Foto tersimpan', maxLines: 1, overflow: TextOverflow.ellipsis)),
+          ],
+        ),
       ),
     );
   }
 
-  Future<String?> _generateThumbnail(String videoPath) async {
-    try {
-      final dir = await getApplicationDocumentsDirectory();
-      final thumbnail = await VideoThumbnail.thumbnailFile(
-        video: videoPath,
-        thumbnailPath: dir.path,
-        imageFormat: ImageFormat.JPEG,
-        maxHeight: 200,
-        quality: 75,
-      );
-      return thumbnail;
-    } catch (e) {
-      debugPrint('Thumbnail error: $e');
-      return null;
-    }
-  }
-
-  String _formatDuration(int seconds) {
-    final min = seconds ~/ 60;
-    final sec = seconds % 60;
-    return '${min.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}';
-  }
-
-  String _formatMaxDuration() {
-    final min = _maxDurationSeconds ~/ 60;
-    final sec = _maxDurationSeconds % 60;
-    return '${min.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}';
+  void _showError(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: AppTheme.error,
+        content: Text(msg),
+        duration: const Duration(seconds: 3),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return PopScope(
-      canPop: !_isRecording,
-      onPopInvokedWithResult: (didPop, result) {
-        if (!didPop && _isRecording) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Hentikan rekaman terlebih dahulu sebelum keluar'),
-              duration: Duration(seconds: 2),
-            ),
-          );
-        }
-      },
-      child: Scaffold(
-        backgroundColor: Colors.black,
-        appBar: AppBar(
-          title: Text('Rekam Video ${widget.barcode ?? ""}'),
-          automaticallyImplyLeading: !_isRecording,
-          actions: [
-            if (_isRecording)
-              Container(
-                margin: const EdgeInsets.only(right: 8),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: Colors.red,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.fiber_manual_record, size: 16, color: Colors.white),
-                    const Gap(4),
-                    Text(
-                      '${_formatDuration(_recordedSeconds)} / ${_formatMaxDuration()}',
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+    return Scaffold(
+      backgroundColor: AppTheme.bg,
+      appBar: AppBar(
+        title: widget.batchMode
+            ? Text('Batch: ${widget.barcode ?? 'Foto'} (${_photoCount})')
+            : const Text('Ambil Foto'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            if (widget.batchMode && _photoCount > 0) {
+              showDialog(
+                context: context,
+                builder: (_) => AlertDialog(
+                  title: const Text('Keluar Batch?'),
+                  content: Text('${_photoCount} foto sudah diambil. Yakin keluar?'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Lanjutkan'),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        if (mounted) Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
+                      },
+                      child: const Text('Keluar'),
                     ),
                   ],
                 ),
-              ),
-          ],
+              );
+            } else {
+              Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
+            }
+          },
         ),
-        body: Column(
-          children: [
-            Expanded(
-              child: Stack(
-                children: [
-                  if (_cameraController != null && _cameraController!.value.isInitialized)
-                    CameraPreview(_cameraController!)
-                  else
-                    const Center(child: CircularProgressIndicator()),
-                  if (_isRecording)
-                    Positioned(
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      child: LinearProgressIndicator(
-                        value: _recordedSeconds / _maxDurationSeconds,
-                        backgroundColor: Colors.white24,
-                        valueColor: const AlwaysStoppedAnimation<Color>(Colors.red),
-                        minHeight: 4,
+        actions: [
+          if (widget.batchMode && _photoCount > 0)
+            IconButton(
+              icon: const Icon(Icons.done_all, color: Colors.green),
+              onPressed: _finishBatch,
+              tooltip: 'Selesai Batch',
+            ),
+          ListenableBuilder(
+            listenable: _wmSettings,
+            builder: (context, _) {
+              return IconButton(
+                onPressed: _openWatermarkSettings,
+                icon: Stack(
+                  children: [
+                    const Icon(Icons.tune, color: Colors.white),
+                    if (_wmSettings.operatorName.isNotEmpty || _wmSettings.hasLogo)
+                      const Positioned(
+                        right: 0,
+                        top: 0,
+                        child: Icon(Icons.circle, size: 8, color: Colors.amber),
                       ),
-                    ),
-                  if (_statusText.isNotEmpty)
-                    Positioned(
-                      top: 20,
-                      left: 20,
-                      right: 20,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: Colors.black54,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(
-                          _statusText,
-                          style: const TextStyle(color: Colors.white),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            if (!_isSaving && !_isWatermarking)
-              SafeArea(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 20),
-                  child: Center(
-                    child: GestureDetector(
-                      onTap: _toggleRecording,
-                      child: Container(
-                        width: 80,
-                        height: 80,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 4),
-                          color: _isRecording ? Colors.red : Colors.transparent,
-                        ),
-                        child: Center(
-                          child: _isRecording
-                              ? Container(
-                                  width: 30,
-                                  height: 30,
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                )
-                              : Container(
-                                  width: 70,
-                                  height: 70,
-                                  decoration: const BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: Colors.red,
-                                  ),
-                                ),
-                        ),
-                      ),
-                    ),
-                  ),
+                  ],
                 ),
-              )
-            else
-              const Padding(
-                padding: EdgeInsets.all(20),
-                child: CircularProgressIndicator(),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ─── DIALOG PREVIEW VIDEO ────────────────────────────────────
-class _VideoPreviewDialog extends StatefulWidget {
-  final String videoPath;
-  final VoidCallback onSave;
-  final VoidCallback onRetake;
-
-  const _VideoPreviewDialog({
-    required this.videoPath,
-    required this.onSave,
-    required this.onRetake,
-  });
-
-  @override
-  State<_VideoPreviewDialog> createState() => _VideoPreviewDialogState();
-}
-
-class _VideoPreviewDialogState extends State<_VideoPreviewDialog> {
-  late VideoPlayerController _controller;
-  bool _initialized = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = VideoPlayerController.file(File(widget.videoPath))
-      ..initialize().then((_) {
-        if (mounted) setState(() => _initialized = true);
-        _controller.play();
-      });
-    _controller.addListener(() {
-      if (mounted && _controller.value.isCompleted) {
-        _controller.seekTo(Duration.zero);
-        _controller.pause();
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: Colors.black,
-      insetPadding: const EdgeInsets.all(8),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(16),
-            child: const Text(
-              'Pratinjau Video',
-              style: TextStyle(color: Colors.white, fontSize: 18),
-            ),
-          ),
-          if (_initialized)
-            AspectRatio(
-              aspectRatio: _controller.value.aspectRatio,
-              child: VideoPlayer(_controller),
-            )
-          else
-            const SizedBox(
-              height: 200,
-              child: Center(child: CircularProgressIndicator()),
-            ),
-          Container(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                ElevatedButton.icon(
-                  onPressed: widget.onRetake,
-                  icon: const Icon(Icons.camera_alt, color: Colors.red),
-                  label: const Text('Ulang'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.grey[800],
-                    foregroundColor: Colors.white,
-                  ),
-                ),
-                ElevatedButton.icon(
-                  onPressed: widget.onSave,
-                  icon: const Icon(Icons.check, color: Colors.green),
-                  label: const Text('Simpan'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green[700],
-                    foregroundColor: Colors.white,
-                  ),
-                ),
-              ],
-            ),
+                tooltip: 'Pengaturan Watermark',
+              );
+            },
           ),
         ],
+      ),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _CameraIconWidget(batchMode: widget.batchMode, photoCount: _photoCount),
+              const Gap(24),
+              _HeaderWidget(batchMode: widget.batchMode, photoCount: _photoCount, barcode: widget.barcode),
+              if (widget.batchMode && _photoPaths.isNotEmpty)
+                _PhotoThumbnailsWidget(photoPaths: _photoPaths),
+              const Gap(48),
+              _ActionButtonsWidget(
+                onTakePhoto: _takePhoto,
+                onPickGallery: _pickFromGallery,
+                isSaving: _isSaving,
+                isCapturing: _isCapturing,
+              ),
+              if (widget.batchMode)
+                _BatchFinishButtonWidget(photoCount: _photoCount, onFinish: _finishBatch),
+              const Gap(32),
+              _InfoBoxWidget(batchMode: widget.batchMode),
+            ],
+          ),
+        ),
       ),
     );
   }
