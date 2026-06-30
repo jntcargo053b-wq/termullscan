@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/video_scan_screen.dart (FINAL – STABLE RECORDING)
+// lib/screens/video_scan_screen.dart (FINAL – SURFACE FIX)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -61,9 +61,10 @@ class _VideoScanScreenState extends State<VideoScanScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
-    // Jangan panggil stopVideoRecording langsung di sini;
-    // biarkan _stopRecordingAndSave menanganinya jika masih merekam.
-    // Cukup dispose controller setelah yakin tidak merekam.
+    // Jangan dispose controller saat masih recording
+    if (_isRecording) {
+      _cameraController?.stopVideoRecording().catchError((_) {});
+    }
     _cameraController?.dispose();
     _cameraController = null;
     if (_recordedFile != null) {
@@ -75,12 +76,10 @@ class _VideoScanScreenState extends State<VideoScanScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.inactive) {
-      // Simpan referensi lokal, set field ke null agar tidak digunakan
       final controller = _cameraController;
       _cameraController = null;
 
       if (_isRecording && controller != null) {
-        // Biarkan _stopRecordingAndSave yang melakukan stop & simpan
         unawaited(_stopRecordingAndSave(showPreviewAfter: false).whenComplete(() {
           controller.dispose();
         }));
@@ -92,7 +91,7 @@ class _VideoScanScreenState extends State<VideoScanScreen>
     }
   }
 
-  // ─── INISIALISASI KAMERA ANTI‑CRASH ──────────────────────
+  // ─── INISIALISASI KAMERA ──────────────────────────────────
   Future<void> _initCamera() async {
     try {
       // 1. Izin
@@ -132,21 +131,33 @@ class _VideoScanScreenState extends State<VideoScanScreen>
         );
       }
 
-      debugPrint('📷 Kamera dipilih: ${selectedCamera.name}');
+      debugPrint('📷 Kamera: ${selectedCamera.name}');
 
-      // 4. Buat controller TANPA imageFormatGroup.unknown
+      // 4. Buat controller dengan resolusi rendah untuk stabilitas maksimal
       _cameraController = CameraController(
         selectedCamera,
-        ResolutionPreset.medium,
+        ResolutionPreset.low, // LOW untuk kompatibilitas terbaik
         enableAudio: true,
+        // JANGAN set imageFormatGroup
       );
 
-      // 5. Inisialisasi
+      // 5. Tambahkan listener error
+      _cameraController!.addListener(() {
+        if (_cameraController!.value.hasError) {
+          debugPrint('❌ Camera error: ${_cameraController!.value.errorDescription}');
+        }
+      });
+
+      // 6. Inisialisasi
       await _cameraController!.initialize();
 
-      // 6. WAJIB untuk Android: siapkan pipeline video recording
+      // 7. Prepare for video recording (Android)
       if (Platform.isAndroid) {
-        await _cameraController!.prepareForVideoRecording();
+        try {
+          await _cameraController!.prepareForVideoRecording();
+        } catch (e) {
+          debugPrint('⚠️ prepareForVideoRecording gagal: $e');
+        }
       }
 
       if (!mounted) return;
@@ -201,10 +212,11 @@ class _VideoScanScreenState extends State<VideoScanScreen>
         throw Exception('Sedang merekam');
       }
 
-      // Mulai rekam
+      // Tunggu sebentar untuk memastikan surface siap
+      await Future.delayed(const Duration(milliseconds: 500));
+
       await _cameraController!.startVideoRecording();
 
-      // Logging status recording
       debugPrint('🎥 isRecordingVideo = ${_cameraController!.value.isRecordingVideo}');
 
       setState(() {
@@ -242,13 +254,12 @@ class _VideoScanScreenState extends State<VideoScanScreen>
     }
   }
 
-  // ─── STOP & SIMPAN (GUARD DOUBLE‑STOP) ─────────────────
+  // ─── STOP & SIMPAN ─────────────────────────────────────
   Future<void> _stopRecordingAndSave({required bool showPreviewAfter}) async {
     if (!_isRecording || _isStopping) return;
     _isStopping = true;
     _timer?.cancel();
 
-    // Gunakan controller yang valid
     final controller = _cameraController;
     if (controller == null || !controller.value.isRecordingVideo) {
       _isStopping = false;
@@ -259,7 +270,6 @@ class _VideoScanScreenState extends State<VideoScanScreen>
       final XFile videoFile = await controller.stopVideoRecording();
       if (!mounted) return;
 
-      // Cek validitas file
       final file = File(videoFile.path);
       if (!await file.exists() || await file.length() < 1000) {
         await file.delete().catchError((_) {});
@@ -272,7 +282,6 @@ class _VideoScanScreenState extends State<VideoScanScreen>
         _statusText = 'Menyimpan...';
       });
 
-      // Preview jika diminta (saat ini default false)
       if (showPreviewAfter && mounted) {
         final ok = await _showPreviewDialog(videoFile.path);
         if (!mounted) return;
@@ -297,7 +306,7 @@ class _VideoScanScreenState extends State<VideoScanScreen>
     }
   }
 
-  // ─── SIMPAN KE STORAGE + WATERMARK ───────────────────────
+  // ─── SIMPAN ───────────────────────────────────────────
   Future<void> _saveVideo(XFile videoFile) async {
     setState(() => _isSaving = true);
     try {
@@ -306,19 +315,13 @@ class _VideoScanScreenState extends State<VideoScanScreen>
         await File(videoFile.path).delete();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Video terlalu besar (${(fileSize / (1024 * 1024)).toStringAsFixed(1)} MB). Maks 50 MB.',
-              ),
-              backgroundColor: Colors.red,
-            ),
+            SnackBar(content: Text('Video terlalu besar. Maks 50 MB.'), backgroundColor: Colors.red),
           );
           setState(() => _isSaving = false);
         }
         return;
       }
 
-      // Simpan mentah
       final savedPath = await _storage.saveVideo(videoFile.path, name: widget.barcode);
       if (savedPath.isEmpty) throw Exception('Gagal menyimpan video');
 
@@ -335,7 +338,6 @@ class _VideoScanScreenState extends State<VideoScanScreen>
       );
       await _storage.add(entry);
 
-      // Watermark di background
       if (mounted) setState(() {
         _isSaving = false;
         _isWatermarking = true;
@@ -383,7 +385,6 @@ class _VideoScanScreenState extends State<VideoScanScreen>
     }
   }
 
-  // ─── HELPER ──────────────────────────────────────────────
   Future<String?> _generateThumbnail(String videoPath) async {
     try {
       final dir = await getApplicationDocumentsDirectory();
@@ -405,7 +406,6 @@ class _VideoScanScreenState extends State<VideoScanScreen>
 
   String _formatMaxDuration() => _formatDuration(_maxDurationSeconds);
 
-  // ─── BUILD ───────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -507,7 +507,6 @@ class _VideoScanScreenState extends State<VideoScanScreen>
     );
   }
 
-  // Preview dialog (opsional, tidak dipanggil default)
   Future<bool?> _showPreviewDialog(String videoPath) async {
     return showDialog<bool>(
       context: context,
