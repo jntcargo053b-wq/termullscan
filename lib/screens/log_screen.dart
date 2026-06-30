@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/log_screen.dart (FINAL – VIDEO SUPPORT)
+// lib/screens/log_screen.dart (FINAL – AMAN HAPUS DATA)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -8,7 +8,7 @@ import 'package:gap/gap.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:collection/collection.dart';
-import 'package:video_player/video_player.dart'; // ← video player
+import 'package:video_player/video_player.dart';
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
@@ -321,13 +321,15 @@ class _LogScreenState extends State<LogScreen> {
     }
   }
 
-  // ─── DELETE ──────────────────────────────────────────────
+  // ─── DELETE (AMAN) ─────────────────────────────────────────
   Future<void> _deleteEntry(ScanEntry entry) async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Hapus Data'),
-        content: Text('Hapus scan "${entry.value}"?'),
+        content: const Text(
+          'Data dan file media akan dihapus permanen.\nTindakan ini tidak dapat dibatalkan.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -341,29 +343,33 @@ class _LogScreenState extends State<LogScreen> {
         ],
       ),
     );
-    if (confirm == true) {
-      await _storage.delete(entry.id);
-      // Hapus file
-      if (entry.type == ScanType.photo) {
-        final paths = entry.photoPaths ?? [];
-        if (paths.isNotEmpty) {
-          for (final path in paths) {
-            try { final f = File(path); if (await f.exists()) await f.delete(); } catch (_) {}
-          }
-        } else if (entry.value.isNotEmpty) {
-          try { final f = File(entry.value); if (await f.exists()) await f.delete(); } catch (_) {}
+    if (confirm != true) return;
+
+    // 1. Hapus dari database
+    await _storage.delete(entry.id);
+
+    // 2. Hapus file media
+    if (entry.type == ScanType.photo) {
+      final paths = entry.photoPaths ?? [];
+      if (paths.isNotEmpty) {
+        for (final path in paths) {
+          try { await File(path).delete(); } catch (_) {}
         }
-      } else if (entry.type == ScanType.video) {
-        if (entry.videoPath != null) {
-          try { final f = File(entry.videoPath!); if (await f.exists()) await f.delete(); } catch (_) {}
-        }
-        if (entry.videoThumbnail != null) {
-          try { final f = File(entry.videoThumbnail!); if (await f.exists()) await f.delete(); } catch (_) {}
-        }
+      } else if (entry.value.isNotEmpty) {
+        try { await File(entry.value).delete(); } catch (_) {}
       }
-      _selectedIds.remove(entry.id);
-      _loadEntries(refresh: true);
+    } else if (entry.type == ScanType.video) {
+      if (entry.videoPath != null) {
+        try { await File(entry.videoPath!).delete(); } catch (_) {}
+      }
+      if (entry.videoThumbnail != null) {
+        try { await File(entry.videoThumbnail!).delete(); } catch (_) {}
+      }
     }
+
+    // 3. Refresh UI
+    _selectedIds.remove(entry.id);
+    _loadEntries(refresh: true);
   }
 
   Future<void> _deleteSelected() async {
@@ -372,7 +378,9 @@ class _LogScreenState extends State<LogScreen> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Hapus Terpilih'),
-        content: Text('Hapus ${_selectedIds.length} item yang dipilih?'),
+        content: Text(
+          '${_selectedIds.length} data dan file medianya akan dihapus permanen.\nTindakan ini tidak dapat dibatalkan.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -386,34 +394,38 @@ class _LogScreenState extends State<LogScreen> {
         ],
       ),
     );
-    if (confirm == true) {
-      for (final id in _selectedIds) {
-        final entry = _filteredEntries.firstWhereOrNull((e) => e.id == id);
-        if (entry != null) {
-          if (entry.type == ScanType.photo) {
-            final paths = entry.photoPaths ?? [];
-            if (paths.isNotEmpty) {
-              for (final path in paths) {
-                try { final f = File(path); if (await f.exists()) await f.delete(); } catch (_) {}
-              }
-            } else if (entry.value.isNotEmpty) {
-              try { final f = File(entry.value); if (await f.exists()) await f.delete(); } catch (_) {}
+    if (confirm != true) return;
+
+    // 1. Hapus database & file untuk setiap ID
+    for (final id in _selectedIds) {
+      final entry = _filteredEntries.firstWhereOrNull((e) => e.id == id);
+      if (entry != null) {
+        if (entry.type == ScanType.photo) {
+          final paths = entry.photoPaths ?? [];
+          if (paths.isNotEmpty) {
+            for (final path in paths) {
+              try { await File(path).delete(); } catch (_) {}
             }
-          } else if (entry.type == ScanType.video) {
-            if (entry.videoPath != null) {
-              try { final f = File(entry.videoPath!); if (await f.exists()) await f.delete(); } catch (_) {}
-            }
-            if (entry.videoThumbnail != null) {
-              try { final f = File(entry.videoThumbnail!); if (await f.exists()) await f.delete(); } catch (_) {}
-            }
+          } else if (entry.value.isNotEmpty) {
+            try { await File(entry.value).delete(); } catch (_) {}
+          }
+        } else if (entry.type == ScanType.video) {
+          if (entry.videoPath != null) {
+            try { await File(entry.videoPath!).delete(); } catch (_) {}
+          }
+          if (entry.videoThumbnail != null) {
+            try { await File(entry.videoThumbnail!).delete(); } catch (_) {}
           }
         }
-        await _storage.delete(id);
       }
-      _filteredEntries.removeWhere((e) => _selectedIds.contains(e.id));
-      _selectedIds.clear();
-      _toggleSelectionMode();
+      await _storage.delete(id);
     }
+
+    // 2. Hapus dari list lokal & refresh UI
+    _filteredEntries.removeWhere((e) => _selectedIds.contains(e.id));
+    _selectedIds.clear();
+    _toggleSelectionMode();
+    _loadEntries(refresh: true);
   }
 
   @override
@@ -660,7 +672,7 @@ class _FilterChip extends StatelessWidget {
   }
 }
 
-// ─── Log Item (UPDATED UNTUK VIDEO) ─────────────────────────
+// ─── Log Item ──────────────────────────────────────────────────
 class _LogItem extends StatelessWidget {
   final ScanEntry entry;
   final bool isSelected;
@@ -1095,7 +1107,6 @@ class _VideoPreviewDialogState extends State<_VideoPreviewDialog> {
       child: Column(
         mainAxisSize: MainAxisSize.max,
         children: [
-          // Header
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
@@ -1132,7 +1143,6 @@ class _VideoPreviewDialogState extends State<_VideoPreviewDialog> {
               ],
             ),
           ),
-          // Video
           Expanded(
             child: _initialized
                 ? GestureDetector(
@@ -1152,11 +1162,8 @@ class _VideoPreviewDialogState extends State<_VideoPreviewDialog> {
                       ),
                     ),
                   )
-                : const Center(
-                    child: CircularProgressIndicator(),
-                  ),
+                : const Center(child: CircularProgressIndicator()),
           ),
-          // Controls
           Container(
             padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
             decoration: BoxDecoration(
