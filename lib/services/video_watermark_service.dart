@@ -21,19 +21,19 @@ class VideoWatermarkService {
       final layout = _StyleLayout.forStyle(settings.style, settings.position);
 
       final blockLineHeight = settings.fontSize + 8;
-      final blockHeight =
-          lines.isEmpty ? 0 : (lines.length * blockLineHeight) + (layout.padding * 2);
+      // ✅ Konversi eksplisit ke double
+      final blockHeight = (lines.isEmpty)
+          ? 0.0
+          : (lines.length * blockLineHeight).toDouble() + (layout.padding * 2);
 
       final filterParts = <String>[];
 
-      // ---- Background bar / badge (style + position dependent) ----
       final bg = layout.buildBackground(
         blockHeight: blockHeight,
         opacity: settings.backgroundOpacity,
       );
       if (bg != null) filterParts.add(bg);
 
-      // ---- Text lines ----
       for (var i = 0; i < lines.length; i++) {
         final line = lines[i];
         if (line.text.isEmpty) continue;
@@ -135,9 +135,6 @@ class VideoWatermarkService {
     return lines;
   }
 
-  /// Copies the bundled font asset to a real filesystem path so FFmpeg can
-  /// read it (FFmpeg cannot read Flutter's asset bundle directly). Cached
-  /// per font family so switching fonts doesn't reuse a stale file.
   static Future<String> _getFontPath(String fontFamily) async {
     final assetPath = _assetFontPath(fontFamily);
     final tempDir = Directory.systemTemp;
@@ -184,8 +181,6 @@ class VideoWatermarkService {
         .replaceAll(']', '\\]');
   }
 
-  /// Escapes a filesystem path for use inside an FFmpeg filter option
-  /// (e.g. fontfile=, movie=), where ':' and '\' are special characters.
   static String _escapeFFmpegPath(String path) {
     return path
         .replaceAll('\\', '\\\\')
@@ -215,12 +210,6 @@ class _XY {
   _XY(this.x, this.y);
 }
 
-/// Translates a [WatermarkStyle] + [WatermarkPosition] combination into
-/// concrete FFmpeg filter expressions, mirroring (within FFmpeg's
-/// capabilities) the visual intent of the canvas-based photo renderers:
-/// - professional/polaroid: full-width banner anchored to top or bottom.
-/// - minimal: no background, plain shadowed text anchored to a corner.
-/// - stamp: bordered badge box anchored to a corner.
 class _StyleLayout {
   final WatermarkStyle style;
   final WatermarkPosition position;
@@ -240,26 +229,21 @@ class _StyleLayout {
   bool get _isFullWidthBanner =>
       style == WatermarkStyle.professional || style == WatermarkStyle.polaroid;
 
-  /// Background drawbox filter string, or null when the style has no panel
-  /// (e.g. minimal).
   String? buildBackground({required double blockHeight, required double opacity}) {
     if (style == WatermarkStyle.minimal) return null;
 
     if (_isFullWidthBanner) {
       final color = style == WatermarkStyle.polaroid ? 'white' : 'black';
-      final y = _isBottom ? 'ih-$blockHeight' : '0';
-      return "drawbox=x=0:y=$y:w=iw:h=$blockHeight:color=$color@${opacity.clamp(0.0, 1.0)}:t=fill";
+      final y = _isBottom ? 'ih-${blockHeight.toInt()}' : '0';
+      return "drawbox=x=0:y=$y:w=iw:h=${blockHeight.toInt()}:color=$color@${opacity.clamp(0.0, 1.0)}:t=fill";
     }
 
-    // stamp: bordered badge box sized roughly to the text block, anchored
-    // to the chosen corner. FFmpeg can't measure text width up front, so
-    // the box width is approximated as a fraction of the frame width.
     final boxWidth = 'iw*0.42';
     final x = _isRight ? 'iw-($boxWidth)-20' : '20';
-    final y = _isBottom ? 'ih-$blockHeight-20' : '20';
-    final fill = "drawbox=x=$x:y=$y:w=$boxWidth:h=$blockHeight:"
+    final y = _isBottom ? 'ih-${blockHeight.toInt()}-20' : '20';
+    final fill = "drawbox=x=$x:y=$y:w=$boxWidth:h=${blockHeight.toInt()}:"
         "color=black@${opacity.clamp(0.0, 1.0)}:t=fill";
-    final border = "drawbox=x=$x:y=$y:w=$boxWidth:h=$blockHeight:color=white@0.9:t=2";
+    final border = "drawbox=x=$x:y=$y:w=$boxWidth:h=${blockHeight.toInt()}:color=white@0.9:t=2";
     return '$fill,$border';
   }
 
@@ -275,12 +259,13 @@ class _StyleLayout {
     required double blockHeight,
   }) {
     if (_isFullWidthBanner) {
-      final barTop = _isBottom ? 'ih-$blockHeight' : '0';
-      return '($barTop)+$padding+($lineIndex*$lineHeight)';
+      final barTop = _isBottom ? 'ih-${blockHeight.toInt()}' : '0';
+      return '($barTop)+${padding.toInt()}+($lineIndex*${lineHeight.toInt()})';
     }
     final inset = style == WatermarkStyle.stamp ? 20 + padding : 20;
-    final top = _isBottom ? 'ih-$blockHeight-$inset+$padding' : '$inset+$padding';
-    return '($top)+($lineIndex*$lineHeight)';
+    final top = _isBottom ? 'ih-${blockHeight.toInt()}-${inset.toInt()}+${padding.toInt()}'
+                          : '${inset.toInt()}+${padding.toInt()}';
+    return '($top)+($lineIndex*${lineHeight.toInt()})';
   }
 
   String textColor(bool isTitle) {
@@ -288,8 +273,6 @@ class _StyleLayout {
     return isTitle ? 'orange' : 'white';
   }
 
-  /// Logo is placed on the opposite vertical edge from the text panel so it
-  /// never overlaps the text block, but keeps the same left/right side.
   _XY logoXY() {
     final x = _isRight ? 'W-w-20' : '20';
     final y = _isBottom ? '20' : 'H-h-20';
