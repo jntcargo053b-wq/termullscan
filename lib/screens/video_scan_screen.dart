@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/video_scan_screen.dart (FINAL – ATTEMPT TO INVOKE FIX)
+// lib/screens/video_scan_screen.dart (FINAL – CAMERA 0.10.5+5 FIX)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -61,9 +61,7 @@ class _VideoScanScreenState extends State<VideoScanScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
-    if (_isRecording) {
-      _cameraController?.stopVideoRecording().catchError((_) {});
-    }
+    // Jangan panggil stopVideoRecording di sini – lifecycle yang menangani
     _cameraController?.dispose();
     _cameraController = null;
     if (_recordedFile != null) {
@@ -90,7 +88,7 @@ class _VideoScanScreenState extends State<VideoScanScreen>
     }
   }
 
-  // ─── INISIALISASI KAMERA ──────────────────────────────────
+  // ─── INISIALISASI KAMERA (FIX) ──────────────────────────
   Future<void> _initCamera() async {
     try {
       final cam = await Permission.camera.request();
@@ -131,25 +129,31 @@ class _VideoScanScreenState extends State<VideoScanScreen>
 
       _cameraController = CameraController(
         selectedCamera,
-        ResolutionPreset.low, // stabilitas maksimum
+        ResolutionPreset.medium,
         enableAudio: true,
+        imageFormatGroup: ImageFormatGroup.yuv420, // stabil di Android
       );
 
-      _cameraController!.addListener(() {
-        if (_cameraController!.value.hasError) {
-          debugPrint('❌ Camera error: ${_cameraController!.value.errorDescription}');
+      // Gunakan variabel lokal untuk listener
+      final controller = _cameraController!;
+      controller.addListener(() {
+        if (!mounted) return;
+        if (controller.value.hasError) {
+          debugPrint('❌ Camera error: ${controller.value.errorDescription}');
         }
       });
 
-      await _cameraController!.initialize();
+      await controller.initialize();
 
-      if (Platform.isAndroid) {
-        try {
-          await _cameraController!.prepareForVideoRecording();
-        } catch (e) {
-          debugPrint('⚠️ prepareForVideoRecording gagal: $e');
-        }
+      if (!controller.value.isInitialized) {
+        throw Exception('Camera gagal diinisialisasi');
       }
+      if (controller.value.hasError) {
+        throw Exception(controller.value.errorDescription);
+      }
+
+      // Beri waktu surface benar-benar siap
+      await Future.delayed(const Duration(milliseconds: 300));
 
       if (!mounted) return;
       setState(() {
@@ -170,7 +174,6 @@ class _VideoScanScreenState extends State<VideoScanScreen>
 
   // ─── REKAM / STOP ────────────────────────────────────────
   Future<void> _toggleRecording() async {
-    // Hindari akses controller null
     final controller = _cameraController;
     if (controller == null || !controller.value.isInitialized) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -198,21 +201,23 @@ class _VideoScanScreenState extends State<VideoScanScreen>
 
   Future<void> _startRecording() async {
     final controller = _cameraController;
-    if (controller == null || !controller.value.isInitialized) {
+    if (controller == null) return;
+    if (!controller.value.isInitialized) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Kamera belum siap')),
       );
       return;
     }
-    if (controller.value.isRecordingVideo) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Sudah merekam')),
-      );
+    if (controller.value.isTakingPicture || controller.value.isRecordingVideo) {
       return;
     }
 
+    // ⏱️ Tunggu ImageReader benar-benar siap (CameraX fix)
+    await Future.delayed(const Duration(milliseconds: 500));
+    if (!mounted) return;
+    if (!controller.value.isInitialized) return;
+
     try {
-      debugPrint('🎬 Memulai startVideoRecording...');
       await controller.startVideoRecording();
       debugPrint('🎥 isRecordingVideo = ${controller.value.isRecordingVideo}');
 
@@ -264,20 +269,13 @@ class _VideoScanScreenState extends State<VideoScanScreen>
     }
 
     try {
-      debugPrint('🛑 Menghentikan rekaman...');
       final XFile videoFile = await controller.stopVideoRecording();
-      debugPrint('✅ Rekaman berhenti, file: ${videoFile.path}');
-
       if (!mounted) return;
 
       final file = File(videoFile.path);
-      final exists = await file.exists();
-      final size = exists ? await file.length() : 0;
-      debugPrint('📁 File: exists=$exists, size=$size');
-
-      if (!exists || size < 1000) {
+      if (!await file.exists() || await file.length() < 1000) {
         await file.delete().catchError((_) {});
-        throw Exception('Video terlalu pendek / file kosong');
+        throw Exception('Video terlalu pendek / gagal tersimpan');
       }
 
       setState(() {
@@ -297,8 +295,8 @@ class _VideoScanScreenState extends State<VideoScanScreen>
       }
 
       await _saveVideo(videoFile);
-    } catch (e, stack) {
-      debugPrint('❌ Stop recording error: $e\n$stack');
+    } catch (e) {
+      debugPrint('❌ Stop recording error: $e');
       if (mounted) {
         setState(() => _statusText = 'Gagal: $e');
         ScaffoldMessenger.of(context).showSnackBar(
