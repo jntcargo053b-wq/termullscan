@@ -36,16 +36,21 @@ class StorageService {
 
   Future<List<ScanEntry>> loadAll() => _db.getAll();
 
+  // ✅ Tambahkan parameter sortField dan sortDir
   Future<List<ScanEntry>> getEntries({
     int limit = 20,
     int offset = 0,
     String? searchQuery,
     String? period,
+    String sortField = 'timestamp',
+    String sortDir = 'DESC',
   }) async => _db.getEntries(
         limit: limit,
         offset: offset,
         searchQuery: searchQuery,
         period: period,
+        sortField: sortField,
+        sortDir: sortDir,
       );
 
   Future<int> getCount({String? searchQuery, String? period}) async =>
