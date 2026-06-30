@@ -1,10 +1,13 @@
+// ============================================================
+// lib/screens/video_scan_screen.dart (FINAL – DURASI 20s, MIN 3s)
+// ============================================================
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:gap/gap.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
@@ -35,11 +38,14 @@ class _VideoScanScreenState extends State<VideoScanScreen>
   bool _isRecording = false;
   bool _isSaving = false;
   bool _isWatermarking = false;
+  String _statusText = '';
   int _recordedSeconds = 0;
   Timer? _timer;
+  XFile? _recordedFile;
   final StorageService _storage = StorageService();
 
-  static const int _maxDurationSeconds = 120;
+  static const int _maxDurationSeconds = 20;   // maksimal 20 detik
+  static const int _minDurationSeconds = 3;    // minimal 3 detik
   static const int _maxVideoSizeBytes = 50 * 1024 * 1024;
 
   @override
@@ -58,22 +64,25 @@ class _VideoScanScreenState extends State<VideoScanScreen>
     }
     _cameraController?.dispose();
     _cameraController = null;
+    if (_recordedFile != null) {
+      File(_recordedFile!.path).delete().catchError((_) {});
+    }
     super.dispose();
   }
 
+  // ─── LIFECYCLE (AMAN) ──────────────────────────────────────
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.inactive) {
-      _cameraController?.dispose();
+      final controller = _cameraController;
       _cameraController = null;
-      if (_isRecording) {
-        _timer?.cancel();
-        if (mounted) {
-          setState(() {
-            _isRecording = false;
-            _recordedSeconds = 0;
-          });
-        }
+
+      if (_isRecording && controller != null) {
+        unawaited(_stopRecordingAndSave(showPreviewAfter: false).whenComplete(() {
+          controller.dispose();
+        }));
+      } else {
+        controller?.dispose();
       }
     } else if (state == AppLifecycleState.resumed) {
       if (_cameraController == null) {
@@ -126,7 +135,19 @@ class _VideoScanScreenState extends State<VideoScanScreen>
     if (_cameraController == null || !_cameraController!.value.isInitialized) return;
 
     if (_isRecording) {
-      await _stopRecording();
+      // Cegah stop jika durasi kurang dari minimal
+      if (_recordedSeconds < _minDurationSeconds) {
+        final sisa = _minDurationSeconds - _recordedSeconds;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Rekam minimal $_minDurationSeconds detik. Tunggu $sisa detik lagi.'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+        return;
+      }
+      // Durasi sudah mencukupi, hentikan rekaman
+      await _stopRecordingAndSave(showPreviewAfter: true);
     } else {
       await _startRecording();
     }
@@ -138,6 +159,7 @@ class _VideoScanScreenState extends State<VideoScanScreen>
       setState(() {
         _isRecording = true;
         _recordedSeconds = 0;
+        _statusText = 'Merekam...';
       });
 
       _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -146,31 +168,71 @@ class _VideoScanScreenState extends State<VideoScanScreen>
             _recordedSeconds++;
           });
           if (_recordedSeconds >= _maxDurationSeconds) {
-            _stopRecording();
+            // Otomatis berhenti jika sudah mencapai durasi maksimal
+            _stopRecordingAndSave(showPreviewAfter: true);
           }
         }
       });
     } catch (e) {
       debugPrint('Start recording error: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Gagal merekam: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Gagal merekam: $e')),
+        );
+      }
     }
   }
 
-  Future<void> _stopRecording() async {
+  Future<void> _stopRecordingAndSave({required bool showPreviewAfter}) async {
     if (!_isRecording) return;
+
+    final controller = _cameraController;
+    if (controller == null || !controller.value.isRecordingVideo) return;
+
     try {
       _timer?.cancel();
-      final XFile videoFile = await _cameraController!.stopVideoRecording();
+      final XFile videoFile = await controller.stopVideoRecording();
       setState(() {
         _isRecording = false;
-        _isSaving = true;
+        _recordedFile = videoFile;
+        _statusText = 'Memproses video...';
       });
 
+      if (showPreviewAfter && mounted) {
+        final shouldSave = await _showPreviewDialog(videoFile.path);
+        if (!mounted) return;
+        if (shouldSave != true) {
+          await File(videoFile.path).delete();
+          setState(() {
+            _recordedFile = null;
+            _statusText = '';
+          });
+          return;
+        }
+      }
+
+      await _saveVideo(videoFile);
+    } catch (e) {
+      debugPrint('Stop recording error: $e');
+      if (mounted) {
+        setState(() => _statusText = 'Gagal: $e');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _saveVideo(XFile videoFile) async {
+    setState(() {
+      _isSaving = true;
+      _statusText = 'Menyimpan video...';
+    });
+
+    try {
       final fileSize = await File(videoFile.path).length();
       if (fileSize > _maxVideoSizeBytes) {
-        try { await File(videoFile.path).delete(); } catch (_) {}
+        await File(videoFile.path).delete();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -180,97 +242,115 @@ class _VideoScanScreenState extends State<VideoScanScreen>
               backgroundColor: Colors.red,
             ),
           );
+          setState(() {
+            _isSaving = false;
+            _statusText = '';
+            _recordedFile = null;
+          });
         }
-        setState(() => _isSaving = false);
         return;
       }
 
       final savedPath = await _storage.saveVideo(videoFile.path, name: widget.barcode);
-      if (savedPath.isNotEmpty) {
-        final thumbnailPath = await _generateThumbnail(savedPath);
+      if (savedPath.isEmpty) throw Exception('Gagal menyimpan video');
 
-        final entry = ScanEntry(
-          id: _storage.generateId(),
-          type: ScanType.video,
-          value: widget.barcode ?? 'video_${DateTime.now().millisecondsSinceEpoch}',
-          timestamp: DateTime.now(),
-          videoPath: savedPath,
-          videoDuration: _recordedSeconds,
+      final thumbnailPath = await _generateThumbnail(savedPath);
+
+      final entry = ScanEntry(
+        id: _storage.generateId(),
+        type: ScanType.video,
+        value: widget.barcode ?? 'video_${DateTime.now().millisecondsSinceEpoch}',
+        timestamp: DateTime.now(),
+        videoPath: savedPath,
+        videoDuration: _recordedSeconds,
+        videoThumbnail: thumbnailPath,
+      );
+      await _storage.add(entry);
+
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+          _isWatermarking = true;
+          _statusText = 'Menambahkan watermark...';
+        });
+      }
+
+      final wmOutputPath = '$savedPath.wm.mp4';
+      final wmResult = await VideoWatermarkService.addWatermark(
+        inputPath: savedPath,
+        outputPath: wmOutputPath,
+        entry: entry,
+        settings: WatermarkSettings(),
+      );
+
+      if (wmResult != null) {
+        await File(savedPath).delete();
+        final updatedEntry = entry.copyWith(
+          videoPath: wmResult,
           videoThumbnail: thumbnailPath,
         );
-        await _storage.add(entry);
-
-        ScanEntry finalEntry = entry;
+        await _storage.update(updatedEntry);
 
         if (mounted) {
           setState(() {
-            _isSaving = false;
-            _isWatermarking = true;
+            _isWatermarking = false;
+            _statusText = 'Video tersimpan';
           });
-
-          final wmOutputPath = '$savedPath.wm.mp4';
-          try {
-            final wmResult = await VideoWatermarkService.addWatermark(
-              inputPath: savedPath,
-              outputPath: wmOutputPath,
-              entry: entry,
-              settings: WatermarkSettings(),
-            );
-
-            if (wmResult != null) {
-              finalEntry = entry.copyWith(
-                videoPath: wmResult,
-                videoThumbnail: thumbnailPath,
-              );
-              await _storage.update(finalEntry);
-            }
-          } catch (e) {
-            debugPrint('Watermark error: $e');
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Gagal menambahkan watermark: $e')),
-              );
-            }
-          }
-
-          if (mounted) {
-            setState(() => _isWatermarking = false);
-          }
-        }
-
-        if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Video tersimpan')),
+            const SnackBar(content: Text('Video berhasil disimpan dengan watermark')),
           );
-          Navigator.pop(context, {'entry': finalEntry});
+          Navigator.pop(context, {'entry': updatedEntry});
         }
       } else {
         if (mounted) {
+          setState(() {
+            _isWatermarking = false;
+            _statusText = 'Watermark gagal, video mentah disimpan';
+          });
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Gagal menyimpan video')),
+            const SnackBar(content: Text('Watermark gagal, video mentah disimpan')),
           );
+          Navigator.pop(context, {'entry': entry});
         }
       }
     } catch (e) {
-      debugPrint('Stop recording error: $e');
+      debugPrint('Save video error: $e');
       if (mounted) {
+        setState(() {
+          _isSaving = false;
+          _isWatermarking = false;
+          _statusText = 'Gagal menyimpan';
+        });
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
+          SnackBar(content: Text('Gagal menyimpan video: $e')),
         );
       }
     } finally {
-      if (mounted) {
-        setState(() => _isSaving = false);
-      }
+      if (mounted) setState(() => _recordedFile = null);
     }
+  }
+
+  Future<bool?> _showPreviewDialog(String videoPath) async {
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _VideoPreviewDialog(
+        videoPath: videoPath,
+        onSave: () => Navigator.pop(context, true),
+        onRetake: () {
+          File(videoPath).delete().catchError((_) {});
+          Navigator.pop(context, false);
+        },
+      ),
+    );
   }
 
   Future<String?> _generateThumbnail(String videoPath) async {
     try {
-      final docsDir = await getApplicationDocumentsDirectory();
+      final dir = await getApplicationDocumentsDirectory();
       final thumbnail = await VideoThumbnail.thumbnailFile(
         video: videoPath,
-        thumbnailPath: docsDir.path,
+        thumbnailPath: dir.path,
         imageFormat: ImageFormat.JPEG,
         maxHeight: 200,
         quality: 75,
@@ -296,110 +376,232 @@ class _VideoScanScreenState extends State<VideoScanScreen>
 
   @override
   Widget build(BuildContext context) {
-    if (_cameraController == null || !_cameraController!.value.isInitialized) {
-      return Scaffold(
+    return PopScope(
+      canPop: !_isRecording,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop && _isRecording) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Hentikan rekaman terlebih dahulu sebelum keluar'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      },
+      child: Scaffold(
         backgroundColor: Colors.black,
-        appBar: AppBar(title: const Text('Rekam Video')),
-        body: const Center(child: CircularProgressIndicator()),
-      );
-    }
-
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        title: Text('Rekam Video ${widget.barcode ?? ""}'),
-        actions: [
-          if (_isRecording)
-            Container(
-              margin: const EdgeInsets.only(right: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: Colors.red,
-                borderRadius: BorderRadius.circular(20),
+        appBar: AppBar(
+          title: Text('Rekam Video ${widget.barcode ?? ""}'),
+          automaticallyImplyLeading: !_isRecording,
+          actions: [
+            if (_isRecording)
+              Container(
+                margin: const EdgeInsets.only(right: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: Colors.red,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.fiber_manual_record, size: 16, color: Colors.white),
+                    const Gap(4),
+                    Text(
+                      '${_formatDuration(_recordedSeconds)} / ${_formatMaxDuration()}',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
+          ],
+        ),
+        body: Column(
+          children: [
+            Expanded(
+              child: Stack(
                 children: [
-                  const Icon(Icons.fiber_manual_record, size: 16, color: Colors.white),
-                  const Gap(4),
-                  Text(
-                    '${_formatDuration(_recordedSeconds)} / ${_formatMaxDuration()}',
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                  ),
+                  if (_cameraController != null && _cameraController!.value.isInitialized)
+                    CameraPreview(_cameraController!)
+                  else
+                    const Center(child: CircularProgressIndicator()),
+                  if (_isRecording)
+                    Positioned(
+                      bottom: 0,
+                      left: 0,
+                      right: 0,
+                      child: LinearProgressIndicator(
+                        value: _recordedSeconds / _maxDurationSeconds,
+                        backgroundColor: Colors.white24,
+                        valueColor: const AlwaysStoppedAnimation<Color>(Colors.red),
+                        minHeight: 4,
+                      ),
+                    ),
+                  if (_statusText.isNotEmpty)
+                    Positioned(
+                      top: 20,
+                      left: 20,
+                      right: 20,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.black54,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          _statusText,
+                          style: const TextStyle(color: Colors.white),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: Stack(
-              children: [
-                CameraPreview(_cameraController!),
-                if (_isRecording)
-                  Positioned(
-                    bottom: 0,
-                    left: 0,
-                    right: 0,
-                    child: LinearProgressIndicator(
-                      value: _recordedSeconds / _maxDurationSeconds,
-                      backgroundColor: Colors.white24,
-                      valueColor: const AlwaysStoppedAnimation<Color>(Colors.red),
-                      minHeight: 4,
-                    ),
-                  ),
-                if (_isWatermarking)
-                  const Center(
-                    child: CircularProgressIndicator(),
-                  ),
-              ],
-            ),
-          ),
-          if (_isSaving)
-            const Padding(
-              padding: EdgeInsets.all(20),
-              child: CircularProgressIndicator(),
-            )
-          else if (!_isWatermarking)
-            SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 20),
-                child: Center(
-                  child: GestureDetector(
-                    onTap: _toggleRecording,
-                    child: Container(
-                      width: 80,
-                      height: 80,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white, width: 4),
-                        color: _isRecording ? Colors.red : Colors.transparent,
-                      ),
-                      child: Center(
-                        child: _isRecording
-                            ? Container(
-                                width: 30,
-                                height: 30,
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(4),
+            if (!_isSaving && !_isWatermarking)
+              SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 20),
+                  child: Center(
+                    child: GestureDetector(
+                      onTap: _toggleRecording,
+                      child: Container(
+                        width: 80,
+                        height: 80,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 4),
+                          color: _isRecording ? Colors.red : Colors.transparent,
+                        ),
+                        child: Center(
+                          child: _isRecording
+                              ? Container(
+                                  width: 30,
+                                  height: 30,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                )
+                              : Container(
+                                  width: 70,
+                                  height: 70,
+                                  decoration: const BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: Colors.red,
+                                  ),
                                 ),
-                              )
-                            : Container(
-                                width: 70,
-                                height: 70,
-                                decoration: const BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: Colors.red,
-                                ),
-                              ),
+                        ),
                       ),
                     ),
                   ),
                 ),
+              )
+            else
+              const Padding(
+                padding: EdgeInsets.all(20),
+                child: CircularProgressIndicator(),
               ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── DIALOG PREVIEW VIDEO ────────────────────────────────────
+class _VideoPreviewDialog extends StatefulWidget {
+  final String videoPath;
+  final VoidCallback onSave;
+  final VoidCallback onRetake;
+
+  const _VideoPreviewDialog({
+    required this.videoPath,
+    required this.onSave,
+    required this.onRetake,
+  });
+
+  @override
+  State<_VideoPreviewDialog> createState() => _VideoPreviewDialogState();
+}
+
+class _VideoPreviewDialogState extends State<_VideoPreviewDialog> {
+  late VideoPlayerController _controller;
+  bool _initialized = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = VideoPlayerController.file(File(widget.videoPath))
+      ..initialize().then((_) {
+        if (mounted) setState(() => _initialized = true);
+        _controller.play();
+      });
+    _controller.addListener(() {
+      if (mounted && _controller.value.isCompleted) {
+        _controller.seekTo(Duration.zero);
+        _controller.pause();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.black,
+      insetPadding: const EdgeInsets.all(8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            child: const Text(
+              'Pratinjau Video',
+              style: TextStyle(color: Colors.white, fontSize: 18),
             ),
+          ),
+          if (_initialized)
+            AspectRatio(
+              aspectRatio: _controller.value.aspectRatio,
+              child: VideoPlayer(_controller),
+            )
+          else
+            const SizedBox(
+              height: 200,
+              child: Center(child: CircularProgressIndicator()),
+            ),
+          Container(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                ElevatedButton.icon(
+                  onPressed: widget.onRetake,
+                  icon: const Icon(Icons.camera_alt, color: Colors.red),
+                  label: const Text('Ulang'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.grey[800],
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+                ElevatedButton.icon(
+                  onPressed: widget.onSave,
+                  icon: const Icon(Icons.check, color: Colors.green),
+                  label: const Text('Simpan'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green[700],
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
