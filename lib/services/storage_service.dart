@@ -17,7 +17,6 @@ class StorageService {
   final Uuid _uuid = const Uuid();
   final DatabaseHelper _db = DatabaseHelper();
 
-  // Cache angka maksimum per prefix barcode
   final Map<String, int> _maxNumberCache = {};
 
   String generateId() => _uuid.v4();
@@ -139,14 +138,12 @@ class StorageService {
   // CLEANUP
   // ================================================================
 
-  /// Jalankan cleanup di background isolate (via compute).
   Future<void> cleanupOldFilesInBackground({int days = 90}) async {
     final dir = await getApplicationDocumentsDirectory();
     final photosDir = '${dir.path}/photos';
     await compute(_cleanupInIsolate, _CleanupArgs(photosDir, days));
   }
 
-  /// Versi synchronous untuk dipanggil langsung (jika diperlukan).
   Future<void> cleanupOldFiles({int days = 90}) async {
     try {
       final dir = await getApplicationDocumentsDirectory();
@@ -298,6 +295,11 @@ class StorageService {
     }
 
     final zipData = ZipEncoder().encode(archive);
+    if (zipData == null) {
+      debugPrint('❌ Gagal membuat ZIP');
+      return '';
+    }
+
     final backupDir = await getApplicationDocumentsDirectory();
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     final zipPath = '${backupDir.path}/termulscan_backup_$timestamp.zip';
