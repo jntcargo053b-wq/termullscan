@@ -38,8 +38,7 @@ void main() async {
   }
 
   await storage.cleanupOldFiles(days: 45);
-  await PermissionService.requestAllPermissions();
-
+ 
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
