@@ -46,7 +46,7 @@ dependencies:
   camera: ^0.10.5+5
   video_player: ^2.8.5
   video_thumbnail: ^0.5.6
-  ffmpeg_kit_flutter: ^6.0.3
+  ffmpeg_kit_flutter_min_gpl: ^6.0.3
 
   # ─── COLLECTION (untuk firstWhereOrNull) ────────────────────────────
   collection: ^1.18.0
