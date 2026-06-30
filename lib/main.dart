@@ -6,7 +6,6 @@ import 'package:path_provider/path_provider.dart';
 import 'theme/app_theme.dart';
 import 'screens/home_screen.dart';
 import 'watermark/watermark_settings.dart';
-import 'services/permission_service.dart';
 import 'services/storage_service.dart';
 import 'models/scan_entry.dart';
 
@@ -37,8 +36,9 @@ void main() async {
     debugPrint('⚠️ Migration error: $e (maybe no JSON data)');
   }
 
-  await storage.cleanupOldFiles(days: 45);
- 
+  // ✅ Cleanup berjalan di isolate (background) – tidak blocking UI
+  storage.cleanupOldFilesInBackground(days: 45);
+
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
@@ -49,7 +49,6 @@ void main() async {
     systemNavigationBarColor: AppTheme.bg,
   ));
 
-  // Tidak perlu Provider, singleton bisa diakses dari mana saja
   runApp(const WHScannerApp());
 }
 
