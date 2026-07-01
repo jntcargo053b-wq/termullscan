@@ -46,7 +46,7 @@ dependencies:
   camera: ^0.10.5+5
   video_player: ^2.8.5
   video_thumbnail: ^0.5.6
-  ffmpeg_kit_flutter_new_full_gpl: ^2.3.2   # ← versi yang tersedia
+  ffmpeg_kit_flutter_new_video: ^2.0.0   # ganti dari min_gpl: butuh freetype/fontconfig untuk drawtext
 
   # ─── BACKUP & RESTORE ────────────────────────────────────────────────
   archive: ^3.6.1
