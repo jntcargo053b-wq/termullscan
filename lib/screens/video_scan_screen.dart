@@ -12,6 +12,7 @@ import 'package:path_provider/path_provider.dart';
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
 import '../services/video_watermark_service.dart';
+import '../services/permission_service.dart';
 import '../watermark/watermark_settings.dart';
 import '../theme/app_theme.dart';
 
@@ -39,6 +40,18 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
   String _statusText = '';
 
   static const int _maxVideoSizeBytes = 50 * 1024 * 1024;
+
+  @override
+  void initState() {
+    super.initState();
+    // Sebelumnya screen ini TIDAK pernah minta izin galeri sama sekali
+    // (beda dengan photo_scan_screen.dart). Di Android 9 ke bawah tanpa
+    // izin WRITE_EXTERNAL_STORAGE, SaverGallery.saveFile bisa gagal diam
+    // -diam. Di Android 10+ scoped storage biasanya tidak butuh ini,
+    // tapi memintanya di awal tidak merugikan dan menutup celah di
+    // device lama.
+    PermissionService.requestGalleryPermission();
+  }
 
   Future<void> _pickAndRecord() async {
     if (_isSaving || _isWatermarking) return;
