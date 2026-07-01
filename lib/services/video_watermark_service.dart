@@ -8,12 +8,17 @@ import '../watermark/watermark_style.dart';
 import '../models/scan_entry.dart';
 
 class VideoWatermarkService {
+  /// Diisi setelah addWatermark() gagal — pesan diagnosis siap tampil di UI
+  /// tanpa perlu logcat/adb.
+  static String? lastError;
+
   static Future<String?> addWatermark({
     required String inputPath,
     required String outputPath,
     required ScanEntry entry,
     required WatermarkSettings settings,
   }) async {
+    lastError = null;
     try {
       final fontPath = await _getFontPath(settings.fontFamily);
       final escapedFontPath = _escapeFFmpegPath(fontPath);
@@ -107,11 +112,18 @@ class VideoWatermarkService {
         debugPrint('✅ Video watermark berhasil: $outputPath');
         return outputPath;
       } else {
-        debugPrint('❌ FFmpeg gagal. Diagnosis: ${_diagnoseFailure(logs ?? '')}');
+        final diagnosis = _diagnoseFailure(logs ?? '');
+        debugPrint('❌ FFmpeg gagal. Diagnosis: $diagnosis');
+        final tail = (logs ?? '').length > 400
+            ? (logs ?? '').substring((logs ?? '').length - 400)
+            : (logs ?? '');
+        lastError =
+            'rc=${returnCode?.getValue()} | $diagnosis\n---log tail---\n$tail';
         return null;
       }
     } catch (e) {
       debugPrint('❌ Error video watermark: $e');
+      lastError = 'Exception: $e';
       return null;
     }
   }
