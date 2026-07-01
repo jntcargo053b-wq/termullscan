@@ -1,4 +1,3 @@
-import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 class TextHelper {
@@ -14,6 +13,8 @@ class TextHelper {
     int maxLines = 1,
     TextAlign textAlign = TextAlign.left,
     String fontFamily = 'Roboto',
+    double letterSpacing = 0,
+    List<Shadow>? shadows,
   }) {
     final tp = TextPainter(
       text: TextSpan(
@@ -23,6 +24,8 @@ class TextHelper {
           fontSize: fontSize,
           fontWeight: fontWeight,
           fontFamily: fontFamily,
+          letterSpacing: letterSpacing,
+          shadows: shadows,
         ),
       ),
       textDirection: TextDirection.ltr,
@@ -34,4 +37,14 @@ class TextHelper {
     tp.paint(canvas, Offset(x, y));
     return tp.height;
   }
+
+  /// Soft drop-shadow tipis di belakang teks agar tetap terbaca di atas foto
+  /// apa pun (terang/kompleks) tanpa terlihat kasar — sentuhan modern & rapi.
+  static List<Shadow> softShadow({double opacity = 0.55, double blur = 3}) => [
+        Shadow(
+          color: Colors.black.withOpacity(opacity),
+          blurRadius: blur,
+          offset: const Offset(0, 1),
+        ),
+      ];
 }
