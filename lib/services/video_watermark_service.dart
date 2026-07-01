@@ -1,15 +1,13 @@
 import 'dart:io';
-import 'package:ffmpeg_kit_flutter_new_min_gpl/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_new_min_gpl/ffmpeg_kit.dart'; // tetap min_gpl
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
-import 'package:path_provider/path_provider.dart'; // ✅ wajib
+import 'package:path_provider/path_provider.dart';
 import '../watermark/watermark_settings.dart';
 import '../watermark/watermark_style.dart';
 import '../models/scan_entry.dart';
 
 class VideoWatermarkService {
-  /// Diisi setelah addWatermark() gagal — pesan diagnosis siap tampil di UI
-  /// tanpa perlu logcat/adb.
   static String? lastError;
 
   static Future<String?> addWatermark({
@@ -42,6 +40,7 @@ class VideoWatermarkService {
       for (var i = 0; i < lines.length; i++) {
         final line = lines[i];
         if (line.text.isEmpty) continue;
+        // Escape karakter khusus termasuk SPASI
         final escapedText = _escapeFFmpegText(line.text);
         final fontSize = (settings.fontSize + line.sizeOffset).clamp(10, 64).round();
         final color = layout.textColor(line.isTitle);
@@ -52,8 +51,6 @@ class VideoWatermarkService {
           blockHeight: blockHeight,
         );
 
-        // ✅ Tanpa kutip tunggal — escape backslash langsung (lebih aman,
-        // lihat catatan di _escapeFFmpegText/_escapeFFmpegPath)
         filterParts.add(
           "drawtext=text=$escapedText:"
           "fontfile=$escapedFontPath:"
@@ -81,16 +78,6 @@ class VideoWatermarkService {
 
       final filterComplex = buffer.toString();
 
-      // ⚠️ PENTING: JANGAN pakai FFmpegKit.execute(String) di sini.
-      // execute() memecah command jadi argumen berdasarkan SPASI, dan ia
-      // juga mengenali tanda kutip TUNGGAL sebagai delimiter argumen —
-      // bukan cuma kutip ganda. filterComplex kita berisi teks ber-spasi
-      // yang dibungkus kutip tunggal (text='Waktu: ...') untuk kebutuhan
-      // sintaks filter ffmpeg sendiri. Kalau dikirim lewat execute(String),
-      // tokenizer FFmpegKit ikut memecah string itu di tengah jalan SEBELUM
-      // sampai ke parser filtergraph ffmpeg -> "Error parsing filterchain".
-      // executeWithArguments(List<String>) mengirim setiap argumen sebagai
-      // elemen array asli, tanpa tokenisasi string sama sekali.
       final arguments = <String>[
         '-i', inputPath,
         '-filter_complex', filterComplex,
@@ -110,7 +97,6 @@ class VideoWatermarkService {
       final session = await FFmpegKit.executeWithArguments(arguments);
       final returnCode = await session.getReturnCode();
 
-      // 📊 Logging detail
       debugPrint('🔢 ReturnCode = ${returnCode?.getValue()}');
       final output = await session.getOutput();
       if (output != null && output.isNotEmpty) {
@@ -139,10 +125,6 @@ class VideoWatermarkService {
       return null;
     }
   }
-
-  // ─────────────────────────────────────────────────────────
-  // Helper methods (tidak berubah)
-  // ─────────────────────────────────────────────────────────
 
   static List<_TextLine> _buildTextLines(
       ScanEntry entry, WatermarkSettings settings) {
@@ -214,23 +196,23 @@ class VideoWatermarkService {
     return logoFile.path;
   }
 
-  // Build ffmpeg_kit ini TERBUKTI (dari log runtime) tidak melindungi ':'
-  // di dalam tanda kutip tunggal text='...' — parser tetap berhenti di
-  // colon pertama walau ada di dalam kutip. Jadi jangan andalkan kutip
-  // sama sekali; escape tiap karakter spesial langsung dengan backslash,
-  // yang adalah level-escaping pertama dan paling universal di ffmpeg.
-  // PENTING: escape '\' dulu sebelum karakter lain, supaya backslash yang
-  // baru ditambahkan tidak ikut di-escape ulang.
+  // Escape karakter yang memiliki arti khusus di dalam filter FFmpeg,
+  // termasuk SPASI yang menjadi pemisah opsi.
+  // Urutan: backslash harus di-escape paling awal agar tidak meng-escape backslash yang baru.
   static String _escapeFFmpegText(String text) {
     return text
-        .replaceAll('\\', '\\\\')
+        .replaceAll('\\', '\\\\')   // escape backslash
         .replaceAll(':', '\\:')
         .replaceAll(',', '\\,')
         .replaceAll(';', '\\;')
-        .replaceAll('%', '\\%')
-        .replaceAll("'", "\\'")
+        .replaceAll('=', '\\=')
         .replaceAll('[', '\\[')
-        .replaceAll(']', '\\]');
+        .replaceAll(']', '\\]')
+        .replaceAll('%', '\\%')
+        .replaceAll('(', '\\(')
+        .replaceAll(')', '\\)')
+        .replaceAll("'", "\\'")
+        .replaceAll(' ', '\\ ');    // <--- INI YANG PALING PENTING: escape spasi
   }
 
   static String _escapeFFmpegPath(String path) {
@@ -239,13 +221,12 @@ class VideoWatermarkService {
         .replaceAll(':', '\\:')
         .replaceAll(',', '\\,')
         .replaceAll(';', '\\;')
+        .replaceAll(' ', '\\ ')
         .replaceAll("'", "\\'")
         .replaceAll('[', '\\[')
         .replaceAll(']', '\\]');
   }
 
-  /// Cocokkan pesan error ffmpeg yang umum agar log berikutnya langsung
-  /// menunjuk ke akar masalah, bukan cuma "gagal".
   static String _diagnoseFailure(String logs) {
     final l = logs.toLowerCase();
     if (l.contains('no such filter') && l.contains('drawtext')) {
@@ -289,7 +270,7 @@ class VideoWatermarkService {
   }
 }
 
-// ─── Helper classes ──────────────────────────────
+// ─── Helper classes (tetap) ─────────────────────────
 class _TextLine {
   final String text;
   final double sizeOffset;
