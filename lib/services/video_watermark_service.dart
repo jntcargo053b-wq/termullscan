@@ -1,5 +1,5 @@
 import 'dart:io';
-import 'package:ffmpeg_kit_flutter_new_full_gpl/ffmpeg_kit.dart'; // ✅ ganti ke full_gpl
+import 'package:ffmpeg_kit_flutter_new_video/ffmpeg_kit.dart'; // butuh freetype/fontconfig utk drawtext
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
@@ -40,8 +40,6 @@ class VideoWatermarkService {
       for (var i = 0; i < lines.length; i++) {
         final line = lines[i];
         if (line.text.isEmpty) continue;
-        // Escape hanya pada karakter ':' yang sangat kritis dan pada
-        // tanda kutip tunggal yang akan memutus string.
         final escapedText = _escapeFFmpegText(line.text);
         final fontSize = (settings.fontSize + line.sizeOffset).clamp(10, 64).round();
         final color = layout.textColor(line.isTitle);
@@ -59,9 +57,7 @@ class VideoWatermarkService {
           "fontsize=$fontSize:"
           "x=$xExpr:"
           "y=$yExpr:"
-          "shadowcolor=black@0.6:"
-          "shadowx=1:"
-          "shadowy=1",
+          "shadowcolor=black@0.6:shadowx=1:shadowy=1",
         );
       }
 
@@ -143,7 +139,7 @@ class VideoWatermarkService {
   }
 
   // ─────────────────────────────────────────────────────────
-  // Helper methods
+  // Helper methods (tidak berubah)
   // ─────────────────────────────────────────────────────────
 
   static List<_TextLine> _buildTextLines(
@@ -216,19 +212,32 @@ class VideoWatermarkService {
     return logoFile.path;
   }
 
-  // Escape karakter yang memiliki arti khusus di dalam filter FFmpeg.
-  // ':' adalah pemisah key:value di level tokenisasi filter-option-list,
-  // yang terjadi SEBELUM quote-stripping, jadi harus di-escape bahkan
-  // meskipun teks sudah dibungkus kutip tunggal.
-  // Karakter lain (koma, titik koma, dll.) sudah dilindungi oleh kutip.
+  // Nilai text= dibungkus tanda kutip tunggal di filter string
+  // (lihat "drawtext=text='$escapedText'"). PENTING — sudah diuji
+  // langsung dengan FFmpeg: meskipun dibungkus tanda kutip tunggal,
+  // karakter ':' TETAP diperlakukan sebagai pemisah key:value oleh
+  // parser filter-option-list (level tokenisasi ini terjadi SEBELUM
+  // quote-stripping). Tanpa escape tambahan, ':' di dalam teks bisa
+  // membuat sisa opsi setelahnya (fontfile, fontcolor, dst) ikut
+  // "tergeser"/salah parse — inilah penyebab error
+  // "Error parsing a filter description" yang terjadi sebelumnya
+  // pada teks seperti "Waktu: 01-07-2026 13:38:08".
+  // Koma, titik-koma, dan tanda kurung siku SUDAH terlindungi oleh
+  // tanda kutip tunggal (sudah diuji, tidak perlu di-escape ulang).
+  // Satu-satunya karakter lain yang perlu di-escape adalah tanda
+  // kutip tunggal itu sendiri, dengan pola standar FFmpeg: '\''
+  // (tutup kutip, kutip ter-escape, buka kutip lagi).
   static String _escapeFFmpegText(String text) {
     return text
         .replaceAll("'", r"'\''")
         .replaceAll(':', r'\:');
   }
 
-  // Path untuk fontfile/movie juga dibungkus kutip tunggal, jadi aturan
-  // yang sama berlaku: hanya ':' dan ' yang perlu di-escape.
+  // fontfile=/movie= juga dibungkus tanda kutip tunggal saat dipakai,
+  // jadi berlaku aturan yang sama persis termasuk untuk ':'. TIDAK
+  // menggunakan \040 untuk spasi — itu bukan escape sequence yang
+  // valid di FFmpeg filtergraph dan menyebabkan
+  // "No option name near ..." / rc=1 seperti yang terjadi sebelumnya.
   static String _escapeFFmpegPath(String path) {
     return path
         .replaceAll("'", r"'\''")
@@ -239,9 +248,11 @@ class VideoWatermarkService {
     final l = logs.toLowerCase();
     if (l.contains('no such filter') && l.contains('drawtext')) {
       return 'Filter drawtext TIDAK tersedia di build ffmpeg_kit ini '
-          '(kemungkinan varian min/min-gpl tidak menyertakan libfreetype). '
-          'Solusi: pindah ke paket ffmpeg_kit_flutter_new_full_gpl atau '
-          'pastikan versi min_gpl yang dipakai sudah menyertakan freetype/harfbuzz.';
+          '(varian package ffmpeg_kit yang dipakai tidak menyertakan '
+          'libfreetype/libfontconfig). Solusi: pastikan pubspec.yaml '
+          'memakai paket yang menyertakan freetype+fontconfig, mis. '
+          'ffmpeg_kit_flutter_new_video atau ffmpeg_kit_flutter_new '
+          '(full-gpl) — varian min/min-gpl TIDAK menyertakan freetype.';
     }
     if (l.contains('cannot find a valid font') ||
         l.contains('could not load font') ||
