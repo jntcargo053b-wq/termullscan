@@ -40,7 +40,6 @@ class VideoWatermarkService {
       for (var i = 0; i < lines.length; i++) {
         final line = lines[i];
         if (line.text.isEmpty) continue;
-        // Escape karakter khusus termasuk spasi menggunakan \040
         final escapedText = _escapeFFmpegText(line.text);
         final fontSize = (settings.fontSize + line.sizeOffset).clamp(10, 64).round();
         final color = layout.textColor(line.isTitle);
@@ -51,14 +50,18 @@ class VideoWatermarkService {
           blockHeight: blockHeight,
         );
 
+        // Urutan opsi: fontfile dahulu, lalu text dengan kutip tunggal
         filterParts.add(
-          "drawtext=text=$escapedText:"
+          "drawtext="
           "fontfile=$escapedFontPath:"
+          "text='$escapedText':"
           "fontcolor=$color:"
           "fontsize=$fontSize:"
           "x=$xExpr:"
           "y=$yExpr:"
-          "shadowcolor=black@0.6:shadowx=1:shadowy=1",
+          "shadowcolor=black@0.6:"
+          "shadowx=1:"
+          "shadowy=1",
         );
       }
 
@@ -77,6 +80,11 @@ class VideoWatermarkService {
       }
 
       final filterComplex = buffer.toString();
+
+      // Log untuk debugging
+      debugPrint("================ FILTER ================");
+      debugPrint(filterComplex);
+      debugPrint("========================================");
 
       final arguments = <String>[
         '-i', inputPath,
@@ -127,7 +135,7 @@ class VideoWatermarkService {
   }
 
   // ─────────────────────────────────────────────────────────
-  // Helper methods (tidak berubah)
+  // Helper methods
   // ─────────────────────────────────────────────────────────
 
   static List<_TextLine> _buildTextLines(
@@ -200,34 +208,24 @@ class VideoWatermarkService {
     return logoFile.path;
   }
 
-  // Escape karakter khusus. SPASI diganti dengan escape oktal \040
-  // yang dikenali secara universal oleh FFmpeg.
+  // Hanya escape backslash dan single quote – text akan dibungkus dengan '...'
   static String _escapeFFmpegText(String text) {
     return text
-        .replaceAll('\\', '\\\\')
-        .replaceAll(':', '\\:')
-        .replaceAll(',', '\\,')
-        .replaceAll(';', '\\;')
-        .replaceAll('=', '\\=')
-        .replaceAll('[', '\\[')
-        .replaceAll(']', '\\]')
-        .replaceAll('%', '\\%')
-        .replaceAll('(', '\\(')
-        .replaceAll(')', '\\)')
-        .replaceAll("'", "\\'")
-        .replaceAll(' ', '\\040');  // spasi → \040
+        .replaceAll(r'\', r'\\')
+        .replaceAll("'", r"\'");
   }
 
+  // Path untuk fontfile/movie: escape karakter yang bisa mengacaukan parser opsi FFmpeg
   static String _escapeFFmpegPath(String path) {
     return path
-        .replaceAll('\\', '\\\\')
-        .replaceAll(':', '\\:')
-        .replaceAll(',', '\\,')
-        .replaceAll(';', '\\;')
-        .replaceAll(' ', '\\040')
-        .replaceAll("'", "\\'")
-        .replaceAll('[', '\\[')
-        .replaceAll(']', '\\]');
+        .replaceAll(r'\', r'\\')
+        .replaceAll(':', r'\:')
+        .replaceAll(',', r'\,')
+        .replaceAll(';', r'\;')
+        .replaceAll("'", r"\'")
+        .replaceAll('[', r'\[')
+        .replaceAll(']', r'\]')
+        .replaceAll(' ', r'\ '); // spasi di-escape dengan backslash
   }
 
   static String _diagnoseFailure(String logs) {
