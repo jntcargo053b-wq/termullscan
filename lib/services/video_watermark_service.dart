@@ -92,11 +92,21 @@ class VideoWatermarkService {
         ];
       }
 
+      // Codec H.264 asli lewat libopenh264 (Cisco, lisensi BSD) —
+      // tersedia di paket ffmpeg_kit_flutter_new_video (varian "video",
+      // non-GPL) yang sudah dipakai, TANPA perlu pindah ke full-gpl.
+      // Sebelumnya pakai 'mpeg4' (MPEG-4 Part 2 lama) yang filenya valid
+      // & berhasil disalin ke MediaStore, tapi TIDAK dikenali sebagai
+      // video playable oleh Gallery/Google Photos (thumbnail gagal
+      // dibuat → entry tidak muncul di galeri meski proses "sukses").
+      // -pix_fmt yuv420p wajib: libopenh264 hanya menerima format ini,
+      // sedangkan output drawtext/drawbox bisa punya pixel format lain.
       final arguments = <String>[
         '-i', inputPath,
         ...filterArgs,
-        '-c:v', 'mpeg4',
-        '-q:v', '5',
+        '-pix_fmt', 'yuv420p',
+        '-c:v', 'libopenh264',
+        '-b:v', '4M',
         '-c:a', 'aac',
         '-b:a', '128k',
         '-movflags', '+faststart',
@@ -262,7 +272,10 @@ class VideoWatermarkService {
           'statis seperti Poppins-Regular.ttf).';
     }
     if (l.contains('unknown encoder') || l.contains('encoder not found')) {
-      return 'Encoder mpeg4 tidak tersedia di build ini.';
+      return 'Encoder libopenh264 tidak tersedia di build ffmpeg_kit ini. '
+          'Pastikan pubspec.yaml memakai ffmpeg_kit_flutter_new_video '
+          '(varian "video") atau full/full-gpl — varian min/min-gpl/audio '
+          'TIDAK menyertakan openh264.';
     }
     if (l.contains('invalid argument') && l.contains('drawtext')) {
       return 'Syntax filter drawtext tidak valid (kemungkinan karakter '
