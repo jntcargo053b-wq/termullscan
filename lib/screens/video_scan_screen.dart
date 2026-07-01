@@ -3,6 +3,7 @@
 // ============================================================
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:gap/gap.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
@@ -158,6 +159,17 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
                   child: Text(reason, style: const TextStyle(fontSize: 12)),
                 ),
                 actions: [
+                  TextButton(
+                    onPressed: () async {
+                      await Clipboard.setData(ClipboardData(text: reason));
+                      if (ctx.mounted) {
+                        ScaffoldMessenger.of(ctx).showSnackBar(
+                          const SnackBar(content: Text('Disalin ke clipboard')),
+                        );
+                      }
+                    },
+                    child: const Text('Salin'),
+                  ),
                   TextButton(
                     onPressed: () => Navigator.pop(ctx),
                     child: const Text('Tutup'),
