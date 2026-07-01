@@ -107,7 +107,7 @@ class VideoWatermarkService {
         debugPrint('✅ Video watermark berhasil: $outputPath');
         return outputPath;
       } else {
-        debugPrint('❌ FFmpeg gagal. Logs di atas menunjukkan penyebabnya.');
+        debugPrint('❌ FFmpeg gagal. Diagnosis: ${_diagnoseFailure(logs)}');
         return null;
       }
     } catch (e) {
@@ -190,20 +190,56 @@ class VideoWatermarkService {
     return logoFile.path;
   }
 
+  // Nilai ini akan dibungkus tanda kutip tunggal di filter (text='...').
+  // Di dalam kutip tunggal, ffmpeg memperlakukan ':' ',' '%' '[' ']' '\'
+  // secara literal — TIDAK perlu (dan TIDAK BOLEH) di-escape manual,
+  // karena itu justru menyisipkan karakter '\' asli ke teks watermark
+  // (mis. jam "10:23:45" berubah tampil jadi "10\:23\:45").
+  // Satu-satunya karakter spesial di dalam kutip tunggal adalah kutip
+  // tunggal itu sendiri, yang tidak bisa di-nest. Cara escape yang benar:
+  // tutup kutip, sisipkan kutip yang di-escape dengan backslash, buka lagi.
+  //   contoh: O'Brien -> O'\''Brien  (dirender ffmpeg sebagai: O'Brien)
   static String _escapeFFmpegText(String text) {
-    return text
-        .replaceAll('\\', '\\\\')
-        .replaceAll("'", "\\'")
-        .replaceAll(':', '\\:')
-        .replaceAll('%', '\\%')
-        .replaceAll('[', '\\[')
-        .replaceAll(']', '\\]');
+    return text.replaceAll("'", "'\\''");
   }
 
   static String _escapeFFmpegPath(String path) {
-    return path
-        .replaceAll('\\', '\\\\')
-        .replaceAll(':', '\\:');
+    return path.replaceAll("'", "'\\''");
+  }
+
+  /// Cocokkan pesan error ffmpeg yang umum agar log berikutnya langsung
+  /// menunjuk ke akar masalah, bukan cuma "gagal".
+  static String _diagnoseFailure(String logs) {
+    final l = logs.toLowerCase();
+    if (l.contains('no such filter') && l.contains('drawtext')) {
+      return 'Filter drawtext TIDAK tersedia di build ffmpeg_kit ini '
+          '(kemungkinan varian min/min-gpl tidak menyertakan libfreetype). '
+          'Solusi: pindah ke paket ffmpeg_kit_flutter_new_full_gpl atau '
+          'pastikan versi min_gpl yang dipakai sudah menyertakan freetype/harfbuzz.';
+    }
+    if (l.contains('cannot find a valid font') ||
+        l.contains('could not load font') ||
+        l.contains('error loading freetype')) {
+      return 'Font gagal dimuat oleh freetype (fontfile bermasalah, cek '
+          'apakah font variable-weight [VariableFont] didukung, coba font '
+          'statis seperti Poppins-Regular.ttf).';
+    }
+    if (l.contains('unknown encoder') || l.contains('encoder not found')) {
+      return 'Encoder mpeg4 tidak tersedia di build ini.';
+    }
+    if (l.contains('invalid argument') && l.contains('drawtext')) {
+      return 'Syntax filter drawtext tidak valid (kemungkinan karakter '
+          'khusus di teks/path belum di-escape dengan benar).';
+    }
+    if (l.contains('permission denied')) {
+      return 'Tidak ada izin baca/tulis ke path input/output.';
+    }
+    if (l.contains('moov atom not found') || l.contains('invalid data found')) {
+      return 'File video input korup/tidak lengkap (kemungkinan proses '
+          'perekaman terputus).';
+    }
+    return 'Penyebab tidak cocok pola yang dikenal — cek isi lengkap logs '
+        'di atas secara manual.';
   }
 
   static String _formatTimestamp(DateTime dt) {
