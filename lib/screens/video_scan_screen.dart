@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:gap/gap.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:saver_gallery/saver_gallery.dart';
 import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/scan_entry.dart';
@@ -135,20 +136,39 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
           await File(savedPath).delete();
           final updated = entry.copyWith(videoPath: wmResult, videoThumbnail: thumb);
           await _storage.update(updated);
+
+          setState(() => _statusText = 'Menyalin ke Gallery...');
+          final galleryOk = await _saveToGallery(wmResult);
+          debugPrint(galleryOk
+              ? '✅ Video watermark tersalin ke Gallery'
+              : '⚠️ Gagal menyalin video watermark ke Gallery');
+
           setState(() {
             _isWatermarking = false;
-            _statusText = 'Video tersimpan + watermark';
+            _statusText = galleryOk
+                ? 'Video tersimpan + watermark + Gallery'
+                : 'Video tersimpan + watermark (gagal disalin ke Gallery)';
           });
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Video berhasil disimpan dengan watermark')),
+            SnackBar(content: Text(galleryOk
+                ? 'Video berhasil disimpan dengan watermark dan muncul di Gallery'
+                : 'Video tersimpan dengan watermark, tapi gagal disalin ke Gallery')),
           );
           Navigator.pop(context, {'entry': updated});
         } else {
           final reason = VideoWatermarkService.lastError ?? 'tidak diketahui';
           debugPrint('🧾 Alasan watermark gagal: $reason');
+
+          final galleryOk = await _saveToGallery(savedPath);
+          debugPrint(galleryOk
+              ? '✅ Video mentah tersalin ke Gallery'
+              : '⚠️ Gagal menyalin video mentah ke Gallery');
+
           setState(() {
             _isWatermarking = false;
-            _statusText = 'Watermark gagal, video mentah disimpan';
+            _statusText = galleryOk
+                ? 'Watermark gagal, video mentah disimpan + Gallery'
+                : 'Watermark gagal, video mentah disimpan (gagal ke Gallery)';
           });
           if (mounted) {
             await showDialog(
@@ -209,6 +229,43 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       debugPrint('Thumbnail error: $e');
       return null;
     }
+  }
+
+  // Video watermark disimpan di storage privat aplikasi
+  // (app_flutter/videos/), yang TIDAK pernah di-scan MediaStore —
+  // makanya tidak pernah muncul di Gallery meski file-nya sudah ada
+  // dan valid. Ini menyalin/mendaftarkan file itu ke MediaStore lewat
+  // saver_gallery, persis seperti yang sudah dipakai untuk foto di
+  // photo_scan_screen.dart.
+  Future<bool> _saveToGallery(String filePath) async {
+    try {
+      final file = File(filePath);
+      if (!await file.exists()) return false;
+
+      // Nama file asli biasanya "<uuid>.mp4.wm.mp4" (hasil watermark)
+      // — kasih ekstensi .mp4 yang bersih supaya Gallery/aplikasi lain
+      // mengenali MIME type video dengan benar.
+      final String filename =
+          '${entryFilenameBase(filePath)}_${DateTime.now().millisecondsSinceEpoch}.mp4';
+
+      final result = await SaverGallery.saveFile(
+        file: filePath,
+        name: filename,
+        androidRelativePath: 'Movies/TERMULScan',
+        androidExistNotSave: false,
+      );
+
+      return result.isSuccess;
+    } catch (e) {
+      debugPrint('❌ Error _saveToGallery (video): $e');
+      return false;
+    }
+  }
+
+  String entryFilenameBase(String path) {
+    final base = path.split('/').last;
+    // buang ekstensi ganda seperti ".mp4.wm.mp4" -> nama dasar saja
+    return base.split('.').first;
   }
 
   @override
