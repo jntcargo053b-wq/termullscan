@@ -213,25 +213,35 @@ class VideoWatermarkService {
   }
 
   // Nilai text= dibungkus tanda kutip tunggal di filter string
-  // (lihat "drawtext=text='$escapedText'"). Di dalam tanda kutip
-  // tunggal, FFmpeg TIDAK memperlakukan backslash sebagai escape char,
-  // jadi spasi/kolon/koma/dll tidak perlu (dan tidak boleh) di-escape
-  // dengan backslash — semuanya sudah literal. Satu-satunya karakter
-  // spesial adalah tanda kutip tunggal itu sendiri, yang di-escape
-  // dengan pola standar FFmpeg: '\'' (tutup kutip, kutip ter-escape,
-  // buka kutip lagi).
+  // (lihat "drawtext=text='$escapedText'"). PENTING — sudah diuji
+  // langsung dengan FFmpeg: meskipun dibungkus tanda kutip tunggal,
+  // karakter ':' TETAP diperlakukan sebagai pemisah key:value oleh
+  // parser filter-option-list (level tokenisasi ini terjadi SEBELUM
+  // quote-stripping). Tanpa escape tambahan, ':' di dalam teks bisa
+  // membuat sisa opsi setelahnya (fontfile, fontcolor, dst) ikut
+  // "tergeser"/salah parse — inilah penyebab error
+  // "Error parsing a filter description" yang terjadi sebelumnya
+  // pada teks seperti "Waktu: 01-07-2026 13:38:08".
+  // Koma, titik-koma, dan tanda kurung siku SUDAH terlindungi oleh
+  // tanda kutip tunggal (sudah diuji, tidak perlu di-escape ulang).
+  // Satu-satunya karakter lain yang perlu di-escape adalah tanda
+  // kutip tunggal itu sendiri, dengan pola standar FFmpeg: '\''
+  // (tutup kutip, kutip ter-escape, buka kutip lagi).
   static String _escapeFFmpegText(String text) {
-    return text.replaceAll("'", r"'\''");
+    return text
+        .replaceAll("'", r"'\''")
+        .replaceAll(':', r'\:');
   }
 
   // fontfile=/movie= juga dibungkus tanda kutip tunggal saat dipakai,
-  // jadi berlaku aturan yang sama persis: hanya tanda kutip tunggal
-  // yang perlu di-escape. TIDAK menggunakan \040 untuk spasi — itu
-  // bukan escape sequence yang valid di FFmpeg filtergraph dan
-  // menyebabkan "No option name near ..." / rc=1 seperti yang terjadi
-  // sebelumnya.
+  // jadi berlaku aturan yang sama persis termasuk untuk ':'. TIDAK
+  // menggunakan \040 untuk spasi — itu bukan escape sequence yang
+  // valid di FFmpeg filtergraph dan menyebabkan
+  // "No option name near ..." / rc=1 seperti yang terjadi sebelumnya.
   static String _escapeFFmpegPath(String path) {
-    return path.replaceAll("'", r"'\''");
+    return path
+        .replaceAll("'", r"'\''")
+        .replaceAll(':', r'\:');
   }
 
   static String _diagnoseFailure(String logs) {
@@ -339,12 +349,17 @@ class _StyleLayout {
     required double lineHeight,
     required double blockHeight,
   }) {
+    // PENTING: ini dipakai untuk drawtext=y=..., dan filter drawtext
+    // TIDAK mengenal konstanta ih/iw (itu milik drawbox/scale/dll).
+    // Untuk drawtext, tinggi frame video disebut 'h' (alias main_h).
+    // Memakai 'ih' di sini membuat FFmpeg gagal dengan
+    // "Undefined constant or missing '(' in ...".
     if (_isFullWidthBanner) {
-      final barTop = _isBottom ? 'ih-${blockHeight.toInt()}' : '0';
+      final barTop = _isBottom ? 'h-${blockHeight.toInt()}' : '0';
       return '($barTop)+${padding.toInt()}+($lineIndex*${lineHeight.toInt()})';
     }
     final inset = style == WatermarkStyle.stamp ? 20 + padding : 20;
-    final top = _isBottom ? 'ih-${blockHeight.toInt()}-${inset.toInt()}+${padding.toInt()}'
+    final top = _isBottom ? 'h-${blockHeight.toInt()}-${inset.toInt()}+${padding.toInt()}'
                           : '${inset.toInt()}+${padding.toInt()}';
     return '($top)+($lineIndex*${lineHeight.toInt()})';
   }
