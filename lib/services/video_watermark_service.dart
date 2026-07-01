@@ -1,5 +1,5 @@
 import 'dart:io';
-import 'package:ffmpeg_kit_flutter_new_video/ffmpeg_kit.dart'; // butuh freetype/fontconfig utk drawtext
+import 'package:ffmpeg_kit_flutter_new_video/ffmpeg_kit.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
@@ -64,15 +64,6 @@ class VideoWatermarkService {
       final baseChain = filterParts;
       final logoOverlay = await _buildLogoOverlay(settings);
 
-      // Watermark kita 99% cuma drawbox + drawtext berantai (tanpa
-      // input tambahan). Kasus itu TIDAK butuh filter graph berlabel
-      // ([0:v]...[outv]) sama sekali — cukup -vf dengan chain filter
-      // biasa. Graph berlabel + -filter_complex hanya benar-benar
-      // diperlukan saat ada logo, karena itu satu-satunya kasus yang
-      // menggabungkan dua sumber (video + gambar logo via movie=).
-      // Dengan begini, jalur paling umum (tanpa logo) tidak menyentuh
-      // parser filter_complex sama sekali, jadi risiko error parsing
-      // jauh lebih kecil.
       final List<String> filterArgs;
       if (logoOverlay != null) {
         final escapedLogoPath = _escapeFFmpegPath(logoOverlay);
@@ -92,21 +83,15 @@ class VideoWatermarkService {
         ];
       }
 
-      // Codec H.264 asli lewat libopenh264 (Cisco, lisensi BSD) —
-      // tersedia di paket ffmpeg_kit_flutter_new_video (varian "video",
-      // non-GPL) yang sudah dipakai, TANPA perlu pindah ke full-gpl.
-      // Sebelumnya pakai 'mpeg4' (MPEG-4 Part 2 lama) yang filenya valid
-      // & berhasil disalin ke MediaStore, tapi TIDAK dikenali sebagai
-      // video playable oleh Gallery/Google Photos (thumbnail gagal
-      // dibuat → entry tidak muncul di galeri meski proses "sukses").
-      // -pix_fmt yuv420p wajib: libopenh264 hanya menerima format ini,
-      // sedangkan output drawtext/drawbox bisa punya pixel format lain.
+      // Encoder yang selalu tersedia di semua build ffmpeg_kit (termasuk
+      // varian video yang dipakai di sini). libopenh264 tidak selalu ada,
+      // jadi kita gunakan mpeg4 sebagai codec video yang paling kompatibel.
       final arguments = <String>[
         '-i', inputPath,
         ...filterArgs,
-        '-pix_fmt', 'yuv420p',
-        '-c:v', 'libopenh264',
-        '-b:v', '4M',
+        '-pix_fmt', 'yuv420p',   // wajib untuk kompatibilitas galeri
+        '-c:v', 'mpeg4',         // encoder video yang pasti ada
+        '-b:v', '4M',            // bitrate tinggi untuk kualitas baik
         '-c:a', 'aac',
         '-b:a', '128k',
         '-movflags', '+faststart',
@@ -149,7 +134,7 @@ class VideoWatermarkService {
   }
 
   // ─────────────────────────────────────────────────────────
-  // Helper methods (tidak berubah)
+  // Helper methods
   // ─────────────────────────────────────────────────────────
 
   static List<_TextLine> _buildTextLines(
@@ -222,32 +207,12 @@ class VideoWatermarkService {
     return logoFile.path;
   }
 
-  // Nilai text= dibungkus tanda kutip tunggal di filter string
-  // (lihat "drawtext=text='$escapedText'"). PENTING — sudah diuji
-  // langsung dengan FFmpeg: meskipun dibungkus tanda kutip tunggal,
-  // karakter ':' TETAP diperlakukan sebagai pemisah key:value oleh
-  // parser filter-option-list (level tokenisasi ini terjadi SEBELUM
-  // quote-stripping). Tanpa escape tambahan, ':' di dalam teks bisa
-  // membuat sisa opsi setelahnya (fontfile, fontcolor, dst) ikut
-  // "tergeser"/salah parse — inilah penyebab error
-  // "Error parsing a filter description" yang terjadi sebelumnya
-  // pada teks seperti "Waktu: 01-07-2026 13:38:08".
-  // Koma, titik-koma, dan tanda kurung siku SUDAH terlindungi oleh
-  // tanda kutip tunggal (sudah diuji, tidak perlu di-escape ulang).
-  // Satu-satunya karakter lain yang perlu di-escape adalah tanda
-  // kutip tunggal itu sendiri, dengan pola standar FFmpeg: '\''
-  // (tutup kutip, kutip ter-escape, buka kutip lagi).
   static String _escapeFFmpegText(String text) {
     return text
         .replaceAll("'", r"'\''")
         .replaceAll(':', r'\:');
   }
 
-  // fontfile=/movie= juga dibungkus tanda kutip tunggal saat dipakai,
-  // jadi berlaku aturan yang sama persis termasuk untuk ':'. TIDAK
-  // menggunakan \040 untuk spasi — itu bukan escape sequence yang
-  // valid di FFmpeg filtergraph dan menyebabkan
-  // "No option name near ..." / rc=1 seperti yang terjadi sebelumnya.
   static String _escapeFFmpegPath(String path) {
     return path
         .replaceAll("'", r"'\''")
@@ -272,10 +237,8 @@ class VideoWatermarkService {
           'statis seperti Poppins-Regular.ttf).';
     }
     if (l.contains('unknown encoder') || l.contains('encoder not found')) {
-      return 'Encoder libopenh264 tidak tersedia di build ffmpeg_kit ini. '
-          'Pastikan pubspec.yaml memakai ffmpeg_kit_flutter_new_video '
-          '(varian "video") atau full/full-gpl — varian min/min-gpl/audio '
-          'TIDAK menyertakan openh264.';
+      return 'Encoder yang diminta tidak tersedia. Ganti ke mpeg4 yang '
+          'pasti ada di semua build ffmpeg_kit.';
     }
     if (l.contains('invalid argument') && l.contains('drawtext')) {
       return 'Syntax filter drawtext tidak valid (kemungkinan karakter '
@@ -302,7 +265,6 @@ class VideoWatermarkService {
   }
 }
 
-// ─── Helper classes (tetap) ─────────────────────────
 class _TextLine {
   final String text;
   final double sizeOffset;
@@ -364,11 +326,6 @@ class _StyleLayout {
     required double lineHeight,
     required double blockHeight,
   }) {
-    // PENTING: ini dipakai untuk drawtext=y=..., dan filter drawtext
-    // TIDAK mengenal konstanta ih/iw (itu milik drawbox/scale/dll).
-    // Untuk drawtext, tinggi frame video disebut 'h' (alias main_h).
-    // Memakai 'ih' di sini membuat FFmpeg gagal dengan
-    // "Undefined constant or missing '(' in ...".
     if (_isFullWidthBanner) {
       final barTop = _isBottom ? 'h-${blockHeight.toInt()}' : '0';
       return '($barTop)+${padding.toInt()}+($lineIndex*${lineHeight.toInt()})';
