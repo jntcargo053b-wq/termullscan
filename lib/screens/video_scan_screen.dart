@@ -143,14 +143,30 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
           );
           Navigator.pop(context, {'entry': updated});
         } else {
+          final reason = VideoWatermarkService.lastError ?? 'tidak diketahui';
+          debugPrint('🧾 Alasan watermark gagal: $reason');
           setState(() {
             _isWatermarking = false;
             _statusText = 'Watermark gagal, video mentah disimpan';
           });
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Watermark gagal, video mentah disimpan')),
-          );
-          Navigator.pop(context, {'entry': entry});
+          if (mounted) {
+            await showDialog(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                title: const Text('Watermark gagal'),
+                content: SingleChildScrollView(
+                  child: Text(reason, style: const TextStyle(fontSize: 12)),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text('Tutup'),
+                  ),
+                ],
+              ),
+            );
+          }
+          if (mounted) Navigator.pop(context, {'entry': entry});
         }
       }
     } catch (e, stack) {
