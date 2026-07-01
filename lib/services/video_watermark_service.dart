@@ -107,7 +107,7 @@ class VideoWatermarkService {
         debugPrint('✅ Video watermark berhasil: $outputPath');
         return outputPath;
       } else {
-        debugPrint('❌ FFmpeg gagal. Diagnosis: ${_diagnoseFailure(logs)}');
+        debugPrint('❌ FFmpeg gagal. Diagnosis: ${_diagnoseFailure(logs ?? '')}');
         return null;
       }
     } catch (e) {
