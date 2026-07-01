@@ -47,11 +47,10 @@ class VideoWatermarkService {
           blockHeight: blockHeight,
         );
 
-        // ⚠️ Untuk sementara fontfile dinonaktifkan untuk memastikan font bukan penyebab gagal.
-        // Setelah watermark berhasil, aktifkan kembali dengan menambah "fontfile='$escapedFontPath':"
+        // ✅ Font diaktifkan kembali
         filterParts.add(
           "drawtext=text='$escapedText':"
-          // "fontfile='$escapedFontPath':"   // <-- sementara dimatikan untuk tes
+          "fontfile='$escapedFontPath':"
           "fontcolor=$color:"
           "fontsize=$fontSize:"
           "x=$xExpr:"
@@ -76,18 +75,17 @@ class VideoWatermarkService {
 
       final filterComplex = buffer.toString();
 
-      // ✅ Perintah FFmpeg yang lengkap dengan codec video & audio
+      // ✅ Gunakan mpeg4, encoder yang selalu tersedia di min-gpl
       final command =
           "-i \"$inputPath\" "
           "-filter_complex \"$filterComplex\" "
           "-map \"[outv]\" "
           "-map 0:a? "
-          "-c:v libx264 "          // wajib re-encode video
-          "-preset ultrafast "     // cepat, kualitas cukup untuk POD
-          "-pix_fmt yuv420p "     // kompatibel di semua device
-          "-c:a aac "             // audio codec
-          "-b:a 128k "            // bitrate audio
-          "-movflags +faststart " // untuk web/mobile preview
+          "-c:v mpeg4 "
+          "-q:v 5 "
+          "-c:a aac "
+          "-b:a 128k "
+          "-movflags +faststart "
           "-y "
           "\"$outputPath\"";
 
@@ -96,7 +94,7 @@ class VideoWatermarkService {
       final session = await FFmpegKit.execute(command);
       final returnCode = await session.getReturnCode();
 
-      // 📊 Logging detail untuk debugging
+      // 📊 Logging detail
       debugPrint('🔢 ReturnCode = ${returnCode?.getValue()}');
       final output = await session.getOutput();
       if (output != null && output.isNotEmpty) {
@@ -119,7 +117,7 @@ class VideoWatermarkService {
   }
 
   // ─────────────────────────────────────────────────────────
-  // Helper methods (tidak berubah signifikan)
+  // Helper methods (tidak berubah)
   // ─────────────────────────────────────────────────────────
 
   static List<_TextLine> _buildTextLines(
