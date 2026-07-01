@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/barcode_scan_screen.dart (FINAL - + VIDEO BUTTON)
+// lib/screens/barcode_scan_screen.dart (FINAL – OPSI A)
 // ============================================================
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -13,7 +13,7 @@ import '../services/permission_service.dart';
 import '../watermark/watermark_settings.dart';
 import 'watermark_settings_sheet.dart';
 import 'photo_scan_screen.dart';
-import 'video_scan_screen.dart';   // ← tambahan
+import 'video_scan_screen.dart';
 
 class BarcodeScanScreen extends StatefulWidget {
   const BarcodeScanScreen({super.key});
@@ -35,6 +35,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   bool _isTakingMultiple = false;
 
   String? _activeBarcode;
+  String? _activeEntryId;   // ✅ ID entry yang sudah disimpan
   int _batchPhotoCount = 0;
   bool _batchMode = false;
 
@@ -174,37 +175,18 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       await _storage.add(entry);
 
       if (!mounted) return;
-      setState(() => _scanCount++);
+      setState(() {
+        _scanCount++;
+        _activeEntryId = entry.id;   // ✅ simpan ID untuk diteruskan
+      });
 
       await _scannerController.stop();
-
-      if (mounted) {
-        final result = await Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => PhotoScanScreen(
-              barcode: code,
-              batchMode: _batchMode,
-              entryId: entry.id,
-            ),
-          ),
-        );
-        if (result != null) {
-          _batchPhotoCount = result['count'] ?? 0;
-        }
-        _activeBarcode = null;
-        _resumeScanning();
-      }
+      // TIDAK langsung pindah ke PhotoScanScreen — tunggu pengguna memilih tombol
     } catch (e) {
       debugPrint('Error _onDetect: $e');
       if (mounted) _resumeScanning();
     } finally {
       _processingScan = false;
-      if (mounted && !_scanning && !_isSaving && !_sheetOpen && !_resumeScheduled && !_isTakingMultiple) {
-        Future.delayed(const Duration(milliseconds: 300), () {
-          if (mounted) _resumeScanning();
-        });
-      }
     }
   }
 
@@ -249,26 +231,13 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       await _storage.add(entry);
 
       if (!mounted) return;
-      setState(() => _scanCount++);
+      setState(() {
+        _scanCount++;
+        _activeEntryId = entry.id;
+      });
 
-      if (mounted) {
-        await _scannerController.stop();
-        final result = await Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => PhotoScanScreen(
-              barcode: code,
-              batchMode: _batchMode,
-              entryId: entry.id,
-            ),
-          ),
-        );
-        if (result != null) {
-          _batchPhotoCount = result['count'] ?? 0;
-        }
-        _activeBarcode = null;
-        _resumeScanning();
-      }
+      await _scannerController.stop();
+      // TIDAK langsung pindah ke PhotoScanScreen
     } catch (e) {
       debugPrint('Error _processManualCode: $e');
       if (mounted) _resumeScanning();
@@ -405,48 +374,37 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
                 },
               ),
             ),
-          if (!_isSaving && !_isTakingMultiple && _activeBarcode == null)
+          // ✅ Tombol Aksi (muncul saat barcode aktif)
+          if (_activeBarcode != null && _activeEntryId != null)
             Positioned(
               bottom: 40,
               left: 0,
               right: 0,
               child: Column(
                 children: [
-                  TextButton.icon(
-                    onPressed: () {
-                      setState(() {
-                        _batchMode = !_batchMode;
-                      });
-                    },
-                    icon: Icon(
-                      _batchMode ? Icons.view_list : Icons.camera_alt,
-                      color: Colors.white70,
-                      size: 16,
-                    ),
-                    label: Text(
-                      _batchMode ? 'Mode: Batch (1 scan → banyak foto)' : 'Mode: Single (1 scan → 1 foto)',
-                      style: const TextStyle(color: Colors.white70, fontSize: 12),
-                    ),
-                  ),
-                  const Gap(8),
-                  // ─── TOMBOL REKAM VIDEO ───────────────────────────
+                  // Tombol Ambil Foto
                   TextButton.icon(
                     onPressed: () async {
-                      await Navigator.push(
+                      final result = await Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => VideoScanScreen(
-                            barcode: _activeBarcode ?? _lastCode,
+                          builder: (_) => PhotoScanScreen(
+                            barcode: _activeBarcode,
                             batchMode: _batchMode,
+                            entryId: _activeEntryId,
                           ),
                         ),
                       );
+                      if (result != null) {
+                        _batchPhotoCount = result['count'] ?? 0;
+                      }
+                      // Kembalikan ke mode pemindaian
+                      _activeBarcode = null;
+                      _activeEntryId = null;
+                      _resumeScanning();
                     },
-                    icon: const Icon(Icons.videocam, color: Colors.white70, size: 18),
-                    label: const Text(
-                      'Rekam Video',
-                      style: TextStyle(color: Colors.white70, fontSize: 13),
-                    ),
+                    icon: const Icon(Icons.camera_alt, color: Colors.white70, size: 18),
+                    label: const Text('Ambil Foto', style: TextStyle(color: Colors.white70, fontSize: 13)),
                     style: TextButton.styleFrom(
                       backgroundColor: const Color(0x88000000),
                       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
@@ -456,15 +414,27 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
                       ),
                     ),
                   ),
-                  // ─── AKHIR TOMBOL REKAM VIDEO ──────────────────────
                   const Gap(8),
+                  // Tombol Rekam Video
                   TextButton.icon(
-                    onPressed: _showManualInput,
-                    icon: const Icon(Icons.keyboard, color: Colors.white70, size: 18),
-                    label: const Text(
-                      'Input Manual',
-                      style: TextStyle(color: Colors.white70, fontSize: 13),
-                    ),
+                    onPressed: () async {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => VideoScanScreen(
+                            barcode: _activeBarcode,
+                            batchMode: _batchMode,
+                            entryId: _activeEntryId,
+                          ),
+                        ),
+                      );
+                      // Kembalikan ke mode pemindaian
+                      _activeBarcode = null;
+                      _activeEntryId = null;
+                      _resumeScanning();
+                    },
+                    icon: const Icon(Icons.videocam, color: Colors.white70, size: 18),
+                    label: const Text('Rekam Video', style: TextStyle(color: Colors.white70, fontSize: 13)),
                     style: TextButton.styleFrom(
                       backgroundColor: const Color(0x88000000),
                       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
