@@ -52,10 +52,11 @@ class VideoWatermarkService {
           blockHeight: blockHeight,
         );
 
-        // ✅ Font diaktifkan kembali
+        // ✅ Tanpa kutip tunggal — escape backslash langsung (lebih aman,
+        // lihat catatan di _escapeFFmpegText/_escapeFFmpegPath)
         filterParts.add(
-          "drawtext=text='$escapedText':"
-          "fontfile='$escapedFontPath':"
+          "drawtext=text=$escapedText:"
+          "fontfile=$escapedFontPath:"
           "fontcolor=$color:"
           "fontsize=$fontSize:"
           "x=$xExpr:"
@@ -71,7 +72,7 @@ class VideoWatermarkService {
       if (logoOverlay != null) {
         final escapedLogoPath = _escapeFFmpegPath(logoOverlay);
         final logoXY = layout.logoXY();
-        buffer.write("movie='$escapedLogoPath'[logo];");
+        buffer.write("movie=$escapedLogoPath[logo];");
         buffer.write("[0:v]${baseChain.join(',')}[base];");
         buffer.write("[base][logo]overlay=${logoXY.x}:${logoXY.y}:format=auto[outv]");
       } else {
@@ -213,21 +214,34 @@ class VideoWatermarkService {
     return logoFile.path;
   }
 
-  // Nilai ini akan dibungkus tanda kutip tunggal di filter (text='...').
-  // Di dalam kutip tunggal, ffmpeg memperlakukan ':' ',' '%' '[' ']' '\'
-  // secara literal — TIDAK perlu (dan TIDAK BOLEH) di-escape manual,
-  // karena itu justru menyisipkan karakter '\' asli ke teks watermark
-  // (mis. jam "10:23:45" berubah tampil jadi "10\:23\:45").
-  // Satu-satunya karakter spesial di dalam kutip tunggal adalah kutip
-  // tunggal itu sendiri, yang tidak bisa di-nest. Cara escape yang benar:
-  // tutup kutip, sisipkan kutip yang di-escape dengan backslash, buka lagi.
-  //   contoh: O'Brien -> O'\''Brien  (dirender ffmpeg sebagai: O'Brien)
+  // Build ffmpeg_kit ini TERBUKTI (dari log runtime) tidak melindungi ':'
+  // di dalam tanda kutip tunggal text='...' — parser tetap berhenti di
+  // colon pertama walau ada di dalam kutip. Jadi jangan andalkan kutip
+  // sama sekali; escape tiap karakter spesial langsung dengan backslash,
+  // yang adalah level-escaping pertama dan paling universal di ffmpeg.
+  // PENTING: escape '\' dulu sebelum karakter lain, supaya backslash yang
+  // baru ditambahkan tidak ikut di-escape ulang.
   static String _escapeFFmpegText(String text) {
-    return text.replaceAll("'", "'\\''");
+    return text
+        .replaceAll('\\', '\\\\')
+        .replaceAll(':', '\\:')
+        .replaceAll(',', '\\,')
+        .replaceAll(';', '\\;')
+        .replaceAll('%', '\\%')
+        .replaceAll("'", "\\'")
+        .replaceAll('[', '\\[')
+        .replaceAll(']', '\\]');
   }
 
   static String _escapeFFmpegPath(String path) {
-    return path.replaceAll("'", "'\\''");
+    return path
+        .replaceAll('\\', '\\\\')
+        .replaceAll(':', '\\:')
+        .replaceAll(',', '\\,')
+        .replaceAll(';', '\\;')
+        .replaceAll("'", "\\'")
+        .replaceAll('[', '\\[')
+        .replaceAll(']', '\\]');
   }
 
   /// Cocokkan pesan error ffmpeg yang umum agar log berikutnya langsung
