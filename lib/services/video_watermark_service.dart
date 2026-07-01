@@ -40,7 +40,7 @@ class VideoWatermarkService {
       for (var i = 0; i < lines.length; i++) {
         final line = lines[i];
         if (line.text.isEmpty) continue;
-        // Escape karakter khusus termasuk SPASI
+        // Escape karakter khusus termasuk spasi menggunakan \040
         final escapedText = _escapeFFmpegText(line.text);
         final fontSize = (settings.fontSize + line.sizeOffset).clamp(10, 64).round();
         final color = layout.textColor(line.isTitle);
@@ -126,6 +126,10 @@ class VideoWatermarkService {
     }
   }
 
+  // ─────────────────────────────────────────────────────────
+  // Helper methods (tidak berubah)
+  // ─────────────────────────────────────────────────────────
+
   static List<_TextLine> _buildTextLines(
       ScanEntry entry, WatermarkSettings settings) {
     final lines = <_TextLine>[];
@@ -196,12 +200,11 @@ class VideoWatermarkService {
     return logoFile.path;
   }
 
-  // Escape karakter yang memiliki arti khusus di dalam filter FFmpeg,
-  // termasuk SPASI yang menjadi pemisah opsi.
-  // Urutan: backslash harus di-escape paling awal agar tidak meng-escape backslash yang baru.
+  // Escape karakter khusus. SPASI diganti dengan escape oktal \040
+  // yang dikenali secara universal oleh FFmpeg.
   static String _escapeFFmpegText(String text) {
     return text
-        .replaceAll('\\', '\\\\')   // escape backslash
+        .replaceAll('\\', '\\\\')
         .replaceAll(':', '\\:')
         .replaceAll(',', '\\,')
         .replaceAll(';', '\\;')
@@ -212,7 +215,7 @@ class VideoWatermarkService {
         .replaceAll('(', '\\(')
         .replaceAll(')', '\\)')
         .replaceAll("'", "\\'")
-        .replaceAll(' ', '\\ ');    // <--- INI YANG PALING PENTING: escape spasi
+        .replaceAll(' ', '\\040');  // spasi → \040
   }
 
   static String _escapeFFmpegPath(String path) {
@@ -221,7 +224,7 @@ class VideoWatermarkService {
         .replaceAll(':', '\\:')
         .replaceAll(',', '\\,')
         .replaceAll(';', '\\;')
-        .replaceAll(' ', '\\ ')
+        .replaceAll(' ', '\\040')
         .replaceAll("'", "\\'")
         .replaceAll('[', '\\[')
         .replaceAll(']', '\\]');
