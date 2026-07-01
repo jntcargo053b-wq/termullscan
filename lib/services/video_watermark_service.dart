@@ -80,23 +80,33 @@ class VideoWatermarkService {
 
       final filterComplex = buffer.toString();
 
-      // ✅ Gunakan mpeg4, encoder yang selalu tersedia di min-gpl
-      final command =
-          "-i \"$inputPath\" "
-          "-filter_complex \"$filterComplex\" "
-          "-map \"[outv]\" "
-          "-map 0:a? "
-          "-c:v mpeg4 "
-          "-q:v 5 "
-          "-c:a aac "
-          "-b:a 128k "
-          "-movflags +faststart "
-          "-y "
-          "\"$outputPath\"";
+      // ⚠️ PENTING: JANGAN pakai FFmpegKit.execute(String) di sini.
+      // execute() memecah command jadi argumen berdasarkan SPASI, dan ia
+      // juga mengenali tanda kutip TUNGGAL sebagai delimiter argumen —
+      // bukan cuma kutip ganda. filterComplex kita berisi teks ber-spasi
+      // yang dibungkus kutip tunggal (text='Waktu: ...') untuk kebutuhan
+      // sintaks filter ffmpeg sendiri. Kalau dikirim lewat execute(String),
+      // tokenizer FFmpegKit ikut memecah string itu di tengah jalan SEBELUM
+      // sampai ke parser filtergraph ffmpeg -> "Error parsing filterchain".
+      // executeWithArguments(List<String>) mengirim setiap argumen sebagai
+      // elemen array asli, tanpa tokenisasi string sama sekali.
+      final arguments = <String>[
+        '-i', inputPath,
+        '-filter_complex', filterComplex,
+        '-map', '[outv]',
+        '-map', '0:a?',
+        '-c:v', 'mpeg4',
+        '-q:v', '5',
+        '-c:a', 'aac',
+        '-b:a', '128k',
+        '-movflags', '+faststart',
+        '-y',
+        outputPath,
+      ];
 
-      debugPrint('🎬 FFmpeg command: $command');
+      debugPrint('🎬 FFmpeg arguments: $arguments');
 
-      final session = await FFmpegKit.execute(command);
+      final session = await FFmpegKit.executeWithArguments(arguments);
       final returnCode = await session.getReturnCode();
 
       // 📊 Logging detail
@@ -114,11 +124,12 @@ class VideoWatermarkService {
       } else {
         final diagnosis = _diagnoseFailure(logs ?? '');
         debugPrint('❌ FFmpeg gagal. Diagnosis: $diagnosis');
-        final tail = (logs ?? '').length > 400
-            ? (logs ?? '').substring((logs ?? '').length - 400)
-            : (logs ?? '');
-        lastError =
-            'rc=${returnCode?.getValue()} | $diagnosis\n---log tail---\n$tail';
+        final fullLog = logs ?? '';
+        final tail =
+            fullLog.length > 1500 ? fullLog.substring(fullLog.length - 1500) : fullLog;
+        lastError = 'rc=${returnCode?.getValue()} | $diagnosis\n'
+            '---arguments---\n${arguments.join(' ')}\n'
+            '---log tail---\n$tail';
         return null;
       }
     } catch (e) {
