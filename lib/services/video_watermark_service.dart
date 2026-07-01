@@ -50,47 +50,51 @@ class VideoWatermarkService {
           blockHeight: blockHeight,
         );
 
-        // Urutan opsi: fontfile dahulu, lalu text dengan kutip tunggal
         filterParts.add(
-          "drawtext="
-          "fontfile=$escapedFontPath:"
-          "text='$escapedText':"
+          "drawtext=text='$escapedText':"
+          "fontfile='$escapedFontPath':"
           "fontcolor=$color:"
           "fontsize=$fontSize:"
           "x=$xExpr:"
           "y=$yExpr:"
-          "shadowcolor=black@0.6:"
-          "shadowx=1:"
-          "shadowy=1",
+          "shadowcolor=black@0.6:shadowx=1:shadowy=1",
         );
       }
 
       final baseChain = filterParts;
-      final buffer = StringBuffer();
       final logoOverlay = await _buildLogoOverlay(settings);
 
+      // Watermark kita 99% cuma drawbox + drawtext berantai (tanpa
+      // input tambahan). Kasus itu TIDAK butuh filter graph berlabel
+      // ([0:v]...[outv]) sama sekali — cukup -vf dengan chain filter
+      // biasa. Graph berlabel + -filter_complex hanya benar-benar
+      // diperlukan saat ada logo, karena itu satu-satunya kasus yang
+      // menggabungkan dua sumber (video + gambar logo via movie=).
+      // Dengan begini, jalur paling umum (tanpa logo) tidak menyentuh
+      // parser filter_complex sama sekali, jadi risiko error parsing
+      // jauh lebih kecil.
+      final List<String> filterArgs;
       if (logoOverlay != null) {
         final escapedLogoPath = _escapeFFmpegPath(logoOverlay);
         final logoXY = layout.logoXY();
-        buffer.write("movie=$escapedLogoPath[logo];");
+        final buffer = StringBuffer();
+        buffer.write("movie='$escapedLogoPath'[logo];");
         buffer.write("[0:v]${baseChain.join(',')}[base];");
         buffer.write("[base][logo]overlay=${logoXY.x}:${logoXY.y}:format=auto[outv]");
+        filterArgs = [
+          '-filter_complex', buffer.toString(),
+          '-map', '[outv]',
+          '-map', '0:a?',
+        ];
       } else {
-        buffer.write("[0:v]${baseChain.join(',')}[outv]");
+        filterArgs = [
+          '-vf', baseChain.join(','),
+        ];
       }
-
-      final filterComplex = buffer.toString();
-
-      // Log untuk debugging
-      debugPrint("================ FILTER ================");
-      debugPrint(filterComplex);
-      debugPrint("========================================");
 
       final arguments = <String>[
         '-i', inputPath,
-        '-filter_complex', filterComplex,
-        '-map', '[outv]',
-        '-map', '0:a?',
+        ...filterArgs,
         '-c:v', 'mpeg4',
         '-q:v', '5',
         '-c:a', 'aac',
@@ -135,7 +139,7 @@ class VideoWatermarkService {
   }
 
   // ─────────────────────────────────────────────────────────
-  // Helper methods
+  // Helper methods (tidak berubah)
   // ─────────────────────────────────────────────────────────
 
   static List<_TextLine> _buildTextLines(
@@ -208,24 +212,26 @@ class VideoWatermarkService {
     return logoFile.path;
   }
 
-  // Hanya escape backslash dan single quote – text akan dibungkus dengan '...'
+  // Nilai text= dibungkus tanda kutip tunggal di filter string
+  // (lihat "drawtext=text='$escapedText'"). Di dalam tanda kutip
+  // tunggal, FFmpeg TIDAK memperlakukan backslash sebagai escape char,
+  // jadi spasi/kolon/koma/dll tidak perlu (dan tidak boleh) di-escape
+  // dengan backslash — semuanya sudah literal. Satu-satunya karakter
+  // spesial adalah tanda kutip tunggal itu sendiri, yang di-escape
+  // dengan pola standar FFmpeg: '\'' (tutup kutip, kutip ter-escape,
+  // buka kutip lagi).
   static String _escapeFFmpegText(String text) {
-    return text
-        .replaceAll(r'\', r'\\')
-        .replaceAll("'", r"\'");
+    return text.replaceAll("'", r"'\''");
   }
 
-  // Path untuk fontfile/movie: escape karakter yang bisa mengacaukan parser opsi FFmpeg
+  // fontfile=/movie= juga dibungkus tanda kutip tunggal saat dipakai,
+  // jadi berlaku aturan yang sama persis: hanya tanda kutip tunggal
+  // yang perlu di-escape. TIDAK menggunakan \040 untuk spasi — itu
+  // bukan escape sequence yang valid di FFmpeg filtergraph dan
+  // menyebabkan "No option name near ..." / rc=1 seperti yang terjadi
+  // sebelumnya.
   static String _escapeFFmpegPath(String path) {
-    return path
-        .replaceAll(r'\', r'\\')
-        .replaceAll(':', r'\:')
-        .replaceAll(',', r'\,')
-        .replaceAll(';', r'\;')
-        .replaceAll("'", r"\'")
-        .replaceAll('[', r'\[')
-        .replaceAll(']', r'\]')
-        .replaceAll(' ', r'\ '); // spasi di-escape dengan backslash
+    return path.replaceAll("'", r"'\''");
   }
 
   static String _diagnoseFailure(String logs) {
