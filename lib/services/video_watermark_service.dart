@@ -31,12 +31,22 @@ class VideoWatermarkService {
 
       final filterParts = <String>[];
 
+      // 1. Background panel
       final bg = layout.buildBackground(
         blockHeight: blockHeight,
         opacity: settings.backgroundOpacity,
       );
       if (bg != null) filterParts.add(bg);
 
+      // 2. Accent bar (garis vertikal berwarna)
+      final accentBar = layout.buildAccentBar(blockHeight: blockHeight);
+      if (accentBar != null) filterParts.add(accentBar);
+
+      // 3. Divider horizontal (garis pemisah)
+      final divider = layout.buildDivider(blockHeight: blockHeight);
+      if (divider != null) filterParts.add(divider);
+
+      // 4. Teks dengan shadow lebih kuat
       for (var i = 0; i < lines.length; i++) {
         final line = lines[i];
         if (line.text.isEmpty) continue;
@@ -57,7 +67,11 @@ class VideoWatermarkService {
           "fontsize=$fontSize:"
           "x=$xExpr:"
           "y=$yExpr:"
-          "shadowcolor=black@0.6:shadowx=1:shadowy=1",
+          "shadowcolor=black@0.8:"
+          "shadowx=2:"
+          "shadowy=2:"
+          "bordercolor=black@0.3:"
+          "borderw=1",
         );
       }
 
@@ -83,15 +97,12 @@ class VideoWatermarkService {
         ];
       }
 
-      // Encoder yang selalu tersedia di semua build ffmpeg_kit (termasuk
-      // varian video yang dipakai di sini). libopenh264 tidak selalu ada,
-      // jadi kita gunakan mpeg4 sebagai codec video yang paling kompatibel.
       final arguments = <String>[
         '-i', inputPath,
         ...filterArgs,
-        '-pix_fmt', 'yuv420p',   // wajib untuk kompatibilitas galeri
-        '-c:v', 'mpeg4',         // encoder video yang pasti ada
-        '-b:v', '4M',            // bitrate tinggi untuk kualitas baik
+        '-pix_fmt', 'yuv420p',
+        '-c:v', 'mpeg4',
+        '-b:v', '4M',
         '-c:a', 'aac',
         '-b:a', '128k',
         '-movflags', '+faststart',
@@ -119,8 +130,7 @@ class VideoWatermarkService {
         final diagnosis = _diagnoseFailure(logs ?? '');
         debugPrint('❌ FFmpeg gagal. Diagnosis: $diagnosis');
         final fullLog = logs ?? '';
-        final tail =
-            fullLog.length > 1500 ? fullLog.substring(fullLog.length - 1500) : fullLog;
+        final tail = fullLog.length > 1500 ? fullLog.substring(fullLog.length - 1500) : fullLog;
         lastError = 'rc=${returnCode?.getValue()} | $diagnosis\n'
             '---arguments---\n${arguments.join(' ')}\n'
             '---log tail---\n$tail';
@@ -144,7 +154,7 @@ class VideoWatermarkService {
     if (settings.companyName.isNotEmpty) {
       lines.add(_TextLine(
         text: settings.companyName.toUpperCase(),
-        sizeOffset: 4,
+        sizeOffset: 6,
         isTitle: true,
       ));
     }
@@ -162,8 +172,7 @@ class VideoWatermarkService {
       lines.add(_TextLine(text: 'Lokasi: ${entry.locationName}', sizeOffset: -1));
     } else if (entry.latitude != null && entry.longitude != null) {
       lines.add(_TextLine(
-        text:
-            'GPS: ${entry.latitude!.toStringAsFixed(4)}, ${entry.longitude!.toStringAsFixed(4)}',
+        text: 'GPS: ${entry.latitude!.toStringAsFixed(4)}, ${entry.longitude!.toStringAsFixed(4)}',
         sizeOffset: -1,
       ));
     }
@@ -222,37 +231,27 @@ class VideoWatermarkService {
   static String _diagnoseFailure(String logs) {
     final l = logs.toLowerCase();
     if (l.contains('no such filter') && l.contains('drawtext')) {
-      return 'Filter drawtext TIDAK tersedia di build ffmpeg_kit ini '
-          '(varian package ffmpeg_kit yang dipakai tidak menyertakan '
-          'libfreetype/libfontconfig). Solusi: pastikan pubspec.yaml '
-          'memakai paket yang menyertakan freetype+fontconfig, mis. '
-          'ffmpeg_kit_flutter_new_video atau ffmpeg_kit_flutter_new '
-          '(full-gpl) — varian min/min-gpl TIDAK menyertakan freetype.';
+      return 'Filter drawtext TIDAK tersedia. Pastikan pubspec.yaml memakai '
+          'ffmpeg_kit_flutter_new_video atau varian yang menyertakan freetype.';
     }
     if (l.contains('cannot find a valid font') ||
         l.contains('could not load font') ||
         l.contains('error loading freetype')) {
-      return 'Font gagal dimuat oleh freetype (fontfile bermasalah, cek '
-          'apakah font variable-weight [VariableFont] didukung, coba font '
-          'statis seperti Poppins-Regular.ttf).';
+      return 'Font gagal dimuat. Coba font statis (mis. Poppins-Regular.ttf).';
     }
     if (l.contains('unknown encoder') || l.contains('encoder not found')) {
-      return 'Encoder yang diminta tidak tersedia. Ganti ke mpeg4 yang '
-          'pasti ada di semua build ffmpeg_kit.';
+      return 'Encoder tidak tersedia. Ganti ke mpeg4.';
     }
     if (l.contains('invalid argument') && l.contains('drawtext')) {
-      return 'Syntax filter drawtext tidak valid (kemungkinan karakter '
-          'khusus di teks/path belum di-escape dengan benar).';
+      return 'Syntax filter drawtext tidak valid (karakter khusus belum di-escape).';
     }
     if (l.contains('permission denied')) {
-      return 'Tidak ada izin baca/tulis ke path input/output.';
+      return 'Tidak ada izin baca/tulis ke file video.';
     }
     if (l.contains('moov atom not found') || l.contains('invalid data found')) {
-      return 'File video input korup/tidak lengkap (kemungkinan proses '
-          'perekaman terputus).';
+      return 'File video input korup/tidak lengkap.';
     }
-    return 'Penyebab tidak cocok pola yang dikenal — cek isi lengkap logs '
-        'di atas secara manual.';
+    return 'Penyebab tidak dikenal. Cek log lengkap di atas.';
   }
 
   static String _formatTimestamp(DateTime dt) {
@@ -265,6 +264,7 @@ class VideoWatermarkService {
   }
 }
 
+// ─── Helper classes ──────────────────────────────
 class _TextLine {
   final String text;
   final double sizeOffset;
@@ -306,7 +306,8 @@ class _StyleLayout {
       return "drawbox=x=0:y=$y:w=iw:h=${blockHeight.toInt()}:color=$color@${opacity.clamp(0.0, 1.0)}:t=fill";
     }
 
-    final boxWidth = 'iw*0.42';
+    // stamp: bordered badge
+    final boxWidth = 'iw*0.45';
     final x = _isRight ? 'iw-($boxWidth)-20' : '20';
     final y = _isBottom ? 'ih-${blockHeight.toInt()}-20' : '20';
     final fill = "drawbox=x=$x:y=$y:w=$boxWidth:h=${blockHeight.toInt()}:"
@@ -315,10 +316,31 @@ class _StyleLayout {
     return '$fill,$border';
   }
 
+  // ✅ Accent bar: garis vertikal berwarna di samping teks
+  String? buildAccentBar({required double blockHeight}) {
+    if (style == WatermarkStyle.minimal) return null;
+
+    final barWidth = 4;
+    final accentColor = style == WatermarkStyle.polaroid ? 'darkorange' : 'orange';
+    final x = _isRight ? 'iw-$barWidth-18' : '18';
+    final y = _isBottom ? 'ih-${blockHeight.toInt()}' : '0';
+    return "drawbox=x=$x:y=$y:w=$barWidth:h=${blockHeight.toInt()}:color=$accentColor@0.9:t=fill";
+  }
+
+  // ✅ Divider horizontal: garis tipis di atas teks
+  String? buildDivider({required double blockHeight}) {
+    if (style == WatermarkStyle.minimal || style == WatermarkStyle.stamp) return null;
+
+    final y = _isBottom ? 'ih-${blockHeight.toInt()}' : '0';
+    return "drawbox=x=18:y=$y:w=iw-36:h=1:color=white@0.2:t=fill";
+  }
+
   String textX() {
+    // Sisakan ruang untuk accent bar
+    final accentSpace = (style == WatermarkStyle.minimal) ? 0 : 12;
     if (_isFullWidthBanner) return '(w-text_w)/2';
     final inset = style == WatermarkStyle.stamp ? 32 : 20;
-    return _isRight ? 'w-text_w-$inset' : '$inset';
+    return _isRight ? 'w-text_w-$inset' : '${inset + accentSpace}';
   }
 
   String textY({
