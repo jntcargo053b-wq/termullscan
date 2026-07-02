@@ -29,6 +29,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
     WatermarkStyle.professional,
     WatermarkStyle.polaroid,
     WatermarkStyle.stamp,
+    WatermarkStyle.timestamp,
   ];
 
   @override
