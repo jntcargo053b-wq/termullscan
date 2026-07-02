@@ -17,8 +17,6 @@ class StorageService {
   final Uuid _uuid = const Uuid();
   final DatabaseHelper _db = DatabaseHelper();
 
-  final Map<String, int> _maxNumberCache = {};
-
   String generateId() => _uuid.v4();
 
   // ================================================================
@@ -78,20 +76,24 @@ class StorageService {
 
       String fileName;
       if (name != null && name.isNotEmpty) {
+        // 🔴 FIX: sebelumnya di sini ada logic yang menghapus digit di akhir
+        // nama (RegExp r'\d+$') untuk mencari "prefix murni". Ini merusak
+        // SEMUA barcode numerik (EAN-13/UPC-A dst): "8991002123456" jadi
+        // pureBase '' -> nama file cuma ".jpg", nomor urut jadi "002.jpg"
+        // tanpa kode barang sama sekali. _resolveFileName() di layar sudah
+        // menghitung nomor urut yang benar (barcode / barcode002 / 003...),
+        // jadi di sini kita percaya nama itu apa adanya.
         String baseName = name.endsWith('.jpg')
             ? name.substring(0, name.length - 4)
             : name;
-        String pureBase = baseName.replaceFirst(RegExp(r'\d+$'), '');
-        String candidate = '$pureBase.jpg';
+        String candidate = '$baseName.jpg';
 
         if (!await File('${photosDir.path}/$candidate').exists()) {
           fileName = candidate;
-          _maxNumberCache.remove(pureBase);
         } else {
-          int maxNumber = await _findMaxNumberForPrefixStream(photosDir, pureBase);
-          if (maxNumber == 0) maxNumber = 1;
-          int nextNumber = maxNumber + 1;
-          fileName = '$pureBase${nextNumber.toString().padLeft(3, '0')}.jpg';
+          // Tabrakan nyata (mis. retry cepat) — tambahkan timestamp agar
+          // tetap unik, tanpa menebak/menghapus bagian dari nama barcode.
+          fileName = '${baseName}_${DateTime.now().millisecondsSinceEpoch}.jpg';
         }
       } else {
         fileName = '${DateTime.now().millisecondsSinceEpoch}.jpg';
@@ -108,34 +110,6 @@ class StorageService {
       debugPrint('⚠️ Storage: error saving photo: $e');
       rethrow;
     }
-  }
-
-  Future<int> _findMaxNumberForPrefixStream(
-      Directory photosDir, String pureBase) async {
-    if (_maxNumberCache.containsKey(pureBase)) {
-      return _maxNumberCache[pureBase]!;
-    }
-
-    int maxNumber = 0;
-    final RegExp regExp =
-        RegExp(r'^' + RegExp.escape(pureBase) + r'(\d*)\.jpg$');
-
-    await for (final entity in photosDir.list()) {
-      if (entity is File) {
-        final filename = entity.path.split('/').last;
-        final match = regExp.firstMatch(filename);
-        if (match != null) {
-          final numStr = match.group(1);
-          if (numStr != null && numStr.isNotEmpty) {
-            final num = int.tryParse(numStr) ?? 0;
-            if (num > maxNumber) maxNumber = num;
-          }
-        }
-      }
-    }
-
-    _maxNumberCache[pureBase] = maxNumber;
-    return maxNumber;
   }
 
   // ================================================================
@@ -164,12 +138,6 @@ class StorageService {
           if (stat.modified.isBefore(cutoff)) {
             await entity.delete();
             deletedCount++;
-            final filename = entity.path.split('/').last;
-            final base = filename.endsWith('.jpg')
-                ? filename.substring(0, filename.length - 4)
-                : filename;
-            final pureBase = base.replaceFirst(RegExp(r'\d+$'), '');
-            _maxNumberCache.remove(pureBase);
           }
         }
       }
@@ -185,13 +153,7 @@ class StorageService {
     try {
       final file = File(path);
       if (await file.exists()) {
-        final filename = file.path.split('/').last;
-        final base = filename.endsWith('.jpg')
-            ? filename.substring(0, filename.length - 4)
-            : filename;
-        final pureBase = base.replaceFirst(RegExp(r'\d+$'), '');
         await file.delete();
-        _maxNumberCache.remove(pureBase);
         debugPrint('🗑️ Photo deleted: $path');
       }
     } catch (e) {
