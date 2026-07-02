@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/barcode_scan_screen.dart (FINAL – OPSI A)
+// lib/screens/barcode_scan_screen.dart (FINAL – OPSI A, FIX)
 // ============================================================
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -35,7 +35,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   bool _isTakingMultiple = false;
 
   String? _activeBarcode;
-  String? _activeEntryId;   // ✅ ID entry yang sudah disimpan
+  String? _activeEntryId;
   int _batchPhotoCount = 0;
   bool _batchMode = false;
 
@@ -63,11 +63,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
       if (_scanning) {
         _scannerController.stop();
-        if (mounted) {
-          setState(() {
-            _scanning = false;
-          });
-        }
+        if (mounted) setState(() => _scanning = false);
         debugPrint('📱 App background: scanner stopped');
       }
     } else if (state == AppLifecycleState.resumed) {
@@ -177,11 +173,10 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       if (!mounted) return;
       setState(() {
         _scanCount++;
-        _activeEntryId = entry.id;   // ✅ simpan ID untuk diteruskan
+        _activeEntryId = entry.id;
       });
 
       await _scannerController.stop();
-      // TIDAK langsung pindah ke PhotoScanScreen — tunggu pengguna memilih tombol
     } catch (e) {
       debugPrint('Error _onDetect: $e');
       if (mounted) _resumeScanning();
@@ -237,7 +232,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       });
 
       await _scannerController.stop();
-      // TIDAK langsung pindah ke PhotoScanScreen
     } catch (e) {
       debugPrint('Error _processManualCode: $e');
       if (mounted) _resumeScanning();
@@ -252,37 +246,29 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         actions: [
           ListenableBuilder(
             listenable: _wmSettings,
-            builder: (context, _) {
-              return IconButton(
-                onPressed: _openWatermarkSettings,
-                icon: Stack(
-                  children: [
-                    const Icon(Icons.tune, color: Colors.white),
-                    if (_wmSettings.operatorName.isNotEmpty || _wmSettings.hasLogo)
-                      const Positioned(
-                        right: 0,
-                        top: 0,
-                        child: Icon(Icons.circle, size: 8, color: Colors.amber),
-                      ),
-                  ],
-                ),
-                tooltip: 'Pengaturan Watermark',
-              );
-            },
+            builder: (context, _) => IconButton(
+              onPressed: _openWatermarkSettings,
+              icon: Stack(
+                children: [
+                  const Icon(Icons.tune, color: Colors.white),
+                  if (_wmSettings.operatorName.isNotEmpty || _wmSettings.hasLogo)
+                    const Positioned(
+                      right: 0, top: 0,
+                      child: Icon(Icons.circle, size: 8, color: Colors.amber),
+                    ),
+                ],
+              ),
+              tooltip: 'Pengaturan Watermark',
+            ),
           ),
         ],
       ),
       body: Stack(
         children: [
-          MobileScanner(
-            controller: _scannerController,
-            onDetect: _onDetect,
-          ),
+          MobileScanner(controller: _scannerController, onDetect: _onDetect),
           if (_activeBarcode != null)
             Positioned(
-              top: 12,
-              left: 0,
-              right: 0,
+              top: 12, left: 0, right: 0,
               child: Container(
                 margin: const EdgeInsets.symmetric(horizontal: 20),
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -299,11 +285,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
                     Expanded(
                       child: Text(
                         '$_activeBarcode',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14,
-                        ),
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14),
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
@@ -316,30 +298,21 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
                       ),
                       child: Text(
                         '$_batchPhotoCount foto',
-                        style: const TextStyle(
-                          color: Colors.amber,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                        ),
+                        style: const TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.w700),
                       ),
                     ),
                   ],
                 ),
               ),
             ),
-          if (!_isSaving &&
-              !_isTakingMultiple &&
-              _activeBarcode == null)
+          if (!_isSaving && !_isTakingMultiple && _activeBarcode == null)
             Positioned(
-              top: 12,
-              left: 0,
-              right: 0,
+              top: 12, left: 0, right: 0,
               child: ListenableBuilder(
                 listenable: _wmSettings,
                 builder: (context, _) {
-                  if (_wmSettings.operatorName.isEmpty && !_wmSettings.hasLogo) {
+                  if (_wmSettings.operatorName.isEmpty && !_wmSettings.hasLogo)
                     return const SizedBox.shrink();
-                  }
                   return Center(
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -354,14 +327,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
                           if (_wmSettings.operatorName.isNotEmpty) ...[
                             const Icon(Icons.person, color: Colors.amber, size: 12),
                             const Gap(5),
-                            Text(
-                              _wmSettings.operatorName,
-                              style: const TextStyle(
-                                color: Colors.amber,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
+                            Text(_wmSettings.operatorName, style: const TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.w600)),
                           ],
                           if (_wmSettings.hasLogo) ...[
                             if (_wmSettings.operatorName.isNotEmpty) const Gap(8),
@@ -377,9 +343,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           // ✅ Tombol Aksi (muncul saat barcode aktif)
           if (_activeBarcode != null && _activeEntryId != null)
             Positioned(
-              bottom: 40,
-              left: 0,
-              right: 0,
+              bottom: 40, left: 0, right: 0,
               child: Column(
                 children: [
                   // Tombol Ambil Foto
@@ -395,10 +359,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
                           ),
                         ),
                       );
-                      if (result != null) {
-                        _batchPhotoCount = result['count'] ?? 0;
-                      }
-                      // Kembalikan ke mode pemindaian
+                      if (result != null) _batchPhotoCount = result['count'] ?? 0;
                       _activeBarcode = null;
                       _activeEntryId = null;
                       _resumeScanning();
@@ -415,7 +376,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
                     ),
                   ),
                   const Gap(8),
-                  // Tombol Rekam Video
+                  // ✅ Tombol Rekam Video — hanya kirim barcode
                   TextButton.icon(
                     onPressed: () async {
                       await Navigator.push(
@@ -423,12 +384,9 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
                         MaterialPageRoute(
                           builder: (_) => VideoScanScreen(
                             barcode: _activeBarcode,
-                            batchMode: _batchMode,
-                            entryId: _activeEntryId,
                           ),
                         ),
                       );
-                      // Kembalikan ke mode pemindaian
                       _activeBarcode = null;
                       _activeEntryId = null;
                       _resumeScanning();
@@ -456,8 +414,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
                   children: [
                     CircularProgressIndicator(color: Colors.white),
                     Gap(12),
-                    Text('Memproses...',
-                        style: TextStyle(color: Colors.white, fontSize: 16)),
+                    Text('Memproses...', style: TextStyle(color: Colors.white, fontSize: 16)),
                   ],
                 ),
               ),
@@ -472,66 +429,36 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
 class _ManualInputDialog extends StatefulWidget {
   final void Function(String code) onSubmitted;
   const _ManualInputDialog({required this.onSubmitted, super.key});
-
   @override
   State<_ManualInputDialog> createState() => _ManualInputDialogState();
 }
 
 class _ManualInputDialogState extends State<_ManualInputDialog> {
   late TextEditingController _controller;
-
   @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController();
-  }
-
+  void initState() { super.initState(); _controller = TextEditingController(); }
   @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
+  void dispose() { _controller.dispose(); super.dispose(); }
 
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
     return Padding(
-      padding: EdgeInsets.only(
-        left: 20, right: 20, top: 20,
-        bottom: bottomInset + 24,
-      ),
+      padding: EdgeInsets.only(left: 20, right: 20, top: 20, bottom: bottomInset + 24),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Center(
-            child: Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey[600],
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
+            child: Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[600], borderRadius: BorderRadius.circular(2))),
           ),
           const Gap(16),
-          const Row(
-            children: [
-              Icon(Icons.keyboard, color: Colors.amber, size: 20),
-              Gap(8),
-              Text('Input Manual',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                  )),
-            ],
-          ),
+          const Row(children: [
+            Icon(Icons.keyboard, color: Colors.amber, size: 20), Gap(8),
+            Text('Input Manual', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
+          ]),
           const Gap(4),
-          const Text(
-            'Ketik atau paste barcode jika kamera gagal membaca',
-            style: TextStyle(color: Colors.grey, fontSize: 12),
-          ),
+          const Text('Ketik atau paste barcode jika kamera gagal membaca', style: TextStyle(color: Colors.grey, fontSize: 12)),
           const Gap(16),
           TextField(
             controller: _controller,
@@ -542,54 +469,26 @@ class _ManualInputDialogState extends State<_ManualInputDialog> {
               hintStyle: const TextStyle(color: Colors.grey),
               filled: true,
               fillColor: const Color(0xFF2A2A2A),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: BorderSide.none,
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: Colors.amber, width: 1.5),
-              ),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.amber, width: 1.5)),
               prefixIcon: const Icon(Icons.qr_code, color: Colors.grey),
-              suffixIcon: IconButton(
-                icon: const Icon(Icons.clear, color: Colors.grey, size: 18),
-                onPressed: () => _controller.clear(),
-              ),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16, vertical: 14,
-              ),
+              suffixIcon: IconButton(icon: const Icon(Icons.clear, color: Colors.grey, size: 18), onPressed: () => _controller.clear()),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             ),
             textInputAction: TextInputAction.done,
-            onSubmitted: (val) {
-              if (val.trim().isNotEmpty) {
-                Navigator.pop(context);
-                widget.onSubmitted(val.trim());
-              }
-            },
+            onSubmitted: (val) { if (val.trim().isNotEmpty) { Navigator.pop(context); widget.onSubmitted(val.trim()); } },
           ),
           const Gap(16),
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.amber,
-                foregroundColor: Colors.black,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.amber, foregroundColor: Colors.black, padding: const EdgeInsets.symmetric(vertical: 14), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
               onPressed: () {
                 final val = _controller.text.trim();
-                if (val.isNotEmpty) {
-                  Navigator.pop(context);
-                  widget.onSubmitted(val);
-                }
+                if (val.isNotEmpty) { Navigator.pop(context); widget.onSubmitted(val); }
               },
               icon: const Icon(Icons.check, size: 18),
-              label: const Text('Konfirmasi',
-                  style: TextStyle(
-                      fontWeight: FontWeight.w700, fontSize: 15)),
+              label: const Text('Konfirmasi', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
             ),
           ),
         ],
