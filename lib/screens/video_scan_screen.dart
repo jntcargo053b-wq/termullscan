@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/video_scan_screen.dart (FINAL – STABLE IMAGE_PICKER VIDEO)
+// lib/screens/video_scan_screen.dart (FINAL – DURATION + THUMB FIX)
 // ============================================================
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -7,6 +7,7 @@ import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:gap/gap.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:saver_gallery/saver_gallery.dart';
+import 'package:video_player/video_player.dart';          // ← untuk membaca durasi
 import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/scan_entry.dart';
@@ -18,14 +19,10 @@ import '../theme/app_theme.dart';
 
 class VideoScanScreen extends StatefulWidget {
   final String? barcode;
-  final bool batchMode;
-  final String? entryId;
 
   const VideoScanScreen({
     super.key,
     this.barcode,
-    this.batchMode = false,
-    this.entryId,
   });
 
   @override
@@ -44,12 +41,6 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
   @override
   void initState() {
     super.initState();
-    // Sebelumnya screen ini TIDAK pernah minta izin galeri sama sekali
-    // (beda dengan photo_scan_screen.dart). Di Android 9 ke bawah tanpa
-    // izin WRITE_EXTERNAL_STORAGE, SaverGallery.saveFile bisa gagal diam
-    // -diam. Di Android 10+ scoped storage biasanya tidak butuh ini,
-    // tapi memintanya di awal tidak merugikan dan menutup celah di
-    // device lama.
     PermissionService.requestGalleryPermission();
   }
 
@@ -92,42 +83,53 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
 
     try {
       final file = File(videoFile.path);
-      if (!await file.exists()) {
-        throw Exception('File video tidak ditemukan');
-      }
+      if (!await file.exists()) throw Exception('File video tidak ditemukan');
 
       final fileSize = await file.length();
       if (fileSize > _maxVideoSizeBytes) {
         await file.delete();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Video terlalu besar. Maks 50 MB.'), backgroundColor: Colors.red),
+            const SnackBar(
+              content: Text('Video terlalu besar. Maks 50 MB.'),
+              backgroundColor: Colors.red,
+            ),
           );
           setState(() => _isSaving = false);
         }
         return;
       }
 
-      // Simpan video mentah
+      // 1. Simpan video mentah
       final savedPath = await _storage.saveVideo(videoFile.path, name: widget.barcode);
       if (savedPath.isEmpty) throw Exception('Gagal menyimpan video');
 
-      // Generate thumbnail
-      final thumb = await _generateThumbnail(savedPath);
+      // 2. Baca durasi aktual
+      int actualDuration = 0;
+      try {
+        final vController = VideoPlayerController.file(File(savedPath));
+        await vController.initialize();
+        actualDuration = vController.value.duration.inSeconds;
+        await vController.dispose();
+      } catch (_) {
+        // jika gagal, tetap 0
+      }
 
-      // Entry awal
+      // 3. Thumbnail awal (dari video mentah, sebagai fallback)
+      final thumbRaw = await _generateThumbnail(savedPath);
+
+      // 4. Entry awal dengan durasi aktual
       final entry = ScanEntry(
         id: _storage.generateId(),
         type: ScanType.video,
         value: widget.barcode ?? 'video_${DateTime.now().millisecondsSinceEpoch}',
         timestamp: DateTime.now(),
         videoPath: savedPath,
-        videoDuration: 0, // tidak diketahui durasi pastinya
-        videoThumbnail: thumb,
+        videoDuration: actualDuration,   // ✅ bukan 0
+        videoThumbnail: thumbRaw,
       );
       await _storage.add(entry);
 
-      // Watermark di background
       if (mounted) {
         setState(() {
           _isSaving = false;
@@ -136,6 +138,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         });
       }
 
+      // 5. Proses watermark
       final wmPath = '$savedPath.wm.mp4';
       final wmResult = await VideoWatermarkService.addWatermark(
         inputPath: savedPath,
@@ -146,10 +149,18 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
 
       if (mounted) {
         if (wmResult != null) {
+          // ✅ Watermark berhasil → thumbnail dari video hasil watermark
+          final thumbWm = await _generateThumbnail(wmResult) ?? thumbRaw;
+
+          // Hapus video mentah, gunakan yang baru
           await File(savedPath).delete();
-          final updated = entry.copyWith(videoPath: wmResult, videoThumbnail: thumb);
+          final updated = entry.copyWith(
+            videoPath: wmResult,
+            videoThumbnail: thumbWm,
+          );
           await _storage.update(updated);
 
+          // Simpan ke galeri
           setState(() => _statusText = 'Menyalin ke Gallery...');
           final galleryOk = await _saveToGallery(wmResult);
           debugPrint(galleryOk
@@ -163,12 +174,15 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
                 : 'Video tersimpan + watermark (gagal disalin ke Gallery)';
           });
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(galleryOk
-                ? 'Video berhasil disimpan dengan watermark dan muncul di Gallery'
-                : 'Video tersimpan dengan watermark, tapi gagal disalin ke Gallery')),
+            SnackBar(
+              content: Text(galleryOk
+                  ? 'Video berhasil disimpan dengan watermark dan muncul di Gallery'
+                  : 'Video tersimpan dengan watermark, tapi gagal disalin ke Gallery'),
+            ),
           );
           Navigator.pop(context, {'entry': updated});
         } else {
+          // Watermark gagal
           final reason = VideoWatermarkService.lastError ?? 'tidak diketahui';
           debugPrint('🧾 Alasan watermark gagal: $reason');
 
@@ -244,22 +258,13 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     }
   }
 
-  // Video watermark disimpan di storage privat aplikasi
-  // (app_flutter/videos/), yang TIDAK pernah di-scan MediaStore —
-  // makanya tidak pernah muncul di Gallery meski file-nya sudah ada
-  // dan valid. Ini menyalin/mendaftarkan file itu ke MediaStore lewat
-  // saver_gallery, persis seperti yang sudah dipakai untuk foto di
-  // photo_scan_screen.dart.
   Future<bool> _saveToGallery(String filePath) async {
     try {
       final file = File(filePath);
       if (!await file.exists()) return false;
 
-      // Nama file asli biasanya "<uuid>.mp4.wm.mp4" (hasil watermark)
-      // — kasih ekstensi .mp4 yang bersih supaya Gallery/aplikasi lain
-      // mengenali MIME type video dengan benar.
       final String filename =
-          '${entryFilenameBase(filePath)}_${DateTime.now().millisecondsSinceEpoch}.mp4';
+          '${_entryFilenameBase(filePath)}_${DateTime.now().millisecondsSinceEpoch}.mp4';
 
       final result = await SaverGallery.saveFile(
         file: filePath,
@@ -275,9 +280,8 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     }
   }
 
-  String entryFilenameBase(String path) {
+  String _entryFilenameBase(String path) {
     final base = path.split('/').last;
-    // buang ekstensi ganda seperti ".mp4.wm.mp4" -> nama dasar saja
     return base.split('.').first;
   }
 
