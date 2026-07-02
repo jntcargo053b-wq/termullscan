@@ -92,15 +92,19 @@ class PolaroidLayout extends WatermarkLayout {
       paperRect.bottomRight,
       [const Color(0xFFFAFAF6), const Color(0xFFF0EFE9)],
     );
-    canvas.drawRect(paperRect, Paint()..shader = paperShader);
-
-    final cardPath = Path()
-      ..addRRect(RRect.fromRectAndRadius(
-        paperRect,
-        const Radius.circular(3),
-      ));
+    // Radius kartu diperbesar dari 3 → 14 supaya terasa modern (kartu polaroid
+    // lama terasa flat karena sudutnya nyaris kotak sempurna).
+    const cardRadius = Radius.circular(14);
+    final cardRRect = RRect.fromRectAndRadius(paperRect, cardRadius);
+    final cardPath = Path()..addRRect(cardRRect);
     canvas.drawShadow(cardPath, Colors.black.withOpacity(0.20), 6, true);
     canvas.drawShadow(cardPath, Colors.black.withOpacity(0.28), 22, true);
+
+    // Clip seluruh kanvas ke rounded-rect supaya foto & strip bawah ikut
+    // mengikuti sudut membulat kartu, bukan hanya background paper-nya.
+    canvas.save();
+    canvas.clipRRect(cardRRect);
+    canvas.drawRect(paperRect, Paint()..shader = paperShader);
 
     final outerPhotoRect = Rect.fromLTWH(
       padding - frameBorder,
@@ -119,7 +123,7 @@ class PolaroidLayout extends WatermarkLayout {
 
     final photoRect = Rect.fromLTWH(padding, padding, photoWidth, photoHeight);
     canvas.save();
-    canvas.clipRect(photoRect);
+    canvas.clipRRect(RRect.fromRectAndRadius(photoRect, const Radius.circular(6)));
     canvas.drawImageRect(
       srcImage,
       Rect.fromLTWH(0, 0, photoWidth, photoHeight),
@@ -150,7 +154,7 @@ class PolaroidLayout extends WatermarkLayout {
       Offset(canvasWidth - padding, stripTop),
       Paint()
         ..color = const Color(0xFFE2E0D8)
-        ..strokeWidth = 1,
+        ..strokeWidth = 1.2,
     );
 
     final isManual = data.isManual;
@@ -217,9 +221,11 @@ class PolaroidLayout extends WatermarkLayout {
         maxWidth: drawW,
         maxHeight: drawH,
         opacity: 0.85,
-        blendMode: BlendMode.srcOver,
       );
     }
+
+    // Menutup save() dari clipRRect kartu di awal method.
+    canvas.restore();
   }
 
   @override
@@ -244,7 +250,7 @@ class PolaroidLayout extends WatermarkLayout {
           end: Alignment.bottomRight,
           colors: [Color(0xFFFAFAF6), Color(0xFFF0EFE9)],
         ),
-        borderRadius: BorderRadius.circular(3),
+        borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(0.25),
