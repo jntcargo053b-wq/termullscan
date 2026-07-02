@@ -1,6 +1,7 @@
 // ============================================================
 // lib/watermark/layouts/minimal_layout.dart (FINAL – ELEGAN)
 // ============================================================
+import 'dart:io';                         // ← untuk File
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -36,24 +37,21 @@ class MinimalLayout extends WatermarkLayout {
     if (data.hasOperator) lineCount++;
     lineCount++; // timestamp
     if (data.hasLocation) lineCount++;
-    // manual entry tidak menambah baris di sini (opsional)
 
     final fontSz = data.fontSize;
-    // line-height 1.25
     final lineH = fontSz * 1.25;
-    // margin 6 antar item
     final spacing = 6.0;
 
     final overlayHeight = (lineCount * lineH + (lineCount - 1) * spacing) + padding * 1.2;
 
     final logoMaxSize = baseSize * 0.18;
-    final textW = photoWidth - padding * 2 - logoMaxSize - 12; // cadangan logo
+    final textW = photoWidth - padding * 2 - logoMaxSize - 12;
 
     return LayoutMetrics(
       baseSize: baseSize,
       padding: padding,
       fontSize: fontSz,
-      lineHeight: lineH + spacing, // lineHeight di layout metrics kita pakai untuk step Y
+      lineHeight: lineH + spacing,
       stripHeight: overlayHeight,
       logoMaxSize: logoMaxSize,
       textRowCount: lineCount,
@@ -106,7 +104,6 @@ class MinimalLayout extends WatermarkLayout {
         overlayAtBottom = true;
     }
 
-    // Gambar foto asli
     canvas.drawImageRect(
       srcImage,
       Rect.fromLTWH(0, 0, photoWidth, photoHeight),
@@ -116,7 +113,6 @@ class MinimalLayout extends WatermarkLayout {
         ..isAntiAlias = true,
     );
 
-    // Background gradien semi‑transparan (sesuai opacity settings)
     final bgOpacity = data.backgroundOpacity.clamp(0.0, 1.0);
     final gradientPaint = Paint()
       ..shader = ui.Gradient.linear(
@@ -138,17 +134,14 @@ class MinimalLayout extends WatermarkLayout {
       gradientPaint,
     );
 
-    // ── Konten teks dengan ikon ──
     final textContentWidth = metrics.textAvailableWidth;
     final double textX = textAlign == TextAlign.left
         ? padding
         : photoWidth - padding - textContentWidth;
-    final double lineHeight = metrics.lineHeight; // sudah termasuk spacing
+    final double lineHeight = metrics.lineHeight;
     double textY = overlayTop + padding * 0.6;
 
-    // Helper untuk menggambar satu baris ikon + teks
     void drawIconLine(String icon, String text, Color color) {
-      // Ikon (emoji/teks) digambar dengan TextHelper
       final iconOffset = textAlign == TextAlign.left ? textX : textX + textContentWidth - metrics.fontSize * 2;
       TextHelper.paintText(
         canvas: canvas,
@@ -163,7 +156,6 @@ class MinimalLayout extends WatermarkLayout {
         textAlign: textAlign,
         fontFamily: data.fontFamily,
       );
-      // Teks utama
       final textOffset = textAlign == TextAlign.left ? textX + 30 : textX;
       TextHelper.paintText(
         canvas: canvas,
@@ -195,7 +187,6 @@ class MinimalLayout extends WatermarkLayout {
       drawIconLine('⚡', 'MANUAL ENTRY', _accentColor);
     }
 
-    // ── Logo ──
     if (logoImage != null) {
       final logoSize = metrics.logoMaxSize;
       final logoW = logoImage.width.toDouble();
@@ -236,7 +227,6 @@ class MinimalLayout extends WatermarkLayout {
     }
   }
 
-  // ─── PREVIEW ──────────────────────────────────────────────────
   @override
   Widget buildPreview({
     required WatermarkData previewData,
@@ -303,7 +293,7 @@ class MinimalLayout extends WatermarkLayout {
                         child: _buildPreviewText(previewData, isLeftAligned),
                       ),
                       if (hasLogo && logoPath != null && logoPath.isNotEmpty) ...[
-                        const Gap(8),
+                        const SizedBox(width: 8),   // pengganti Gap(8)
                         Container(
                           padding: const EdgeInsets.all(4),
                           decoration: BoxDecoration(
