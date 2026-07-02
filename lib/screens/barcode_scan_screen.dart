@@ -244,6 +244,13 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       appBar: AppBar(
         title: Text('Scanner ($_scanCount)'),
         actions: [
+          IconButton(
+            onPressed: (_isSaving || _isTakingMultiple || _activeBarcode != null)
+                ? null
+                : _showManualInput,
+            icon: const Icon(Icons.keyboard, color: Colors.white),
+            tooltip: 'Input Manual',
+          ),
           ListenableBuilder(
             listenable: _wmSettings,
             builder: (context, _) => IconButton(
