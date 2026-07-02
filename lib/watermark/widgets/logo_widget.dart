@@ -2,6 +2,15 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 class LogoWidget {
+  /// Menggambar logo dengan opacity murni (tidak mengubah warna asli logo).
+  ///
+  /// FIX PENTING: implementasi lama memakai
+  /// `ColorFilter.mode(Colors.white.withOpacity(opacity), blendMode)` yang
+  /// men-tint seluruh logo menjadi putih solid saat opacity mendekati 1.0
+  /// (logo berwarna/brand jadi hilang, cuma siluet putih). Preview di UI
+  /// (pakai Image.file biasa) tidak kena bug ini, jadi hasil akhir foto
+  /// tidak pernah cocok dengan preview. Sekarang opacity hanya memodulasi
+  /// alpha channel gambar lewat Paint.color, warna asli logo tetap utuh.
   static void paint({
     required Canvas canvas,
     required ui.Image? logoImage,
@@ -10,7 +19,6 @@ class LogoWidget {
     required double maxWidth,
     required double maxHeight,
     double opacity = 1.0,
-    BlendMode blendMode = BlendMode.srcOver,
   }) {
     if (logoImage == null) {
       debugPrint('⚠️ LogoWidget: logoImage is null, skipping paint');
@@ -19,7 +27,6 @@ class LogoWidget {
 
     final logoW = logoImage.width.toDouble();
     final logoH = logoImage.height.toDouble();
-    debugPrint('🖼️ LogoWidget: drawing logo ${logoW}x$logoH at ($x, $y)');
 
     final scaleX = maxWidth / logoW;
     final scaleY = maxHeight / logoH;
@@ -34,10 +41,8 @@ class LogoWidget {
       Paint()
         ..filterQuality = FilterQuality.high
         ..isAntiAlias = true
-        ..colorFilter = ColorFilter.mode(
-          Colors.white.withOpacity(opacity),
-          blendMode,
-        ),
+        // Alpha-only modulation — warna asli logo (brand color) tetap terjaga.
+        ..color = Colors.white.withOpacity(opacity.clamp(0.0, 1.0)),
     );
   }
 }
