@@ -17,6 +17,7 @@ class WatermarkRenderer {
     WatermarkStyle.professional,
     WatermarkStyle.polaroid,
     WatermarkStyle.stamp,
+    WatermarkStyle.timestamp,
   };
 
   /// Render watermark ke file output.
