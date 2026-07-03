@@ -534,6 +534,12 @@ class VideoWatermarkService {
 
   static final _WatermarkCache _cache = _WatermarkCache();
 
+  /// Preload semua komponen watermark (font, logo, layout) agar siap pakai.
+  /// Panggil metode ini di `main()` setelah `WatermarkSettings` dimuat.
+  static Future<void> preload(WatermarkSettings settings) async {
+    await _cache.initialize(settings);
+  }
+
   static Future<String?> addWatermark({
     required String inputPath,
     required String outputPath,
