@@ -1,3 +1,4 @@
+import 'dart:async'; // ← untuk unawaited
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -7,8 +8,7 @@ import 'theme/app_theme.dart';
 import 'screens/home_screen.dart';
 import 'watermark/watermark_settings.dart';
 import 'services/storage_service.dart';
-import 'services/video_watermark_service.dart'; // untuk warmUp()
-import 'services/watermark_cache.dart'; // jika kita ekspor cache-nya
+import 'services/video_watermark_service.dart';
 import 'models/scan_entry.dart';
 
 void main() async {
@@ -19,16 +19,14 @@ void main() async {
   await watermarkSettings.load();
 
   // ─── 2. Preload watermark (font, logo, layout) ──────────
-  // Asumsikan kita memiliki WatermarkCache singleton yang bisa diinisialisasi
-  final cache = WatermarkCache();
-  await cache.initialize(watermarkSettings);
-  debugPrint('✅ Watermark cache siap (font, logo, layout)');
+  // Memastikan cache siap sebelum digunakan
+  await VideoWatermarkService.preload(watermarkSettings);
+  debugPrint('✅ Watermark preload selesai');
 
-  // ─── 3. Warm-up FFmpeg (agar panggilan pertama cepat) ──
-  // Jalankan di background agar tidak menghambat startup
+  // ─── 3. Warm-up FFmpeg (background) ──────────────────────
   unawaited(VideoWatermarkService.warmUp());
 
-  // ─── 4. Inisialisasi database dan migrasi dari JSON ────
+  // ─── 4. Migrasi data JSON ke SQLite ──────────────────────
   final storage = StorageService();
   try {
     final dir = await getApplicationDocumentsDirectory();
@@ -50,7 +48,6 @@ void main() async {
   }
 
   // ─── 5. Cleanup file lama di background ──────────────────
-  // Tidak blocking UI
   unawaited(storage.cleanupOldFilesInBackground(days: 45));
 
   // ─── 6. Konfigurasi orientasi dan system UI ─────────────
