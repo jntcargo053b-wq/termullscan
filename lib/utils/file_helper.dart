@@ -2,25 +2,32 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 
 class FileHelper {
-  /// Periksa apakah file berada di direktori temporary/cache.
-  /// Aman digunakan untuk menentukan apakah file boleh dihapus.
-  static Future<bool> isTemporaryFile(String path) async {
+  // ... isTemporaryFile() sudah ada ...
+
+  /// Hapus file jika ada dan tidak error.
+  static Future<void> deleteIfExists(String path) async {
     try {
-      // 1. Direktori temporary sistem
-      final tempDir = await getTemporaryDirectory();
-      if (path.startsWith(tempDir.path)) return true;
-
-      // 2. Cache directory aplikasi
-      final cacheDir = await getApplicationCacheDirectory();
-      if (path.startsWith(cacheDir.path)) return true;
+      final file = File(path);
+      if (await file.exists()) await file.delete();
     } catch (_) {}
+  }
 
-    // 3. Fallback: cek substring umum
-    final lower = path.toLowerCase();
-    return lower.contains('/cache/') ||
-        lower.contains('/tmp/') ||
-        lower.contains('.cache') ||
-        lower.contains('_cache') ||
-        lower.contains('compressed_');
+  /// Hapus semua file di direktori temporary yang mengandung pola tertentu.
+  static Future<void> cleanTempFiles({String contains = 'wm_'}) async {
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final files = await tempDir.list().where((e) => e is File && e.path.contains(contains)).toList();
+      for (final f in files) {
+        try { await File(f.path).delete(); } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
+  /// Periksa apakah file berada di direktori Documents (internal aplikasi).
+  static Future<bool> isInternalFile(String path) async {
+    try {
+      final appDir = await getApplicationDocumentsDirectory();
+      return path.startsWith(appDir.path);
+    } catch (_) => false;
   }
 }
