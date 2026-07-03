@@ -1,6 +1,3 @@
-// ============================================================
-// lib/models/scan_entry.dart (FINAL - VIDEO SUPPORT)
-// ============================================================
 import 'dart:convert';
 import 'package:intl/intl.dart';
 
@@ -20,8 +17,11 @@ class ScanEntry {
 
   // ─── VIDEO FIELDS ────────────────────────────────────
   final String? videoPath;
-  final int? videoDuration; // dalam detik
+  final int? videoDuration; // detik
   final String? videoThumbnail;
+
+  // ─── GALLERY STATUS ────────────────────────────────
+  final bool galleryExported; // apakah berhasil diekspor ke galeri
 
   ScanEntry({
     required this.id,
@@ -37,6 +37,7 @@ class ScanEntry {
     this.videoPath,
     this.videoDuration,
     this.videoThumbnail,
+    this.galleryExported = false,
   });
 
   // ─── GETTERS ─────────────────────────────────────────
@@ -69,6 +70,9 @@ class ScanEntry {
     return '${min.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}';
   }
 
+  String get galleryStatusText =>
+      galleryExported ? '✅ Tersimpan di Galeri' : '📁 Tersimpan internal';
+
   // ─── JSON ──────────────────────────────────────────────
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -84,6 +88,7 @@ class ScanEntry {
     'videoPath': videoPath,
     'videoDuration': videoDuration,
     'videoThumbnail': videoThumbnail,
+    'galleryExported': galleryExported,
   };
 
   factory ScanEntry.fromJson(Map<String, dynamic> j) => ScanEntry(
@@ -100,6 +105,7 @@ class ScanEntry {
     videoPath: j['videoPath'] as String?,
     videoDuration: j['videoDuration'] as int?,
     videoThumbnail: j['videoThumbnail'] as String?,
+    galleryExported: j['galleryExported'] as bool? ?? false,
   );
 
   // ─── SQLite ──────────────────────────────────────────────
@@ -117,6 +123,7 @@ class ScanEntry {
     'videoPath': videoPath,
     'videoDuration': videoDuration,
     'videoThumbnail': videoThumbnail,
+    'galleryExported': galleryExported ? 1 : 0,
   };
 
   factory ScanEntry.fromMap(Map<String, dynamic> map) => ScanEntry(
@@ -136,6 +143,7 @@ class ScanEntry {
     videoPath: map['videoPath'] as String?,
     videoDuration: map['videoDuration'] as int?,
     videoThumbnail: map['videoThumbnail'] as String?,
+    galleryExported: (map['galleryExported'] as int?) == 1,
   );
 
   // ─── Copy ────────────────────────────────────────────────
@@ -153,6 +161,7 @@ class ScanEntry {
     String? videoPath,
     int? videoDuration,
     String? videoThumbnail,
+    bool? galleryExported,
   }) =>
       ScanEntry(
         id: id ?? this.id,
@@ -168,6 +177,7 @@ class ScanEntry {
         videoPath: videoPath ?? this.videoPath,
         videoDuration: videoDuration ?? this.videoDuration,
         videoThumbnail: videoThumbnail ?? this.videoThumbnail,
+        galleryExported: galleryExported ?? this.galleryExported,
       );
 
   // ─── Helper ────────────────────────────────────────────
