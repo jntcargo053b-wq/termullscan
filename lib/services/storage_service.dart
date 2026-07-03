@@ -18,54 +18,46 @@ class StorageService {
 
   String generateId() => _uuid.v4();
 
-  // ─── Database methods ──────────────────────────────────────
-  Future<void> add(ScanEntry entry) async => _db.insert(entry);
+  // ─── Database methods (delegasi ke _db) ──────────────────
+
+  Future<void> insert(ScanEntry entry) async => _db.insert(entry);
   Future<void> update(ScanEntry entry) async => _db.update(entry);
-  // ... (delete, loadAll, getEntries, getCount, getEntry, migrateFromJson tetap sama)
+  Future<void> delete(String id) async => _db.delete(id);
+  Future<void> deleteAll() async => _db.deleteAll();
 
-  // ─── Sanitasi filename ──────────────────────────────────────
-  String _sanitizeFilename(String name) {
-    // Ganti karakter tidak valid dengan '_'
-    return name.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
-  }
+  Future<List<ScanEntry>> loadAll() async => _db.getAll();
 
-  // ─── Verifikasi file ──────────────────────────────────────
-  Future<void> _verifyFile(String path) async {
-    final file = File(path);
-    if (!await file.exists()) {
-      throw Exception('File tidak ditemukan: $path');
-    }
-    final size = await file.length();
-    if (size == 0) {
-      throw Exception('File kosong: $path');
-    }
-    debugPrint('✅ File verified: $path (${size ~/ 1024}KB)');
-  }
+  Future<List<ScanEntry>> getEntries({
+    int limit = 20,
+    int offset = 0,
+    String? searchQuery,
+    String? period,
+    String sortField = 'timestamp',
+    String sortDir = 'DESC',
+  }) async =>
+      _db.getEntries(
+        limit: limit,
+        offset: offset,
+        searchQuery: searchQuery,
+        period: period,
+        sortField: sortField,
+        sortDir: sortDir,
+      );
 
-  // ─── Move file dengan rename fallback ──────────────────────
-  Future<String> _moveFile(String sourcePath, String destPath) async {
-    final source = File(sourcePath);
-    if (!await source.exists()) {
-      throw FileSystemException('Source file not found: $sourcePath');
-    }
-    final destDir = Directory(dirname(destPath));
-    if (!await destDir.exists()) {
-      await destDir.create(recursive: true);
-    }
-    try {
-      await source.rename(destPath);
-    } catch (e) {
-      debugPrint('⚠️ Rename failed, fallback copy+delete: $e');
-      await source.copy(destPath);
-      await source.delete();
-    }
-    await _verifyFile(destPath);
-    return destPath;
-  }
+  Future<int> getCount({String? searchQuery, String? period}) async =>
+      _db.getCount(searchQuery: searchQuery, period: period);
 
-  // ─── Save Photo ─────────────────────────────────────────────
+  Future<ScanEntry?> getEntry(String id) async => _db.getEntry(id);
+
+  Future<void> migrateFromJson(List<ScanEntry> entries) async =>
+      _db.migrateFromJson(entries);
+
+  // ─── File storage ──────────────────────────────────────────
+
   Future<String> savePhoto(String sourcePath, {String? name}) async {
     try {
+      final source = File(sourcePath);
+      if (!await source.exists()) throw FileSystemException('Source file not found', sourcePath);
       final appDir = await getApplicationDocumentsDirectory();
       final photosDir = Directory(join(appDir.path, 'photos'));
       if (!await photosDir.exists()) await photosDir.create(recursive: true);
@@ -91,9 +83,10 @@ class StorageService {
     }
   }
 
-  // ─── Save Video ─────────────────────────────────────────────
   Future<String> saveVideo(String sourcePath, {String? name}) async {
     try {
+      final source = File(sourcePath);
+      if (!await source.exists()) throw FileSystemException('Source file not found', sourcePath);
       final appDir = await getApplicationDocumentsDirectory();
       final videosDir = Directory(join(appDir.path, 'videos'));
       if (!await videosDir.exists()) await videosDir.create(recursive: true);
@@ -119,12 +112,83 @@ class StorageService {
     }
   }
 
-  // ─── Cleanup Berbasis Database ──────────────────────────────
+  // ─── Sanitasi & Verifikasi ────────────────────────────────
+
+  String _sanitizeFilename(String name) {
+    return name.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
+  }
+
+  Future<void> _verifyFile(String path) async {
+    final file = File(path);
+    if (!await file.exists()) throw Exception('File tidak ditemukan: $path');
+    final size = await file.length();
+    if (size == 0) throw Exception('File kosong: $path');
+    debugPrint('✅ File verified: $path (${size ~/ 1024}KB)');
+  }
+
+  Future<String> _moveFile(String sourcePath, String destPath) async {
+    final source = File(sourcePath);
+    if (!await source.exists()) throw FileSystemException('Source file not found: $sourcePath');
+    final destDir = Directory(dirname(destPath));
+    if (!await destDir.exists()) await destDir.create(recursive: true);
+    try {
+      await source.rename(destPath);
+    } catch (e) {
+      debugPrint('⚠️ Rename failed, fallback copy+delete: $e');
+      await source.copy(destPath);
+      await source.delete();
+    }
+    await _verifyFile(destPath);
+    return destPath;
+  }
+
+  // ─── Delete files ──────────────────────────────────────────
+
+  Future<void> deletePhoto(String path) async {
+    try {
+      final file = File(path);
+      if (await file.exists()) await file.delete();
+      debugPrint('🗑️ Photo deleted: $path');
+    } catch (e) {
+      debugPrint('⚠️ Storage: error deleting photo: $e');
+    }
+  }
+
+  Future<void> deleteVideo(String path) async {
+    try {
+      final file = File(path);
+      if (await file.exists()) await file.delete();
+      debugPrint('🗑️ Video deleted: $path');
+    } catch (e) {
+      debugPrint('⚠️ Storage: error deleting video: $e');
+    }
+  }
+
+  // ─── Storage size ──────────────────────────────────────────
+
+  Future<int> getTotalStorageUsed() async {
+    int total = 0;
+    final appDir = await getApplicationDocumentsDirectory();
+    total += await _dirSize(Directory(join(appDir.path, 'photos')));
+    total += await _dirSize(Directory(join(appDir.path, 'videos')));
+    return total;
+  }
+
+  Future<int> _dirSize(Directory dir) async {
+    if (!await dir.exists()) return 0;
+    int size = 0;
+    await for (final entity in dir.list()) {
+      if (entity is File) size += await entity.length();
+    }
+    return size;
+  }
+
+  // ─── Cleanup ──────────────────────────────────────────────
+
   Future<void> cleanupOrphanFiles({int days = 45}) async {
     try {
       final entries = await _db.getAll();
       final activePaths = <String>{};
-
       for (final entry in entries) {
         if (entry.videoPath != null) activePaths.add(entry.videoPath!);
         activePaths.addAll(entry.photoPaths ?? []);
@@ -150,8 +214,6 @@ class StorageService {
             if (isOrphan && isOld) {
               await entity.delete();
               debugPrint('🧹 Deleted orphan file: ${entity.path}');
-            } else if (isOrphan) {
-              debugPrint('⚠️ Orphan file (new): ${entity.path}');
             }
           }
         }
@@ -161,7 +223,6 @@ class StorageService {
     }
   }
 
-  // ─── Legacy cleanup (tetap dipertahankan) ───────────────────
   Future<void> cleanupOldFiles({int days = 90}) async {
     try {
       final appDir = await getApplicationDocumentsDirectory();
@@ -201,36 +262,99 @@ class StorageService {
     await compute(_cleanupInIsolate, args);
   }
 
-  // ─── Delete methods ──────────────────────────────────────
-  Future<void> deletePhoto(String path) async {
+  // ─── Backup & Restore ──────────────────────────────────────
+
+  Future<String> backup() async {
     try {
-      final file = File(path);
-      if (await file.exists()) {
-        await file.delete();
-        debugPrint('🗑️ Photo deleted: $path');
-      }
+      final entries = await _db.getAll();
+      final json = entries.map((e) => e.toJson()).toList();
+      final zip = ZipFileEncoder();
+      final tempDir = await getTemporaryDirectory();
+      final zipPath = join(tempDir.path, 'backup_${DateTime.now().millisecondsSinceEpoch}.zip');
+      zip.create(zipPath);
+      // Tambahkan data JSON
+      final jsonString = jsonEncode(json);
+      zip.addFileFromString('data.json', jsonString);
+
+      // Tambahkan file foto/video (opsional)
+      // ... (bisa skip untuk kecepatan)
+
+      zip.close();
+      return zipPath;
     } catch (e) {
-      debugPrint('⚠️ Storage: error deleting photo: $e');
+      debugPrint('⚠️ Backup error: $e');
+      rethrow;
     }
   }
 
-  Future<void> deleteVideo(String path) async {
+  Future<bool> restore(String zipPath) async {
     try {
-      final file = File(path);
-      if (await file.exists()) {
-        await file.delete();
-        debugPrint('🗑️ Video deleted: $path');
+      final zip = ZipFileDecoder();
+      zip.load(File(zipPath));
+      final jsonFile = zip.files.firstWhere((f) => f.name == 'data.json');
+      final jsonString = String.fromCharCodes(jsonFile.content);
+      final list = jsonDecode(jsonString) as List;
+      final entries = list.map((e) => ScanEntry.fromJson(e as Map<String, dynamic>)).toList();
+
+      // Hapus semua data lama
+      await _db.deleteAll();
+      // Insert baru
+      for (final entry in entries) {
+        await _db.insert(entry);
       }
+      return true;
     } catch (e) {
-      debugPrint('⚠️ Storage: error deleting video: $e');
+      debugPrint('⚠️ Restore error: $e');
+      return false;
     }
   }
 
-  // ─── Storage indicator, backup, export (placeholder) ───
-  // ... (getTotalStorageUsed, backup, restore, exportTxt, shareTxt, close)
+  Future<void> shareBackup(String zipPath) async {
+    await Share.shareXFiles([XFile(zipPath)], text: 'Backup TermulScan');
+  }
+
+  // ─── Export & Share TXT ──────────────────────────────────
+
+  Future<String> exportTxt(List<ScanEntry> entries) async {
+    final tempDir = await getTemporaryDirectory();
+    final path = join(tempDir.path, 'export_${DateTime.now().millisecondsSinceEpoch}.txt');
+    final buffer = StringBuffer();
+    buffer.writeln('TERMULScan - Data Export');
+    buffer.writeln('Generated: ${DateTime.now().toIso8601String()}');
+    buffer.writeln('Total entries: ${entries.length}');
+    buffer.writeln('---');
+    for (final entry in entries) {
+      buffer.writeln('ID: ${entry.id}');
+      buffer.writeln('Type: ${entry.type.name}');
+      buffer.writeln('Value: ${entry.value}');
+      buffer.writeln('Time: ${entry.timestampFormatted}');
+      if (entry.locationName != null) buffer.writeln('Location: ${entry.locationName}');
+      if (entry.photoPaths != null && entry.photoPaths!.isNotEmpty) {
+        buffer.writeln('Photos: ${entry.photoPaths!.join(', ')}');
+      }
+      if (entry.hasVideo) {
+        buffer.writeln('Video: ${entry.videoPath}');
+        buffer.writeln('Duration: ${entry.videoDurationFormatted}');
+      }
+      buffer.writeln('---');
+    }
+    await File(path).writeAsString(buffer.toString());
+    return path;
+  }
+
+  Future<void> shareTxt(String path) async {
+    await Share.shareXFiles([XFile(path)], text: 'Export scan log');
+  }
+
+  // ─── Close database ──────────────────────────────────────
+
+  Future<void> close() async {
+    await _db.close();
+  }
 }
 
 // ─── Isolate cleanup helper ──────────────────────────────────
+
 class _CleanupArgs {
   final String photosDir;
   final String videosDir;
@@ -239,5 +363,25 @@ class _CleanupArgs {
 }
 
 Future<void> _cleanupInIsolate(_CleanupArgs args) async {
-  // Implementasi sama seperti sebelumnya
+  await _cleanupDir(Directory(args.photosDir), args.days);
+  await _cleanupDir(Directory(args.videosDir), args.days);
+}
+
+Future<void> _cleanupDir(Directory dir, int days) async {
+  if (!await dir.exists()) return;
+  final now = DateTime.now();
+  final cutoff = now.subtract(Duration(days: days));
+  int deletedCount = 0;
+  await for (final entity in dir.list()) {
+    if (entity is File) {
+      final stat = await entity.stat();
+      if (stat.modified.isBefore(cutoff)) {
+        await entity.delete();
+        deletedCount++;
+      }
+    }
+  }
+  if (deletedCount > 0) {
+    debugPrint('🧹 Isolate deleted $deletedCount old files from ${dir.path}');
+  }
 }
