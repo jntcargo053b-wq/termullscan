@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/video_scan_screen.dart (FINAL – TANPA DUPLIKASI)
+// lib/screens/video_scan_screen.dart (FINAL – TANPA DUPLIKASI & ERROR FIX)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -123,7 +123,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     }
   }
 
-  /// Alur baru: temp kamera → watermark (temp) → galeri → hapus temp
+  /// Alur: temp kamera → watermark (temp) → simpan internal → ekspor gallery → hapus temp
   Future<void> _processVideo(XFile videoFile) async {
     if (!mounted) return;
     setState(() { _isSaving = true; _statusText = 'Memproses video...'; });
@@ -185,50 +185,48 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       if (!mounted) return;
 
       if (wmResult != null) {
-        // 4. Watermark berhasil → generate thumbnail dari hasil watermark
-        final thumbRaw = await _generateThumbnail(wmResult);
-        thumbnailPath = thumbRaw;
+        // 4. Watermark berhasil → simpan ke internal (rename dari temp)
+        setState(() => _statusText = 'Menyimpan video...');
+        final savedPath = await _storage.saveVideo(wmResult, name: widget.barcode);
+        if (savedPath.isEmpty) throw Exception('Gagal menyimpan video watermark');
 
-        // 5. Ekspor ke galeri (SATU-SATUNYA file final)
-        setState(() => _statusText = 'Menyimpan ke Gallery...');
-        final galleryPath = await _saveToGalleryAndGetPath(wmResult);
+        // 5. Generate thumbnail dari video yang sudah disimpan
+        thumbnailPath = await _generateThumbnail(savedPath);
 
-        if (galleryPath != null) {
-          // Sukses ekspor: hapus file temp (video mentah + watermark)
-          await file.delete();
-          await File(wmResult).delete();
-
-          finalPath = galleryPath; // gunakan path galeri
-          setState(() => _statusText = 'Video tersimpan di Gallery');
-        } else {
-          // Gagal ekspor: simpan watermark ke internal sebagai fallback
-          final savedPath = await _storage.saveVideo(wmResult, name: widget.barcode);
-          if (savedPath.isNotEmpty) {
-            finalPath = savedPath;
-            await file.delete(); // tetap hapus video mentah
-          } else {
-            throw Exception('Gagal menyimpan video (gallery & internal)');
-          }
-          setState(() => _statusText = 'Video tersimpan di internal (gagal ekspor)');
+        // 6. Ekspor ke gallery (opsional, tidak mempengaruhi path utama)
+        setState(() => _statusText = 'Ekspor ke Gallery...');
+        final galleryOk = await _saveToGallery(savedPath);
+        if (!galleryOk) {
+          debugPrint('⚠️ Gagal ekspor ke gallery, file tetap tersimpan di internal');
         }
+
+        // 7. Hapus video mentah (file asli dari kamera)
+        await file.delete();
+
+        // 8. Hapus file temp watermark jika berbeda dengan savedPath (rename sudah memindahkan)
+        // Karena _storage.saveVideo menggunakan rename, file wmResult sudah tidak ada.
+        // Tapi jika rename gagal, ada fallback copy+delete, jadi tetap aman.
+
+        finalPath = savedPath;
+        setState(() => _statusText = galleryOk
+            ? 'Video tersimpan di internal & Gallery'
+            : 'Video tersimpan di internal (gagal ekspor)');
       } else {
-        // 6. Watermark gagal → simpan video mentah ke internal
+        // 9. Watermark gagal → simpan video mentah ke internal
         setState(() => _statusText = 'Watermark gagal, menyimpan video mentah...');
         final savedPath = await _storage.saveVideo(videoFile.path, name: widget.barcode);
         if (savedPath.isEmpty) throw Exception('Gagal menyimpan video mentah');
         finalPath = savedPath;
 
-        // Generate thumbnail dari video mentah
         thumbnailPath = await _generateThumbnail(savedPath);
 
-        // Hapus file temp (videoFile.path sudah di-cache, tapi _storage.saveVideo menggunakan rename, jadi file sudah dipindahkan)
-        // Jika masih ada, hapus
+        // Hapus file mentah (sudah dipindahkan oleh _storage.saveVideo)
         if (await file.exists()) await file.delete();
 
         setState(() => _statusText = 'Video tersimpan (tanpa watermark)');
       }
 
-      // 7. Simpan entry ke database
+      // 10. Simpan entry ke database
       if (finalPath != null) {
         final entry = ScanEntry(
           id: _storage.generateId(),
@@ -265,7 +263,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         );
       }
     } finally {
-      // Pastikan semua file temp dihapus
+      // Hapus semua file temp yang mungkin tersisa
       try {
         final tempDir = await getTemporaryDirectory();
         final tempFiles = await tempDir.list().where((e) => e is File && e.path.contains('wm_')).toList();
@@ -292,11 +290,11 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     }
   }
 
-  /// Ekspor ke galeri dan kembalikan path file yang disimpan (atau null jika gagal)
-  Future<String?> _saveToGalleryAndGetPath(String filePath) async {
+  /// Ekspor ke gallery – hanya boolean, karena kita tidak perlu path balikan
+  Future<bool> _saveToGallery(String filePath) async {
     try {
       final file = File(filePath);
-      if (!await file.exists()) return null;
+      if (!await file.exists()) return false;
 
       final String filename = '${_entryFilenameBase(filePath)}_${DateTime.now().millisecondsSinceEpoch}.mp4';
       final result = await SaverGallery.saveFile(
@@ -306,13 +304,10 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         androidExistNotSave: false,
       );
 
-      if (result.isSuccess && result.filePath != null) {
-        return result.filePath;
-      }
-      return null;
+      return result.isSuccess;
     } catch (e) {
-      debugPrint('❌ Error _saveToGalleryAndGetPath: $e');
-      return null;
+      debugPrint('❌ Error _saveToGallery: $e');
+      return false;
     }
   }
 
