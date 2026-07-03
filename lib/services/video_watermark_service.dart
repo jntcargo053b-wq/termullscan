@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -10,7 +11,7 @@ import '../watermark/watermark_style.dart';
 import '../models/scan_entry.dart';
 
 // ─────────────────────────────────────────────────────────────
-//  0.  FUNGSI UTILITAS TOP-LEVEL (dipanggil dari mana saja)
+//  0.  FUNGSI UTILITAS TOP-LEVEL
 // ─────────────────────────────────────────────────────────────
 
 String _escapeFFmpegText(String text) {
@@ -113,7 +114,7 @@ class _PrecomputedTimestamp {
   final List<_FilterTemplate> dynamicFilters;
   final List<String> staticFilters;
   final _XY logoXY;
-  final double barHeight; // <-- diubah menjadi double
+  final double barHeight;
 
   _PrecomputedTimestamp({
     required this.dynamicFilters,
@@ -134,7 +135,7 @@ class _PrecomputedTimestamp {
 }
 
 // ─────────────────────────────────────────────────────────────
-//  2.  CACHE WATERMARK (SINGLETON)
+//  2.  CACHE WATERMARK (SINGLETON) DENGAN LOGO ui.Image
 // ─────────────────────────────────────────────────────────────
 
 class _WatermarkCache {
@@ -168,7 +169,7 @@ class _WatermarkCache {
       }
     }
 
-    // 3. Prekomputasi
+    // 3. Prekomputasi untuk semua gaya
     _styleCache = {};
     for (var style in WatermarkStyle.values) {
       if (style == WatermarkStyle.timestamp) {
@@ -193,8 +194,12 @@ class _WatermarkCache {
     }
   }
 
+  // ─── Akses untuk logo ──────────────────────────────────────
+
+  /// Untuk video (FFmpeg) – kembalikan path file logo.
   String? get logoPath => _cachedLogoPath;
 
+  /// Untuk foto (Canvas) – kembalikan [ui.Image] yang sudah didecode.
   Future<ui.Image?> getLogoImage() async {
     if (_cachedLogoImage != null) return _cachedLogoImage;
     if (_cachedLogoPath != null) {
@@ -294,7 +299,7 @@ class _WatermarkCache {
       "color=black@${settings.backgroundOpacity.clamp(0.4, 1.0)}:t=fill",
     );
 
-    // Brand badge
+    // Brand badge (pojok kanan atas)
     final brandText = settings.companyName.isNotEmpty ? settings.companyName : 'TermulScan';
     staticParts.add(
       "drawtext=text='${_escapeFFmpegText(brandText)}':"
@@ -309,7 +314,7 @@ class _WatermarkCache {
       "shadowcolor=black@0.8:shadowx=1:shadowy=1",
     );
 
-    // Kode verifikasi
+    // Kode verifikasi (bawah kanan) – template dengan placeholder
     staticParts.add(
       "drawtext=text='{{code}}  •  TERMULSCAN VERIFIED':"
       "fontfile='$escapedFontPath':fontcolor=white@0.75:fontsize=$codeFontSize:"
@@ -319,7 +324,7 @@ class _WatermarkCache {
 
     final dynamicTemplates = <_FilterTemplate>[];
 
-    // Meta
+    // Meta baris (maks 2)
     for (var i = 0; i < maxMetaLines; i++) {
       final placeholder = '{{meta$i}}';
       final yPos = padding + i * (metaFontSize + 8);
@@ -331,7 +336,7 @@ class _WatermarkCache {
       dynamicTemplates.add(_FilterTemplate(placeholder, filter));
     }
 
-    // Jam
+    // Jam besar
     final timeRowTop = (maxMetaLines > 0) ? padding + maxMetaLines * (metaFontSize + 8) : padding;
     dynamicTemplates.add(
       _FilterTemplate(
@@ -343,7 +348,7 @@ class _WatermarkCache {
       ),
     );
 
-    // Divider
+    // Divider vertikal
     final dividerX = padding + (timeFontSize * 2.6).round();
     staticParts.add(
       "drawbox=x=$dividerX:y=ih-$barHeight+$timeRowTop:w=4:h=$timeFontSize:"
@@ -371,7 +376,7 @@ class _WatermarkCache {
       ),
     );
 
-    // Alamat
+    // Alamat (2 baris)
     final addressStartY = timeRowTop + timeRowH;
     for (var i = 0; i < maxAddressLines; i++) {
       final placeholder = '{{addr$i}}';
@@ -390,7 +395,7 @@ class _WatermarkCache {
       dynamicFilters: dynamicTemplates,
       staticFilters: staticParts,
       logoXY: logoXY,
-      barHeight: barHeight.toDouble(), // <-- konversi ke double
+      barHeight: barHeight.toDouble(),
     );
   }
 
@@ -537,10 +542,10 @@ class VideoWatermarkService {
   }) async {
     lastError = null;
     try {
-      // 1. Inisialisasi cache
+      // 1. Inisialisasi cache (jika perlu)
       await _cache.initialize(settings);
 
-      // 2. Bangun filter chain
+      // 2. Bangun filter chain berdasarkan gaya
       final List<String> filterParts;
       final _XY logoXY;
 
