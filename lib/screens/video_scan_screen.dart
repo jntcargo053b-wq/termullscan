@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/video_scan_screen.dart (FINAL – TASKQUEUE + TANPA DUPLIKASI)
+// lib/screens/video_scan_screen.dart (FINAL – TASKQUEUE + GALLERY FIX)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -23,7 +23,6 @@ import '../utils/file_helper.dart';
 
 class VideoScanScreen extends StatefulWidget {
   final String? barcode;
-
   const VideoScanScreen({super.key, this.barcode});
 
   @override
@@ -35,12 +34,12 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
   final StorageService _storage = StorageService();
 
   // ─── TaskQueue ──────────────────────────────────────────────
-  final TaskQueue _taskQueue = TaskQueue(maxWorkers: 1); // video lebih berat, cukup 1 worker
+  final TaskQueue _taskQueue = TaskQueue(maxWorkers: 1);
   int _pendingTasks = 0;
   int _runningTasks = 0;
 
   bool _isSaving = false;
-  bool _isProcessing = false; // untuk tombol disabled
+  bool _isProcessing = false;
   String _statusText = '';
 
   static const int _maxVideoSizeBytes = 50 * 1024 * 1024;
@@ -49,7 +48,6 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
   void initState() {
     super.initState();
     PermissionService.requestGalleryPermission();
-    // Subscribe ke status stream TaskQueue
     _taskQueue.statusStream.listen((task) {
       if (!mounted) return;
       setState(() {
@@ -116,9 +114,11 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         return;
       }
 
-      // Tambahkan ke TaskQueue, langsung kembali tanpa menunggu
+      // Tambahkan ke TaskQueue
       _taskQueue.add(
         label: 'Video ${widget.barcode ?? ''}',
+        priority: TaskPriority.high,
+        maxRetries: 2,
         work: () => _processVideo(videoFile),
         onSuccess: (entry) {
           if (mounted) {
@@ -158,7 +158,6 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
 
   // ─── Core Processing ────────────────────────────────────────
 
-  /// Proses video dan mengembalikan [ScanEntry] yang sudah tersimpan.
   Future<ScanEntry> _processVideo(XFile videoFile) async {
     String? finalPath;
     String? thumbnailPath;
@@ -186,7 +185,6 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       final tempDir = await getTemporaryDirectory();
       final wmOutputPath = '${tempDir.path}/wm_${DateTime.now().millisecondsSinceEpoch}.mp4';
 
-      // Update status (melalui stream, tidak langsung)
       setState(() {
         _statusText = 'Menambahkan watermark...';
       });
@@ -214,11 +212,23 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         // 5. Thumbnail
         thumbnailPath = await _generateThumbnail(savedPath);
 
-        // 6. Ekspor ke gallery
+        // 6. Ekspor ke gallery (dengan pengecekan file)
         setState(() => _statusText = 'Ekspor ke Gallery...');
         final galleryOk = await _saveToGallery(savedPath);
-        if (!galleryOk) {
+
+        if (galleryOk) {
+          debugPrint('✅ Video berhasil diekspor ke gallery');
+        } else {
           debugPrint('⚠️ Gagal ekspor ke gallery, file tetap tersimpan di internal');
+          // Tampilkan pesan error tapi tidak mengganggu proses
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Video tersimpan di internal, gagal ekspor ke gallery'),
+                backgroundColor: Colors.orange,
+              ),
+            );
+          }
         }
 
         // 7. Hapus video mentah
@@ -291,10 +301,17 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     }
   }
 
+  /// Ekspor ke gallery dengan pengecekan file dan error handling detail
   Future<bool> _saveToGallery(String filePath) async {
     try {
       final file = File(filePath);
-      if (!await file.exists()) return false;
+      if (!await file.exists()) {
+        debugPrint('❌ File tidak ditemukan untuk ekspor: $filePath');
+        return false;
+      }
+
+      final fileSize = await file.length();
+      debugPrint('📤 Mengekspor video ke gallery: $filePath (${fileSize ~/ 1024}KB)');
 
       final String filename = '${_entryFilenameBase(filePath)}_${DateTime.now().millisecondsSinceEpoch}.mp4';
       final result = await SaverGallery.saveFile(
@@ -303,9 +320,16 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         androidRelativePath: 'Movies/TERMULScan',
         androidExistNotSave: false,
       );
-      return result.isSuccess;
-    } catch (e) {
-      debugPrint('❌ Error _saveToGallery: $e');
+
+      if (result.isSuccess) {
+        debugPrint('✅ Ekspor gallery berhasil: $filename');
+        return true;
+      } else {
+        debugPrint('❌ Ekspor gallery gagal: ${result.error}');
+        return false;
+      }
+    } catch (e, stack) {
+      debugPrint('❌ Error _saveToGallery: $e\n$stack');
       return false;
     }
   }
