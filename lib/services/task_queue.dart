@@ -1,36 +1,175 @@
-// lib/services/task_queue.dart
 import 'dart:async';
+import 'dart:collection';
 import 'package:flutter/foundation.dart';
 
+/// Status tugas dalam antrian
+enum TaskStatus { pending, running, completed, failed, cancelled }
+
+/// Sebuah tugas yang akan dijalankan oleh [TaskQueue]
+class Task<T> {
+  final String id;
+  final String label;
+  final Future<T> Function() work;
+  final void Function(T result)? onSuccess;
+  final void Function(Object error)? onError;
+  TaskStatus status;
+  Object? error;
+  T? result;
+
+  Task({
+    required this.id,
+    required this.label,
+    required this.work,
+    this.onSuccess,
+    this.onError,
+  }) : status = TaskStatus.pending;
+}
+
+/// TaskQueue dengan worker pool dan antrian FIFO.
+///
+/// Fitur:
+/// - Eksekusi tugas secara berurutan (FIFO)
+/// - Worker pool (bisa diatur jumlahnya)
+/// - Status setiap tugas (pending, running, completed, failed, cancelled)
+/// - Pembatalan tugas yang masih pending
+/// - Stream untuk notifikasi status
+/// - Stream untuk notifikasi semua tugas selesai
 class TaskQueue {
   static final TaskQueue _instance = TaskQueue._internal();
   factory TaskQueue() => _instance;
   TaskQueue._internal();
 
-  final List<Future<void>> _tasks = [];
-  bool _isRunning = false;
+  final Queue<Task> _queue = Queue();
+  int _running = 0;
+  final int maxWorkers;
 
-  Future<void> add(Future<void> Function() task) async {
-    final completer = Completer<void>();
-    _tasks.add(completer.future);
+  // Stream untuk notifikasi status per tugas
+  final _statusController = StreamController<Task>.broadcast();
+  Stream<Task> get statusStream => _statusController.stream;
+
+  // Stream untuk notifikasi ketika semua tugas selesai
+  final _doneController = StreamController<void>.broadcast();
+  Stream<void> get doneStream => _doneController.stream;
+
+  TaskQueue({this.maxWorkers = 2});
+
+  /// Tambahkan tugas ke antrian.
+  /// Mengembalikan ID tugas yang dapat digunakan untuk membatalkan.
+  String add<T>({
+    required String label,
+    required Future<T> Function() work,
+    void Function(T result)? onSuccess,
+    void Function(Object error)? onError,
+  }) {
+    final id = DateTime.now().millisecondsSinceEpoch.toString();
+    final task = Task<T>(
+      id: id,
+      label: label,
+      work: work,
+      onSuccess: onSuccess,
+      onError: onError,
+    );
+    _queue.add(task);
+    _statusController.add(task);
     _processQueue();
-    try {
-      await task();
-      completer.complete();
-    } catch (e) {
-      completer.completeError(e);
+    return id;
+  }
+
+  /// Batalkan tugas berdasarkan ID (hanya jika masih pending).
+  /// Mengembalikan true jika berhasil dibatalkan.
+  bool cancel(String id) {
+    final task = _queue.firstWhereOrNull((t) => t.id == id && t.status == TaskStatus.pending);
+    if (task != null) {
+      task.status = TaskStatus.cancelled;
+      _queue.remove(task);
+      _statusController.add(task);
+      return true;
+    }
+    return false;
+  }
+
+  /// Batalkan semua tugas yang masih pending.
+  void cancelAllPending() {
+    final toRemove = _queue.where((t) => t.status == TaskStatus.pending).toList();
+    for (final task in toRemove) {
+      task.status = TaskStatus.cancelled;
+      _queue.remove(task);
+      _statusController.add(task);
     }
   }
 
+  /// Jumlah tugas dalam antrian (pending)
+  int get pendingCount => _queue.length;
+
+  /// Jumlah tugas yang sedang berjalan
+  int get runningCount => _running;
+
+  /// Bersihkan tugas yang sudah selesai/gagal dari antrian (opsional)
+  void clearCompleted() {
+    _queue.removeWhere((t) =>
+        t.status == TaskStatus.completed ||
+        t.status == TaskStatus.failed ||
+        t.status == TaskStatus.cancelled);
+  }
+
+  /// Proses antrian secara rekursif dengan worker pool
   Future<void> _processQueue() async {
-    if (_isRunning || _tasks.isEmpty) return;
-    _isRunning = true;
-    while (_tasks.isNotEmpty) {
-      final future = _tasks.removeAt(0);
-      try {
-        await future;
-      } catch (_) {}
+    // Jika sudah mencapai batas worker atau antrian kosong, berhenti
+    if (_running >= maxWorkers || _queue.isEmpty) return;
+
+    // Ambil satu tugas dari depan antrian
+    final task = _queue.removeFirst();
+    if (task.status == TaskStatus.cancelled) {
+      // Tugas sudah dibatalkan, lanjutkan ke tugas berikutnya
+      _processQueue();
+      return;
     }
-    _isRunning = false;
+
+    _running++;
+    task.status = TaskStatus.running;
+    _statusController.add(task);
+
+    try {
+      final result = await task.work();
+      task.status = TaskStatus.completed;
+      task.result = result;
+      if (task.onSuccess != null) {
+        task.onSuccess!(result);
+      }
+    } catch (e) {
+      task.status = TaskStatus.failed;
+      task.error = e;
+      if (task.onError != null) {
+        task.onError!(e);
+      }
+      debugPrint('❌ Task "${task.label}" gagal: $e');
+    } finally {
+      _running--;
+      _statusController.add(task);
+
+      // Jika antrian kosong dan tidak ada worker yang berjalan, tandai selesai
+      if (_queue.isEmpty && _running == 0) {
+        _doneController.add(null);
+      }
+
+      // Lanjutkan ke tugas berikutnya
+      _processQueue();
+    }
+  }
+
+  /// Dispose resources
+  void dispose() {
+    _statusController.close();
+    _doneController.close();
+  }
+}
+
+/// Ekstensi untuk mendapatkan firstWhereOrNull (tanpa dependensi tambahan)
+extension _QueueExtension<T> on Queue<T> {
+  T? firstWhereOrNull(bool Function(T) test) {
+    for (final item in this) {
+      if (test(item)) return item;
+    }
+    return null;
   }
 }
