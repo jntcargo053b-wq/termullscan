@@ -318,6 +318,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   int _photoCount = 0;
   bool _cameraGranted = false;
   final List<String> _photoPaths = [];
+  String _statusText = ''; // ✅ tambahan
 
   static const int _maxCachedPaths = 100;
 
@@ -530,7 +531,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
           },
         );
         if (!widget.batchMode) {
-          // Tampilkan status "Memproses..." agar user tidak bingung
           setState(() {
             _statusText = 'Memproses foto...';
           });
@@ -894,6 +894,11 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                     backgroundColor: Colors.grey[800],
                     valueColor: AlwaysStoppedAnimation(AppTheme.accentOrange),
                   ),
+                ),
+              if (_statusText.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(_statusText, style: const TextStyle(color: Colors.grey, fontSize: 12)),
                 ),
               if (_pendingTasks > 0)
                 Padding(
