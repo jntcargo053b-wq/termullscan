@@ -2,10 +2,8 @@ import 'dart:async';
 import 'dart:collection';
 import 'package:flutter/foundation.dart';
 
-/// Status tugas dalam antrian
 enum TaskStatus { pending, running, completed, failed, cancelled }
 
-/// Sebuah tugas yang akan dijalankan oleh [TaskQueue]
 class Task<T> {
   final String id;
   final String label;
@@ -25,27 +23,19 @@ class Task<T> {
   }) : status = TaskStatus.pending;
 }
 
-/// TaskQueue dengan worker pool dan antrian FIFO.
 class TaskQueue {
-  static final TaskQueue _instance = TaskQueue._internal();
-  factory TaskQueue() => _instance;
-  TaskQueue._internal();
-
   final Queue<Task> _queue = Queue();
   int _running = 0;
   final int maxWorkers;
 
-  // Stream untuk notifikasi status per tugas
   final _statusController = StreamController<Task>.broadcast();
   Stream<Task> get statusStream => _statusController.stream;
 
-  // Stream untuk notifikasi ketika semua tugas selesai
   final _doneController = StreamController<void>.broadcast();
   Stream<void> get doneStream => _doneController.stream;
 
   TaskQueue({this.maxWorkers = 2});
 
-  /// Tambahkan tugas ke antrian. Mengembalikan ID tugas.
   String add<T>({
     required String label,
     required Future<T> Function() work,
@@ -66,7 +56,6 @@ class TaskQueue {
     return id;
   }
 
-  /// Batalkan tugas berdasarkan ID (hanya jika pending)
   bool cancel(String id) {
     final task = _queue.firstWhereOrNull((t) => t.id == id && t.status == TaskStatus.pending);
     if (task != null) {
@@ -78,7 +67,6 @@ class TaskQueue {
     return false;
   }
 
-  /// Batalkan semua tugas yang pending
   void cancelAllPending() {
     final toRemove = _queue.where((t) => t.status == TaskStatus.pending).toList();
     for (final task in toRemove) {
@@ -143,7 +131,6 @@ class TaskQueue {
   }
 }
 
-/// Ekstensi untuk firstWhereOrNull (tanpa dependensi tambahan)
 extension _QueueExtension<T> on Queue<T> {
   T? firstWhereOrNull(bool Function(T) test) {
     for (final item in this) {
