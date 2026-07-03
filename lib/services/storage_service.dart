@@ -21,6 +21,7 @@ class StorageService {
 
   String generateId() => _uuid.v4();
 
+  // ─── Database methods ──────────────────────────────────────
   Future<void> add(ScanEntry entry) async => _db.insert(entry);
   Future<void> update(ScanEntry entry) async => _db.update(entry);
   Future<void> delete(String id) async => _db.delete(id);
@@ -29,9 +30,21 @@ class StorageService {
   Future<List<ScanEntry>> loadAll() => _db.getAll();
 
   Future<List<ScanEntry>> getEntries({
-    int limit = 20, int offset = 0, String? searchQuery, String? period,
-    String sortField = 'timestamp', String sortDir = 'DESC',
-  }) async => _db.getEntries(limit: limit, offset: offset, searchQuery: searchQuery, period: period, sortField: sortField, sortDir: sortDir);
+    int limit = 20,
+    int offset = 0,
+    String? searchQuery,
+    String? period,
+    String sortField = 'timestamp',
+    String sortDir = 'DESC',
+  }) async =>
+      _db.getEntries(
+        limit: limit,
+        offset: offset,
+        searchQuery: searchQuery,
+        period: period,
+        sortField: sortField,
+        sortDir: sortDir,
+      );
 
   Future<int> getCount({String? searchQuery, String? period}) async =>
       _db.getCount(searchQuery: searchQuery, period: period);
@@ -42,24 +55,30 @@ class StorageService {
       _db.migrateFromJson(entries);
 
   // ──────────────────────────────────────────────────────────
-  // PHOTO
+  // PHOTO – simpan ke internal (tidak terdeteksi galeri)
   // ──────────────────────────────────────────────────────────
   Future<String> savePhoto(String sourcePath, {String? name}) async {
     try {
       final source = File(sourcePath);
-      if (!await source.exists()) throw FileSystemException('Source file not found', sourcePath);
+      if (!await source.exists()) {
+        throw FileSystemException('Source file not found', sourcePath);
+      }
+
       final appDir = await getApplicationDocumentsDirectory();
       final photosDir = Directory(join(appDir.path, 'photos'));
-      if (!await photosDir.exists()) await photosDir.create(recursive: true);
+      if (!await photosDir.exists()) {
+        await photosDir.create(recursive: true);
+      }
 
       String fileName;
       if (name != null && name.isNotEmpty) {
-        final base = name.endsWith('.jpg') ? name.substring(0, name.length - 4) : name;
-        final candidate = '$base.jpg';
+        // Gunakan nama yang diberikan, tambahkan timestamp jika sudah ada
+        final baseName = name.endsWith('.jpg') ? name.substring(0, name.length - 4) : name;
+        final candidate = '$baseName.jpg';
         if (!await File(join(photosDir.path, candidate)).exists()) {
           fileName = candidate;
         } else {
-          fileName = '${base}_${DateTime.now().millisecondsSinceEpoch}.jpg';
+          fileName = '${baseName}_${DateTime.now().millisecondsSinceEpoch}.jpg';
         }
       } else {
         fileName = '${DateTime.now().millisecondsSinceEpoch}.jpg';
@@ -67,8 +86,13 @@ class StorageService {
 
       final destPath = join(photosDir.path, fileName);
       await source.copy(destPath);
-      if (sourcePath != destPath && await source.exists()) await source.delete();
-      debugPrint('📸 Photo saved: $destPath');
+
+      // Hapus file asli jika berbeda
+      if (sourcePath != destPath && await source.exists()) {
+        await source.delete();
+      }
+
+      debugPrint('📸 Photo saved to internal: $destPath');
       return destPath;
     } catch (e) {
       debugPrint('⚠️ Storage: error saving photo: $e');
@@ -77,22 +101,33 @@ class StorageService {
   }
 
   // ──────────────────────────────────────────────────────────
-  // VIDEO
+  // VIDEO – simpan ke internal
   // ──────────────────────────────────────────────────────────
   Future<String> saveVideo(String sourcePath, {String? name}) async {
     try {
       final source = File(sourcePath);
-      if (!await source.exists()) throw FileSystemException('Source file not found', sourcePath);
+      if (!await source.exists()) {
+        throw FileSystemException('Source file not found', sourcePath);
+      }
+
       final appDir = await getApplicationDocumentsDirectory();
       final videosDir = Directory(join(appDir.path, 'videos'));
-      if (!await videosDir.exists()) await videosDir.create(recursive: true);
+      if (!await videosDir.exists()) {
+        await videosDir.create(recursive: true);
+      }
+
       final fileName = name != null
           ? '${name}_${DateTime.now().millisecondsSinceEpoch}.mp4'
           : '${DateTime.now().millisecondsSinceEpoch}.mp4';
+
       final destPath = join(videosDir.path, fileName);
       await source.copy(destPath);
-      if (sourcePath != destPath && await source.exists()) await source.delete();
-      debugPrint('🎥 Video saved: $destPath');
+
+      if (sourcePath != destPath && await source.exists()) {
+        await source.delete();
+      }
+
+      debugPrint('🎥 Video saved to internal: $destPath');
       return destPath;
     } catch (e) {
       debugPrint('⚠️ Storage: error saving video: $e');
@@ -101,7 +136,7 @@ class StorageService {
   }
 
   // ──────────────────────────────────────────────────────────
-  // CLEANUP (FOTO & VIDEO)
+  // CLEANUP (FOTO & VIDEO) – dengan isolate
   // ──────────────────────────────────────────────────────────
   Future<void> cleanupOldFiles({int days = 90}) async {
     try {
@@ -132,6 +167,7 @@ class StorageService {
     }
   }
 
+  /// Jalankan cleanup di isolate agar tidak blocking UI
   Future<void> cleanupOldFilesInBackground({int days = 90}) async {
     final appDir = await getApplicationDocumentsDirectory();
     final args = _CleanupArgs(
@@ -145,9 +181,24 @@ class StorageService {
   Future<void> deletePhoto(String path) async {
     try {
       final file = File(path);
-      if (await file.exists()) { await file.delete(); debugPrint('🗑️ Photo deleted: $path'); }
+      if (await file.exists()) {
+        await file.delete();
+        debugPrint('🗑️ Photo deleted: $path');
+      }
     } catch (e) {
       debugPrint('⚠️ Storage: error deleting photo: $e');
+    }
+  }
+
+  Future<void> deleteVideo(String path) async {
+    try {
+      final file = File(path);
+      if (await file.exists()) {
+        await file.delete();
+        debugPrint('🗑️ Video deleted: $path');
+      }
+    } catch (e) {
+      debugPrint('⚠️ Storage: error deleting video: $e');
     }
   }
 
@@ -172,10 +223,20 @@ class StorageService {
   }
 
   // ──────────────────────────────────────────────────────────
-  // BACKUP & RESTORE
+  // BACKUP & RESTORE (ringkas, tetap dipertahankan)
   // ──────────────────────────────────────────────────────────
-  Future<String> backup() async { /* ... sama seperti sebelumnya ... */ return ''; }
-  Future<bool> restore(String zipPath) async { /* ... */ return false; }
+  Future<String> backup() async {
+    // Implementasi backup ke zip
+    // ...
+    return '';
+  }
+
+  Future<bool> restore(String zipPath) async {
+    // Implementasi restore dari zip
+    // ...
+    return false;
+  }
+
   Future<void> shareBackup(String zipPath) async {
     await Share.shareXFiles([XFile(zipPath)], text: 'Backup TermulScan');
   }
@@ -183,9 +244,21 @@ class StorageService {
   // ──────────────────────────────────────────────────────────
   // EXPORT TXT
   // ──────────────────────────────────────────────────────────
-  Future<String> exportTxt(List<ScanEntry> entries) async { /* ... */ return ''; }
+  Future<String> exportTxt(List<ScanEntry> entries) async {
+    // Implementasi export ke txt
+    // ...
+    return '';
+  }
+
   Future<void> shareTxt(String path) async {
     await Share.shareXFiles([XFile(path)], text: 'Export scan log');
+  }
+
+  // ──────────────────────────────────────────────────────────
+  // CLOSE DATABASE (jika diperlukan)
+  // ──────────────────────────────────────────────────────────
+  Future<void> close() async {
+    await _db.close();
   }
 }
 
@@ -196,9 +269,14 @@ class _CleanupArgs {
   final String photosDir;
   final String videosDir;
   final int days;
-  _CleanupArgs({required this.photosDir, required this.videosDir, required this.days});
+  _CleanupArgs({
+    required this.photosDir,
+    required this.videosDir,
+    required this.days,
+  });
 }
 
+/// Fungsi yang dijalankan di isolate untuk cleanup file lama
 Future<void> _cleanupInIsolate(_CleanupArgs args) async {
   await _cleanupDir(Directory(args.photosDir), args.days);
   await _cleanupDir(Directory(args.videosDir), args.days);
