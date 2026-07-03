@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/video_scan_screen.dart (FINAL – TASKQUEUE + GALLERY FIX)
+// lib/screens/video_scan_screen.dart (FINAL – GALLERY FIX)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -220,7 +220,6 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
           debugPrint('✅ Video berhasil diekspor ke gallery');
         } else {
           debugPrint('⚠️ Gagal ekspor ke gallery, file tetap tersimpan di internal');
-          // Tampilkan pesan error tapi tidak mengganggu proses
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
@@ -325,7 +324,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         debugPrint('✅ Ekspor gallery berhasil: $filename');
         return true;
       } else {
-        debugPrint('❌ Ekspor gallery gagal: ${result.error}');
+        debugPrint('❌ Ekspor gallery gagal (result.isSuccess = false)');
         return false;
       }
     } catch (e, stack) {
