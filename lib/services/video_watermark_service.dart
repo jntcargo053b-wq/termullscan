@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 import 'package:ffmpeg_kit_flutter_new_video/ffmpeg_kit.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
@@ -9,12 +10,73 @@ import '../watermark/watermark_style.dart';
 import '../models/scan_entry.dart';
 
 // ─────────────────────────────────────────────────────────────
-//  1.  Kelas pembantu untuk menyimpan template
+//  0.  FUNGSI UTILITAS TOP-LEVEL (dipanggil dari mana saja)
+// ─────────────────────────────────────────────────────────────
+
+String _escapeFFmpegText(String text) {
+  return text.replaceAll("'", r"'\''").replaceAll(':', r'\:');
+}
+
+String _escapeFFmpegPath(String path) {
+  return path.replaceAll("'", r"'\''").replaceAll(':', r'\:');
+}
+
+List<String> _wrapAddress(String text, {int maxLineLen = 42}) {
+  if (text.length <= maxLineLen) return [text];
+  final words = text.split(' ');
+  final line1 = StringBuffer();
+  final line2 = StringBuffer();
+  for (final w in words) {
+    if ((line1.length + w.length + 1) <= maxLineLen) {
+      if (line1.isNotEmpty) line1.write(' ');
+      line1.write(w);
+    } else {
+      if (line2.isNotEmpty) line2.write(' ');
+      line2.write(w);
+    }
+  }
+  var second = line2.toString();
+  if (second.length > maxLineLen) {
+    second = '${second.substring(0, maxLineLen - 1)}…';
+  }
+  return second.isEmpty ? [line1.toString()] : [line1.toString(), second];
+}
+
+String _generateVerificationCode(ScanEntry entry, WatermarkSettings settings) {
+  final seed = '${entry.timestamp.millisecondsSinceEpoch}'
+      '${settings.operatorName}${entry.value}';
+  final hash = seed.codeUnits.fold<int>(0, (p, c) => (p * 31 + c) & 0x7FFFFFFF);
+  final code = hash.toRadixString(36).toUpperCase();
+  return code.padLeft(10, 'X').substring(0, 10);
+}
+
+String _hhmmFF(DateTime dt) =>
+    '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+
+String _ddmmyyyyFF(DateTime dt) =>
+    '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}';
+
+const List<String> _hariIndoFF = [
+  'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu',
+];
+String _dayNameFF(DateTime dt) => _hariIndoFF[dt.weekday - 1];
+
+String _formatTimestamp(DateTime dt) {
+  return '${dt.day.toString().padLeft(2, '0')}-'
+      '${dt.month.toString().padLeft(2, '0')}-'
+      '${dt.year} '
+      '${dt.hour.toString().padLeft(2, '0')}:'
+      '${dt.minute.toString().padLeft(2, '0')}:'
+      '${dt.second.toString().padLeft(2, '0')}';
+}
+
+// ─────────────────────────────────────────────────────────────
+//  1.  KELAS PEMBANTU TEMPLATE FILTER
 // ─────────────────────────────────────────────────────────────
 
 class _FilterTemplate {
   final String placeholder;
-  final String template; // string filter dengan placeholder
+  final String template;
 
   _FilterTemplate(this.placeholder, this.template);
 
@@ -22,11 +84,11 @@ class _FilterTemplate {
 }
 
 class _PrecomputedStyle {
-  final List<_FilterTemplate> filterTemplates; // semua filter teks (dengan placeholder)
+  final List<_FilterTemplate> filterTemplates;
   final _XY logoXY;
   final double blockHeight;
   final double blockLineHeight;
-  final List<String> staticFilters; // filter non-teks (background, accent, divider)
+  final List<String> staticFilters;
 
   _PrecomputedStyle({
     required this.filterTemplates,
@@ -36,7 +98,6 @@ class _PrecomputedStyle {
     required this.staticFilters,
   });
 
-  /// Menghasilkan daftar filter lengkap dengan mengganti placeholder menggunakan data dinamis.
   List<String> buildFilters(List<String> dynamicTexts) {
     final result = <String>[];
     result.addAll(staticFilters);
@@ -49,10 +110,10 @@ class _PrecomputedStyle {
 }
 
 class _PrecomputedTimestamp {
-  final List<_FilterTemplate> dynamicFilters; // filter yang mengandung placeholder dinamis
-  final List<String> staticFilters;          // filter tanpa placeholder (background, brand, tagline, dll)
+  final List<_FilterTemplate> dynamicFilters;
+  final List<String> staticFilters;
   final _XY logoXY;
-  final double barHeight;
+  final double barHeight; // <-- diubah menjadi double
 
   _PrecomputedTimestamp({
     required this.dynamicFilters,
@@ -61,8 +122,6 @@ class _PrecomputedTimestamp {
     required this.barHeight,
   });
 
-  /// Menghasilkan daftar filter dengan data dinamis.
-  /// `dynamicData` berisi: [time, date, day, addr0, addr1, meta0, meta1, code]
   List<String> buildFilters(List<String> dynamicData) {
     final result = <String>[];
     result.addAll(staticFilters);
@@ -75,7 +134,7 @@ class _PrecomputedTimestamp {
 }
 
 // ─────────────────────────────────────────────────────────────
-//  2.  Cache watermark (singleton)
+//  2.  CACHE WATERMARK (SINGLETON)
 // ─────────────────────────────────────────────────────────────
 
 class _WatermarkCache {
@@ -87,10 +146,10 @@ class _WatermarkCache {
   WatermarkSettings? _settings;
   String? _cachedFontPath;
   String? _cachedLogoPath;
+  ui.Image? _cachedLogoImage;
   Map<WatermarkStyle, _PrecomputedStyle>? _styleCache;
   _PrecomputedTimestamp? _timestampCache;
 
-  /// Inisialisasi cache jika `settings` berbeda dari yang terakhir.
   Future<void> initialize(WatermarkSettings settings) async {
     if (_initialized && _settings == settings) return;
     _settings = settings;
@@ -98,15 +157,18 @@ class _WatermarkCache {
     // 1. Font
     _cachedFontPath = await _getFontPath(settings.fontFamily);
 
-    // 2. Logo
+    // 2. Logo (path dan image)
+    _cachedLogoPath = null;
+    _cachedLogoImage = null;
     if (settings.hasLogo && settings.logoPath != null) {
-      final logo = File(settings.logoPath!);
-      if (await logo.exists()) _cachedLogoPath = logo.path;
-    } else {
-      _cachedLogoPath = null;
+      final logoFile = File(settings.logoPath!);
+      if (await logoFile.exists()) {
+        _cachedLogoPath = logoFile.path;
+        _cachedLogoImage = await _decodeLogo(logoFile);
+      }
     }
 
-    // 3. Prekomputasi untuk semua gaya
+    // 3. Prekomputasi
     _styleCache = {};
     for (var style in WatermarkStyle.values) {
       if (style == WatermarkStyle.timestamp) {
@@ -119,34 +181,50 @@ class _WatermarkCache {
     _initialized = true;
   }
 
-  // ─── Prekomputasi untuk gaya umum (professional, polaroid, stamp, minimal) ───
+  static Future<ui.Image?> _decodeLogo(File file) async {
+    try {
+      final bytes = await file.readAsBytes();
+      final completer = Completer<ui.Image>();
+      ui.decodeImageFromList(bytes, (img) => completer.complete(img));
+      return await completer.future;
+    } catch (e) {
+      debugPrint('❌ Gagal decode logo: $e');
+      return null;
+    }
+  }
+
+  String? get logoPath => _cachedLogoPath;
+
+  Future<ui.Image?> getLogoImage() async {
+    if (_cachedLogoImage != null) return _cachedLogoImage;
+    if (_cachedLogoPath != null) {
+      final file = File(_cachedLogoPath!);
+      if (await file.exists()) {
+        _cachedLogoImage = await _decodeLogo(file);
+        return _cachedLogoImage;
+      }
+    }
+    return null;
+  }
+
+  // ─── Prekomputasi gaya umum ──────────────────────────────
 
   _PrecomputedStyle _precomputeGeneral(WatermarkSettings settings, WatermarkStyle style) {
     final layout = _StyleLayout.forStyle(style, settings.position);
-    final lines = _buildStaticTextLines(settings); // label statis (tanpa nilai)
+    final lines = _buildStaticTextLines(settings);
     final blockLineHeight = settings.fontSize + 8;
     final blockHeight = lines.isEmpty
         ? 0.0
         : (lines.length * blockLineHeight) + (layout.padding * 2);
 
     final staticParts = <String>[];
-
-    // Background
-    final bg = layout.buildBackground(
-      blockHeight: blockHeight,
-      opacity: settings.backgroundOpacity,
-    );
+    final bg = layout.buildBackground(blockHeight: blockHeight, opacity: settings.backgroundOpacity);
     if (bg != null) staticParts.add(bg);
-
-    // Accent bar
     final accent = layout.buildAccentBar(blockHeight: blockHeight);
     if (accent != null) staticParts.add(accent);
-
-    // Divider
     final divider = layout.buildDivider(blockHeight: blockHeight);
     if (divider != null) staticParts.add(divider);
 
-    // Filter teks dengan placeholder
     final templates = <_FilterTemplate>[];
     final escapedFontPath = _escapeFFmpegPath(_cachedFontPath!);
     for (var i = 0; i < lines.length; i++) {
@@ -185,7 +263,7 @@ class _WatermarkCache {
     );
   }
 
-  // ─── Prekomputasi untuk gaya timestamp ────────────────────
+  // ─── Prekomputasi timestamp ──────────────────────────────
 
   _PrecomputedTimestamp _precomputeTimestamp(WatermarkSettings settings) {
     const padding = 22;
@@ -200,10 +278,6 @@ class _WatermarkCache {
     final taglineFontSize = (settings.fontSize * 0.7).round().clamp(9, 20);
     final codeFontSize = (settings.fontSize * 0.65).round().clamp(9, 18);
 
-    // Asumsikan maksimal 2 baris meta, 2 baris alamat (kita siapkan placeholder)
-    // Kita akan tetap hitung barHeight berdasarkan data statis (hanya brand, tagline, dan struktur)
-    // Tapi karena kita tidak tahu panjang alamat/meta, kita pakai perkiraan maksimal 2 baris.
-    // Untuk perhitungan posisi, kita butuh barHeight. Kita asumsikan 2 baris meta dan 2 baris alamat.
     const maxMetaLines = 2;
     const maxAddressLines = 2;
     final metaBlockH = maxMetaLines * (metaFontSize + 8);
@@ -214,13 +288,13 @@ class _WatermarkCache {
     final escapedFontPath = _escapeFFmpegPath(_cachedFontPath!);
     final staticParts = <String>[];
 
-    // 1. Background bar
+    // Background bar
     staticParts.add(
       "drawbox=x=0:y=ih-$barHeight:w=iw:h=$barHeight:"
       "color=black@${settings.backgroundOpacity.clamp(0.4, 1.0)}:t=fill",
     );
 
-    // 2. Brand badge (pojok kanan atas)
+    // Brand badge
     final brandText = settings.companyName.isNotEmpty ? settings.companyName : 'TermulScan';
     staticParts.add(
       "drawtext=text='${_escapeFFmpegText(brandText)}':"
@@ -235,20 +309,17 @@ class _WatermarkCache {
       "shadowcolor=black@0.8:shadowx=1:shadowy=1",
     );
 
-    // 3. Kode verifikasi (bawah kanan) – statis template dengan placeholder {{code}}
-    final codePlaceholder = '{{code}}';
+    // Kode verifikasi
     staticParts.add(
-      "drawtext=text='$codePlaceholder  •  TERMULSCAN VERIFIED':"
+      "drawtext=text='{{code}}  •  TERMULSCAN VERIFIED':"
       "fontfile='$escapedFontPath':fontcolor=white@0.75:fontsize=$codeFontSize:"
       "x=w-text_w-$padding:y=ih-$barHeight-${codeFontSize + 10}:"
       "shadowcolor=black@0.7:shadowx=1:shadowy=1",
     );
 
-    // ─── Filter dinamis ──────────────────────────────────────
-
     final dynamicTemplates = <_FilterTemplate>[];
 
-    // Meta baris (maks 2)
+    // Meta
     for (var i = 0; i < maxMetaLines; i++) {
       final placeholder = '{{meta$i}}';
       final yPos = padding + i * (metaFontSize + 8);
@@ -260,7 +331,7 @@ class _WatermarkCache {
       dynamicTemplates.add(_FilterTemplate(placeholder, filter));
     }
 
-    // Jam besar
+    // Jam
     final timeRowTop = (maxMetaLines > 0) ? padding + maxMetaLines * (metaFontSize + 8) : padding;
     dynamicTemplates.add(
       _FilterTemplate(
@@ -272,7 +343,7 @@ class _WatermarkCache {
       ),
     );
 
-    // Divider vertikal (statis posisi tergantung timeFontSize)
+    // Divider
     final dividerX = padding + (timeFontSize * 2.6).round();
     staticParts.add(
       "drawbox=x=$dividerX:y=ih-$barHeight+$timeRowTop:w=4:h=$timeFontSize:"
@@ -300,7 +371,7 @@ class _WatermarkCache {
       ),
     );
 
-    // Alamat (2 baris)
+    // Alamat
     final addressStartY = timeRowTop + timeRowH;
     for (var i = 0; i < maxAddressLines; i++) {
       final placeholder = '{{addr$i}}';
@@ -313,20 +384,18 @@ class _WatermarkCache {
       dynamicTemplates.add(_FilterTemplate(placeholder, filter));
     }
 
-    // Logo posisi
     final logoXY = _XY('W-w-22', 'H-h-22');
 
     return _PrecomputedTimestamp(
       dynamicFilters: dynamicTemplates,
       staticFilters: staticParts,
       logoXY: logoXY,
-      barHeight: barHeight,
+      barHeight: barHeight.toDouble(), // <-- konversi ke double
     );
   }
 
-  // ─── Pembantu untuk mendapatkan data dinamis ─────────────
+  // ─── Data dinamis ─────────────────────────────────────────
 
-  /// Untuk gaya umum: mengembalikan daftar teks dinamis (nilai barcode, operator, waktu, lokasi)
   List<String> getDynamicTexts(ScanEntry entry, WatermarkSettings settings) {
     final lines = <String>[];
     if (entry.value.isNotEmpty) lines.add(entry.value);
@@ -342,7 +411,6 @@ class _WatermarkCache {
     return lines;
   }
 
-  /// Untuk gaya timestamp: mengembalikan list [time, date, day, addr0, addr1, meta0, meta1, code]
   List<String> getTimestampDynamicData(ScanEntry entry, WatermarkSettings settings) {
     final metaLines = <String>[];
     if (entry.value.isNotEmpty) metaLines.add('📦 ${entry.value}');
@@ -355,7 +423,7 @@ class _WatermarkCache {
             : 'Lokasi tidak tersedia';
     final addressLines = _wrapAddress(addressText, maxLineLen: 42);
 
-    final data = <String>[
+    return [
       _hhmmFF(entry.timestamp),
       _ddmmyyyyFF(entry.timestamp),
       _dayNameFF(entry.timestamp),
@@ -365,10 +433,9 @@ class _WatermarkCache {
       metaLines.length > 1 ? metaLines[1] : '',
       _generateVerificationCode(entry, settings),
     ];
-    return data;
   }
 
-  // ─── Metode akses cache ─────────────────────────────────
+  // ─── Akses cache ──────────────────────────────────────────
 
   _PrecomputedStyle getStyle(WatermarkStyle style) {
     if (!_initialized) throw StateError('Cache belum diinisialisasi');
@@ -383,9 +450,7 @@ class _WatermarkCache {
     return _timestampCache!;
   }
 
-  String? get logoPath => _cachedLogoPath;
-
-  // ─── Metode utilitas internal (diambil dari kode asli) ──
+  // ─── Font helper ──────────────────────────────────────────
 
   static Future<String> _getFontPath(String fontFamily) async {
     final assetPath = _assetFontPath(fontFamily);
@@ -416,64 +481,8 @@ class _WatermarkCache {
     }
   }
 
-  static String _escapeFFmpegText(String text) {
-    return text.replaceAll("'", r"'\''").replaceAll(':', r'\:');
-  }
+  // ─── Teks statis untuk gaya umum ──────────────────────────
 
-  static String _escapeFFmpegPath(String path) {
-    return path.replaceAll("'", r"'\''").replaceAll(':', r'\:');
-  }
-
-  static List<String> _wrapAddress(String text, {int maxLineLen = 42}) {
-    if (text.length <= maxLineLen) return [text];
-    final words = text.split(' ');
-    final line1 = StringBuffer();
-    final line2 = StringBuffer();
-    for (final w in words) {
-      if ((line1.length + w.length + 1) <= maxLineLen) {
-        if (line1.isNotEmpty) line1.write(' ');
-        line1.write(w);
-      } else {
-        if (line2.isNotEmpty) line2.write(' ');
-        line2.write(w);
-      }
-    }
-    var second = line2.toString();
-    if (second.length > maxLineLen) {
-      second = '${second.substring(0, maxLineLen - 1)}…';
-    }
-    return second.isEmpty ? [line1.toString()] : [line1.toString(), second];
-  }
-
-  static String _generateVerificationCode(ScanEntry entry, WatermarkSettings settings) {
-    final seed = '${entry.timestamp.millisecondsSinceEpoch}'
-        '${settings.operatorName}${entry.value}';
-    final hash = seed.codeUnits.fold<int>(0, (p, c) => (p * 31 + c) & 0x7FFFFFFF);
-    final code = hash.toRadixString(36).toUpperCase();
-    return code.padLeft(10, 'X').substring(0, 10);
-  }
-
-  static String _hhmmFF(DateTime dt) =>
-      '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
-
-  static String _ddmmyyyyFF(DateTime dt) =>
-      '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}';
-
-  static const List<String> _hariIndoFF = [
-    'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu',
-  ];
-  static String _dayNameFF(DateTime dt) => _hariIndoFF[dt.weekday - 1];
-
-  static String _formatTimestamp(DateTime dt) {
-    return '${dt.day.toString().padLeft(2, '0')}-'
-        '${dt.month.toString().padLeft(2, '0')}-'
-        '${dt.year} '
-        '${dt.hour.toString().padLeft(2, '0')}:'
-        '${dt.minute.toString().padLeft(2, '0')}:'
-        '${dt.second.toString().padLeft(2, '0')}';
-  }
-
-  // Untuk membangun label statis (tanpa nilai) pada gaya umum
   static List<_TextLine> _buildStaticTextLines(WatermarkSettings settings) {
     final lines = <_TextLine>[];
     if (settings.companyName.isNotEmpty) {
@@ -483,7 +492,6 @@ class _WatermarkCache {
         isTitle: true,
       ));
     }
-    // Label statis (placeholder akan diganti dengan nilai dinamis)
     lines.add(_TextLine(text: 'Barcode: {{line0}}', sizeOffset: 0));
     lines.add(_TextLine(text: 'Operator: {{line1}}', sizeOffset: 0));
     lines.add(_TextLine(text: 'Waktu: {{line2}}', sizeOffset: -1));
@@ -493,11 +501,31 @@ class _WatermarkCache {
 }
 
 // ─────────────────────────────────────────────────────────────
-//  3.  VideoWatermarkService yang dimodifikasi
+//  3.  VIDEO WATERMARK SERVICE (PUBLIC API)
 // ─────────────────────────────────────────────────────────────
 
 class VideoWatermarkService {
   static String? lastError;
+  static bool _warmedUp = false;
+
+  /// Warm-up FFmpeg dengan menjalankan perintah `-version`.
+  static Future<void> warmUp() async {
+    if (_warmedUp) return;
+    try {
+      debugPrint('🔥 Memanaskan FFmpeg...');
+      final session = await FFmpegKit.execute('-version');
+      final returnCode = await session.getReturnCode();
+      if (returnCode?.isValueSuccess() == true) {
+        debugPrint('✅ FFmpeg warm-up berhasil.');
+      } else {
+        debugPrint('⚠️ FFmpeg warm-up gagal (rc=${returnCode?.getValue()})');
+      }
+    } catch (e) {
+      debugPrint('❌ FFmpeg warm-up error: $e');
+    } finally {
+      _warmedUp = true;
+    }
+  }
 
   static final _WatermarkCache _cache = _WatermarkCache();
 
@@ -509,10 +537,10 @@ class VideoWatermarkService {
   }) async {
     lastError = null;
     try {
-      // 1. Inisialisasi cache (jika perlu)
+      // 1. Inisialisasi cache
       await _cache.initialize(settings);
 
-      // 2. Bangun filter chain berdasarkan gaya
+      // 2. Bangun filter chain
       final List<String> filterParts;
       final _XY logoXY;
 
@@ -528,7 +556,7 @@ class VideoWatermarkService {
         logoXY = precomputed.logoXY;
       }
 
-      // 3. Logo overlay
+      // 3. Logo overlay (untuk video gunakan path)
       final logoPath = _cache.logoPath;
       final List<String> filterArgs;
       if (logoPath != null) {
@@ -596,16 +624,6 @@ class VideoWatermarkService {
     }
   }
 
-  // ─── Metode pembantu (tetap statis) ──────────────────────
-
-  static String _escapeFFmpegText(String text) {
-    return text.replaceAll("'", r"'\''").replaceAll(':', r'\:');
-  }
-
-  static String _escapeFFmpegPath(String path) {
-    return path.replaceAll("'", r"'\''").replaceAll(':', r'\:');
-  }
-
   static String _diagnoseFailure(String logs) {
     final l = logs.toLowerCase();
     if (l.contains('no such filter') && l.contains('drawtext')) {
@@ -633,7 +651,9 @@ class VideoWatermarkService {
   }
 }
 
-// ─── Helper classes (sama seperti sebelumnya) ──────────────
+// ─────────────────────────────────────────────────────────────
+//  4.  HELPER CLASSES
+// ─────────────────────────────────────────────────────────────
 
 class _TextLine {
   final String text;
