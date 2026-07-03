@@ -301,7 +301,7 @@ class PhotoScanScreen extends StatefulWidget {
 class _PhotoScanScreenState extends State<PhotoScanScreen> {
   final ImagePicker _picker = ImagePicker();
   final StorageService _storage = StorageService();
-  final WatermarkSettings _wmSettings = WatermarkSettings.instance; // ✅ singleton
+  final WatermarkSettings _wmSettings = WatermarkSettings(); // ✅ singleton via factory
 
   bool _isSaving = false;
   bool _isCapturing = false;
@@ -415,13 +415,11 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       locationName: null,
     );
 
-    // ✅ Gunakan RenderContext yang sudah di-preload
     final result = await WatermarkRenderer.render(
       imagePath: imagePath,
       outputPath: outputPath,
       settings: _wmSettings,
       entry: tempEntry,
-      // renderContext: RenderContext.instance, // jika sudah tersedia
     );
 
     if (result != null && result != imagePath) {
@@ -535,7 +533,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         throw Exception('Ukuran foto terlalu besar (>20MB)');
       }
 
-      // ✅ Kompresi di isolate (sudah menggunakan compute)
+      // ✅ Kompresi di isolate (static method dari ImageCompressor)
       compressedPath = await ImageCompressor.compressIfNeeded(xfile.path);
 
       final timestamp = DateTime.now();
