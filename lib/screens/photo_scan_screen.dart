@@ -11,6 +11,7 @@ import 'package:device_info_plus/device_info_plus.dart';
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
 import '../services/permission_service.dart';
+import '../services/task_queue.dart';
 import '../config/app_config.dart';
 import '../theme/app_theme.dart';
 import '../watermark/watermark_renderer.dart';
@@ -305,13 +306,17 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   final StorageService _storage = StorageService();
   final WatermarkSettings _wmSettings = WatermarkSettings();
 
+  // ─── TaskQueue ──────────────────────────────────────────────
+  final TaskQueue _taskQueue = TaskQueue(maxWorkers: 2);
+  int _pendingTasks = 0;
+  int _runningTasks = 0;
+
   bool _isSaving = false; // menandakan sedang mengambil gambar
   bool _isCapturing = false;
   bool _processingRequest = false;
   int _photoCount = 0;
   bool _cameraGranted = false;
   final List<String> _photoPaths = [];
-  int _pendingTasks = 0; // jumlah proses background yang sedang berjalan
 
   static const int _maxCachedPaths = 100;
 
@@ -319,6 +324,20 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   void initState() {
     super.initState();
     _requestPermissions();
+    // Subscribe ke status stream TaskQueue
+    _taskQueue.statusStream.listen((task) {
+      if (!mounted) return;
+      setState(() {
+        _pendingTasks = _taskQueue.pendingCount;
+        _runningTasks = _taskQueue.runningCount;
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _taskQueue.dispose();
+    super.dispose();
   }
 
   // ─── Permission ─────────────────────────────────────────────
@@ -459,26 +478,9 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     }
   }
 
-  // ─── Background processing ────────────────────────────────
-
-  /// Proses foto di background tanpa memblokir UI.
-  Future<void> _processPhotoInBackground(XFile xfile) async {
-    setState(() => _pendingTasks++);
-    try {
-      await _processPhoto(xfile);
-    } catch (e) {
-      debugPrint('❌ Background processing error: $e');
-    } finally {
-      if (mounted) {
-        setState(() => _pendingTasks--);
-      }
-    }
-  }
-
   // ─── Take photo ─────────────────────────────────────────────
 
   Future<void> _takePhoto() async {
-    // Mencegah double tap saat memproses atau menangkap
     if (_isSaving || _isCapturing || _processingRequest) return;
     if (!await _ensureCameraPermission()) return;
 
@@ -497,8 +499,31 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       );
       if (!mounted) return;
       if (xfile != null) {
-        // Jalankan proses di background tanpa menunggu
-        unawaited(_processPhotoInBackground(xfile));
+        // Tambahkan ke TaskQueue
+        _taskQueue.add(
+          label: 'Foto ${_photoCount + 1}',
+          work: () => _processPhoto(xfile),
+          onSuccess: (path) {
+            if (mounted) {
+              setState(() {
+                _photoPaths.add(path);
+                _photoCount++;
+                if (_photoPaths.length > _maxCachedPaths) {
+                  _photoPaths.removeAt(0);
+                }
+              });
+            }
+          },
+          onError: (error) {
+            _showError('Gagal memproses foto: $error');
+          },
+        );
+        // Kembali tanpa menunggu
+        if (!widget.batchMode) {
+          _showSuccess();
+          Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
+          return;
+        }
       }
     } catch (e) {
       _showError('Gagal membuka kamera');
@@ -530,7 +555,29 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       );
       if (!mounted) return;
       if (xfile != null) {
-        unawaited(_processPhotoInBackground(xfile));
+        _taskQueue.add(
+          label: 'Foto dari Galeri ${_photoCount + 1}',
+          work: () => _processPhoto(xfile),
+          onSuccess: (path) {
+            if (mounted) {
+              setState(() {
+                _photoPaths.add(path);
+                _photoCount++;
+                if (_photoPaths.length > _maxCachedPaths) {
+                  _photoPaths.removeAt(0);
+                }
+              });
+            }
+          },
+          onError: (error) {
+            _showError('Gagal memproses foto: $error');
+          },
+        );
+        if (!widget.batchMode) {
+          _showSuccess();
+          Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
+          return;
+        }
       }
     } catch (e) {
       _showError('Gagal membuka galeri');
@@ -547,7 +594,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
   // ─── Core processing logic ──────────────────────────────────
 
-  Future<void> _processPhoto(XFile xfile) async {
+  /// Proses foto dan mengembalikan path hasil (untuk TaskQueue)
+  Future<String> _processPhoto(XFile xfile) async {
     String? watermarkedPath;
     String compressedPath = xfile.path;
 
@@ -579,22 +627,10 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         try { await File(watermarkedPath).delete(); } catch (_) {}
       }
 
-      // Update state (UI)
-      if (mounted) {
-        setState(() {
-          _photoPaths.add(savedPath);
-          _photoCount++;
-          if (_photoPaths.length > _maxCachedPaths) {
-            _photoPaths.removeAt(0);
-          }
-        });
-      }
-
       // Update database jika ada entryId
       if (widget.entryId != null) {
-        if (!mounted) return;
         final barcodeEntry = await _storage.getEntry(widget.entryId!);
-        if (barcodeEntry != null && mounted) {
+        if (barcodeEntry != null) {
           final updated = barcodeEntry.copyWith(photoPaths: List.from(_photoPaths));
           await _storage.update(updated);
         }
@@ -603,23 +639,23 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       // Simpan ke gallery
       await _saveToGallery(savedPath);
 
+      // Tampilkan notifikasi jika bukan batch mode (sukses sudah ditangani di onSuccess)
       if (!widget.batchMode) {
         _showSuccess();
+      } else {
+        // Batch mode: tampilkan snackbar singkat
         if (mounted) {
-          Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('📸 Foto ${_photoCount + 1} berhasil (${widget.barcode ?? 'tanpa barcode'})'),
+              duration: const Duration(seconds: 1),
+              backgroundColor: Colors.green.shade700,
+            ),
+          );
         }
-        return;
       }
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('📸 Foto ${_photoCount} berhasil (${widget.barcode ?? 'tanpa barcode'})'),
-            duration: const Duration(seconds: 1),
-            backgroundColor: Colors.green.shade700,
-          ),
-        );
-      }
+      return savedPath;
     } catch (e, stack) {
       debugPrint('Error processing photo: $e\n$stack');
       if (mounted) {
@@ -628,6 +664,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       if (watermarkedPath != null && watermarkedPath != compressedPath) {
         try { await File(watermarkedPath).delete(); } catch (_) {}
       }
+      rethrow;
     } finally {
       if (compressedPath != xfile.path && await FileHelper.isTemporaryFile(compressedPath)) {
         try { await File(compressedPath).delete(); } catch (_) {}
@@ -734,7 +771,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final bool isProcessing = _pendingTasks > 0;
+    final bool isProcessing = _pendingTasks > 0 || _runningTasks > 0;
 
     return Scaffold(
       backgroundColor: AppTheme.bg,
@@ -777,6 +814,15 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
               icon: const Icon(Icons.done_all, color: Colors.green),
               onPressed: _finishBatch,
               tooltip: 'Selesai Batch',
+            ),
+          if (_pendingTasks > 0)
+            IconButton(
+              icon: const Icon(Icons.cancel, color: Colors.red),
+              onPressed: () {
+                _taskQueue.cancelAllPending();
+                setState(() {});
+              },
+              tooltip: 'Batalkan semua antrian',
             ),
           ListenableBuilder(
             listenable: _wmSettings,
@@ -831,10 +877,15 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                     valueColor: AlwaysStoppedAnimation(AppTheme.accentOrange),
                   ),
                 ),
-              if (isProcessing)
-                const Padding(
-                  padding: EdgeInsets.only(top: 8),
-                  child: Text('Memproses foto di background...', style: TextStyle(color: Colors.grey, fontSize: 12)),
+              if (_pendingTasks > 0)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text('$_pendingTasks foto dalam antrian...', style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                ),
+              if (_runningTasks > 0)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text('$_runningTasks foto sedang diproses...', style: const TextStyle(color: Colors.grey, fontSize: 12)),
                 ),
             ],
           ),
