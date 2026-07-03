@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/video_scan_screen.dart (FINAL – GALLERY FIX)
+// lib/screens/video_scan_screen.dart (FINAL – RETRY + STATUS GALLERY)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -162,6 +162,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     String? finalPath;
     String? thumbnailPath;
     int durationSeconds = 0;
+    bool galleryOk = false;
 
     try {
       final file = File(videoFile.path);
@@ -212,14 +213,19 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         // 5. Thumbnail
         thumbnailPath = await _generateThumbnail(savedPath);
 
-        // 6. Ekspor ke gallery (dengan pengecekan file)
+        // 6. Ekspor ke gallery dengan retry (3 kali)
         setState(() => _statusText = 'Ekspor ke Gallery...');
-        final galleryOk = await _saveToGallery(savedPath);
+        for (int attempt = 1; attempt <= 3; attempt++) {
+          galleryOk = await _saveToGallery(savedPath);
+          if (galleryOk) break;
+          debugPrint('⚠️ Retry gallery export $attempt/3');
+          if (attempt < 3) await Future.delayed(const Duration(milliseconds: 500));
+        }
 
         if (galleryOk) {
           debugPrint('✅ Video berhasil diekspor ke gallery');
         } else {
-          debugPrint('⚠️ Gagal ekspor ke gallery, file tetap tersimpan di internal');
+          debugPrint('⚠️ Gagal ekspor ke gallery setelah 3 percobaan, file tetap tersimpan di internal');
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
@@ -244,13 +250,12 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         finalPath = savedPath;
 
         thumbnailPath = await _generateThumbnail(savedPath);
-
         if (await file.exists()) await file.delete();
 
         setState(() => _statusText = 'Video tersimpan (tanpa watermark)');
       }
 
-      // 9. Simpan entry database
+      // 9. Simpan entry database (termasuk status gallery)
       if (finalPath == null) throw Exception('Gagal menyimpan video');
 
       final entry = ScanEntry(
@@ -261,6 +266,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         videoPath: finalPath,
         videoDuration: durationSeconds,
         videoThumbnail: thumbnailPath,
+        galleryExported: galleryOk, // ✅ status ekspor gallery
       );
       await _storage.add(entry);
 
@@ -300,7 +306,6 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     }
   }
 
-  /// Ekspor ke gallery dengan pengecekan file dan error handling detail
   Future<bool> _saveToGallery(String filePath) async {
     try {
       final file = File(filePath);
