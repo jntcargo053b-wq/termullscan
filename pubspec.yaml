@@ -59,7 +59,6 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
-  flutter_launcher_icons: ^0.13.1   # Opsional
 
 flutter:
   uses-material-design: true
@@ -82,6 +81,5 @@ flutter:
         - asset: assets/fonts/Poppins-Bold.ttf
           weight: 700
 
-  assets:
-    - assets/images/logo.png             # Tambahkan jika ada
-    - assets/images/default_avatar.png   # Contoh
+  # Tidak perlu mendeklarasikan assets jika tidak ada file statis selain font.
+  # Font sudah otomatis terdeteksi melalui deklarasi di atas.
