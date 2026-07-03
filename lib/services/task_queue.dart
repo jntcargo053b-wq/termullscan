@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:collection';
 import 'package:flutter/foundation.dart';
-import 'package:uuid/uuid.dart'; // tambahkan dependency di pubspec.yaml
+import 'package:uuid/uuid.dart';
 
 enum TaskPriority { high, normal, low }
 enum TaskStatus { pending, running, completed, failed, cancelled }
@@ -37,7 +37,7 @@ class TaskQueue {
   final _statusController = StreamController<Task>.broadcast();
   final _doneController = StreamController<void>.broadcast();
 
-  // Persistence (opsional)
+  // Persistence (opsional, untuk nanti)
   final TaskPersister? persister;
 
   TaskQueue({this.maxWorkers = 2, this.persister});
@@ -53,7 +53,7 @@ class TaskQueue {
     void Function(T result)? onSuccess,
     void Function(Object error)? onError,
   }) {
-    final id = const Uuid().v4(); // UUID unik
+    final id = const Uuid().v4();
     final task = Task<T>(
       id: id,
       label: label,
@@ -64,7 +64,7 @@ class TaskQueue {
       onError: onError,
     );
     _queue.add(task);
-    _sortQueue(); // urutkan berdasarkan prioritas
+    _sortQueue();
     _statusController.add(task);
     _persistPending();
     _processQueue();
@@ -78,8 +78,18 @@ class TaskQueue {
     _queue.addAll(list);
   }
 
+  /// Cari tugas berdasarkan ID (hanya untuk pending)
+  Task? _findPendingTask(String id) {
+    for (final task in _queue) {
+      if (task.id == id && task.status == TaskStatus.pending) {
+        return task;
+      }
+    }
+    return null;
+  }
+
   bool cancel(String id) {
-    final task = _queue.firstWhereOrNull((t) => t.id == id && t.status == TaskStatus.pending);
+    final task = _findPendingTask(id);
     if (task != null) {
       task.status = TaskStatus.cancelled;
       _queue.remove(task);
@@ -126,7 +136,6 @@ class TaskQueue {
       if (task.retryCount < task.maxRetries) {
         task.retryCount++;
         task.status = TaskStatus.pending;
-        // Masukkan kembali ke antrian dengan prioritas yang sama
         _queue.addFirst(task);
         _sortQueue();
         debugPrint('🔄 Retry ${task.retryCount}/${task.maxRetries} for "${task.label}"');
@@ -148,7 +157,7 @@ class TaskQueue {
     }
   }
 
-  // ─── Persistence ──────────────────────────────────────────
+  // ─── Persistence (placeholder) ──────────────────────────
 
   Future<void> _persistPending() async {
     if (persister == null) return;
@@ -172,14 +181,9 @@ class TaskQueue {
   }
 }
 
-// ─── Persistence Interface ──────────────────────────────────
+// ─── Persistence Interface (untuk pengembangan nanti) ──────
 
 abstract class TaskPersister {
   Future<void> save(List<Task> tasks);
   Future<List<Task>> load();
 }
-
-// ─── SQLite Implementation (contoh) ─────────────────────────
-
-// Anda bisa implementasikan dengan DatabaseHelper atau SharedPreferences.
-// Karena kita sudah punya DatabaseHelper, kita bisa membuat tabel task_queue.
