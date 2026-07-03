@@ -310,11 +310,12 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   final TaskQueue _taskQueue = TaskQueue(maxWorkers: 2);
   int _pendingTasks = 0;
   int _runningTasks = 0;
+  int _nextPhotoIndex = 1; // counter untuk indeks unik
 
-  bool _isSaving = false; // menandakan sedang mengambil gambar
+  bool _isSaving = false;
   bool _isCapturing = false;
   bool _processingRequest = false;
-  int _photoCount = 0;
+  int _photoCount = 0; // hanya untuk UI
   bool _cameraGranted = false;
   final List<String> _photoPaths = [];
 
@@ -324,7 +325,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   void initState() {
     super.initState();
     _requestPermissions();
-    // Subscribe ke status stream TaskQueue
     _taskQueue.statusStream.listen((task) {
       if (!mounted) return;
       setState(() {
@@ -499,10 +499,13 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       );
       if (!mounted) return;
       if (xfile != null) {
-        // Tambahkan ke TaskQueue
+        // Ambil indeks unik SEBELUM enqueue
+        final photoIndex = _nextPhotoIndex++;
         _taskQueue.add(
-          label: 'Foto ${_photoCount + 1}',
-          work: () => _processPhoto(xfile),
+          label: 'Foto $photoIndex',
+          priority: TaskPriority.high,  // watermark prioritas tinggi
+          maxRetries: 3,
+          work: () => _processPhoto(xfile, photoIndex),
           onSuccess: (path) {
             if (mounted) {
               setState(() {
@@ -555,9 +558,12 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       );
       if (!mounted) return;
       if (xfile != null) {
+        final photoIndex = _nextPhotoIndex++;
         _taskQueue.add(
-          label: 'Foto dari Galeri ${_photoCount + 1}',
-          work: () => _processPhoto(xfile),
+          label: 'Foto dari Galeri $photoIndex',
+          priority: TaskPriority.high,
+          maxRetries: 3,
+          work: () => _processPhoto(xfile, photoIndex),
           onSuccess: (path) {
             if (mounted) {
               setState(() {
@@ -595,7 +601,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   // ─── Core processing logic ──────────────────────────────────
 
   /// Proses foto dan mengembalikan path hasil (untuk TaskQueue)
-  Future<String> _processPhoto(XFile xfile) async {
+  Future<String> _processPhoto(XFile xfile, int photoIndex) async {
     String? watermarkedPath;
     String compressedPath = xfile.path;
 
@@ -609,7 +615,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       compressedPath = await ImageCompressor.compressIfNeeded(xfile.path);
 
       final timestamp = DateTime.now();
-      final photoIndex = _photoCount + 1;
 
       watermarkedPath = await _applyWatermark(compressedPath, timestamp, photoIndex);
 
@@ -639,15 +644,14 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       // Simpan ke gallery
       await _saveToGallery(savedPath);
 
-      // Tampilkan notifikasi jika bukan batch mode (sukses sudah ditangani di onSuccess)
+      // Notifikasi (snackbar) untuk batch mode
       if (!widget.batchMode) {
         _showSuccess();
       } else {
-        // Batch mode: tampilkan snackbar singkat
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('📸 Foto ${_photoCount + 1} berhasil (${widget.barcode ?? 'tanpa barcode'})'),
+              content: Text('📸 Foto $photoIndex berhasil (${widget.barcode ?? 'tanpa barcode'})'),
               duration: const Duration(seconds: 1),
               backgroundColor: Colors.green.shade700,
             ),
