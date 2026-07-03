@@ -1,3 +1,4 @@
+import 'dart:convert'; // ✅ untuk jsonEncode, jsonDecode, utf8
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart';
@@ -18,7 +19,8 @@ class StorageService {
 
   String generateId() => _uuid.v4();
 
-  // ─── Database methods (delegasi ke _db) ──────────────────
+  // ─── Database methods ──────────────────────────────────────
+
   Future<void> add(ScanEntry entry) async => _db.insert(entry);
   Future<void> insert(ScanEntry entry) async => _db.insert(entry);
   Future<void> update(ScanEntry entry) async => _db.update(entry);
@@ -268,18 +270,18 @@ class StorageService {
     try {
       final entries = await _db.getAll();
       final json = entries.map((e) => e.toJson()).toList();
-      final zip = ZipFileEncoder();
+      final archive = Archive();
+      final jsonString = jsonEncode(json);
+      final jsonBytes = utf8.encode(jsonString);
+      archive.addFile(ArchiveFile('data.json', jsonBytes.length, jsonBytes));
+
+      final zipEncoder = ZipEncoder();
+      final zipData = zipEncoder.encode(archive);
+      if (zipData == null) throw Exception('Gagal membuat zip');
+
       final tempDir = await getTemporaryDirectory();
       final zipPath = join(tempDir.path, 'backup_${DateTime.now().millisecondsSinceEpoch}.zip');
-      zip.create(zipPath);
-      // Tambahkan data JSON
-      final jsonString = jsonEncode(json);
-      zip.addFileFromString('data.json', jsonString);
-
-      // Tambahkan file foto/video (opsional)
-      // ... (bisa skip untuk kecepatan)
-
-      zip.close();
+      await File(zipPath).writeAsBytes(zipData);
       return zipPath;
     } catch (e) {
       debugPrint('⚠️ Backup error: $e');
@@ -289,16 +291,15 @@ class StorageService {
 
   Future<bool> restore(String zipPath) async {
     try {
-      final zip = ZipFileDecoder();
-      zip.load(File(zipPath));
-      final jsonFile = zip.files.firstWhere((f) => f.name == 'data.json');
-      final jsonString = String.fromCharCodes(jsonFile.content);
+      final bytes = await File(zipPath).readAsBytes();
+      final zipDecoder = ZipDecoder();
+      final archive = zipDecoder.decodeBytes(bytes);
+      final dataFile = archive.files.firstWhere((f) => f.name == 'data.json');
+      final jsonString = utf8.decode(dataFile.content);
       final list = jsonDecode(jsonString) as List;
       final entries = list.map((e) => ScanEntry.fromJson(e as Map<String, dynamic>)).toList();
 
-      // Hapus semua data lama
       await _db.deleteAll();
-      // Insert baru
       for (final entry in entries) {
         await _db.insert(entry);
       }
