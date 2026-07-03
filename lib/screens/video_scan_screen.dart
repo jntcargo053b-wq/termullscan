@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/video_scan_screen.dart (FINAL – RETRY + STATUS GALLERY)
+// lib/screens/video_scan_screen.dart (FINAL – PROGRESS + RETRY + GALLERY)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -41,6 +41,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
   bool _isSaving = false;
   bool _isProcessing = false;
   String _statusText = '';
+  double _progress = 0.0; // ← progress watermark
 
   static const int _maxVideoSizeBytes = 50 * 1024 * 1024;
 
@@ -188,9 +189,10 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
 
       setState(() {
         _statusText = 'Menambahkan watermark...';
+        _progress = 0.0;
       });
 
-      // 3. Proses watermark
+      // 3. Proses watermark dengan callback progress
       final wmResult = await VideoWatermarkService.addWatermark(
         inputPath: videoFile.path,
         outputPath: wmOutputPath,
@@ -201,7 +203,19 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
           timestamp: DateTime.now(),
         ),
         settings: WatermarkSettings(),
+        onProgress: (progress) {
+          if (mounted) {
+            setState(() {
+              _progress = progress;
+              _statusText = 'Menambahkan watermark... ${(progress * 100).toInt()}%';
+            });
+          }
+        },
       );
+
+      // Reset progress setelah selesai (sukses atau gagal)
+      _progress = 0.0;
+      if (mounted) setState(() {});
 
       if (wmResult != null) {
         // 4. Watermark berhasil → simpan ke internal (rename)
@@ -266,13 +280,16 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         videoPath: finalPath,
         videoDuration: durationSeconds,
         videoThumbnail: thumbnailPath,
-        galleryExported: galleryOk, // ✅ status ekspor gallery
+        galleryExported: galleryOk,
       );
       await _storage.add(entry);
 
       return entry;
     } catch (e) {
       debugPrint('❌ Error processing video: $e');
+      // Reset progress jika error
+      _progress = 0.0;
+      if (mounted) setState(() {});
       rethrow;
     } finally {
       // Bersihkan file temp
@@ -399,7 +416,13 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
                   style: Theme.of(context).textTheme.bodyMedium, textAlign: TextAlign.center),
               const Gap(48),
               if (isProcessing) ...[
-                const LinearProgressIndicator(),
+                // Progress bar dengan persentase
+                LinearProgressIndicator(value: _progress.clamp(0.0, 1.0)),
+                const Gap(8),
+                Text(
+                  '${(_progress * 100).toInt()}%',
+                  style: const TextStyle(color: Colors.grey),
+                ),
                 const Gap(16),
               ],
               if (_statusText.isNotEmpty)
