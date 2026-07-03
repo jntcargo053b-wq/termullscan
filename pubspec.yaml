@@ -46,19 +46,20 @@ dependencies:
   camera: ^0.10.5+5
   video_player: ^2.8.5
   video_thumbnail: ^0.5.6
-  ffmpeg_kit_flutter_new_video: ^2.0.0   # ganti dari min_gpl: butuh freetype/fontconfig untuk drawtext
+  ffmpeg_kit_flutter_new_video: ^2.0.0   # Sudah tepat untuk drawtext
 
   # ─── BACKUP & RESTORE ────────────────────────────────────────────────
   archive: ^3.6.1
   file_picker: ^8.0.0
 
-  # ─── COLLECTION (untuk firstWhereOrNull) ────────────────────────────
+  # ─── COLLECTION ──────────────────────────────────────────────────────
   collection: ^1.18.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.13.1   # Opsional
 
 flutter:
   uses-material-design: true
@@ -80,3 +81,7 @@ flutter:
         - asset: assets/fonts/Poppins-Regular.ttf
         - asset: assets/fonts/Poppins-Bold.ttf
           weight: 700
+
+  assets:
+    - assets/images/logo.png             # Tambahkan jika ada
+    - assets/images/default_avatar.png   # Contoh
