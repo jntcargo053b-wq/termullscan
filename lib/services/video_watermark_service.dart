@@ -845,12 +845,12 @@ class VideoWatermarkService {
       final int bitrate = settings.videoBitrateKbps;
       debugPrint('🎚️ Video bitrate: ${bitrate}kbps');
 
-      // 6. Argumen FFmpeg dengan encoding 720p, H.264, bitrate dari settings
+      // 6. Argumen FFmpeg – PRESET 'veryfast' diganti di sini
       final arguments = <String>[
         '-i', inputPath,
         ...filterArgs,
         '-c:v', 'libx264',
-        '-preset', 'veryfast',
+        '-preset', 'veryfast',   // ← diubah menjadi veryfast
         '-b:v', '${bitrate}k',
         '-maxrate', '${bitrate}k',
         '-bufsize', '${bitrate * 2}k',
