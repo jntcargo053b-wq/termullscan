@@ -12,7 +12,7 @@ import '../watermark/watermark_style.dart';
 import '../models/scan_entry.dart';
 
 // ─────────────────────────────────────────────────────────────
-//  0.  FUNGSI UTILITAS TOP-LEVEL
+//  0.  FUNGSI UTILITAS TOP-LEVEL (tidak berubah)
 // ─────────────────────────────────────────────────────────────
 
 String _escapeFFmpegText(String text) {
@@ -73,14 +73,7 @@ String _formatTimestamp(DateTime dt) {
 }
 
 // ─────────────────────────────────────────────────────────────
-//  0b. SKALA RESOLUSI VIDEO
-//
-//  Semua ukuran watermark (fontSize, padding, tebal garis, dst) di file
-//  ini pada dasarnya dikalibrasi terhadap video portrait ~1920px tinggi.
-//  Tanpa penyesuaian, watermark akan tampak kekecilan di video resolusi
-//  tinggi (4K) dan kebesaran/kepenuhan di video resolusi rendah (480p).
-//  `_probeVideoScale` membaca tinggi video asli lewat FFprobe lalu
-//  menghasilkan faktor kali yang dipakai untuk menskalakan semua ukuran.
+//  0b. SKALA RESOLUSI VIDEO (tidak berubah)
 // ─────────────────────────────────────────────────────────────
 
 const double _kReferenceHeight = 1920.0;
@@ -119,15 +112,13 @@ Future<double> _probeVideoScale(String inputPath) async {
 }
 
 // ─────────────────────────────────────────────────────────────
-//  1.  KELAS PEMBANTU TEMPLATE FILTER
+//  1.  KELAS PEMBANTU TEMPLATE FILTER (tidak berubah)
 // ─────────────────────────────────────────────────────────────
 
 class _FilterTemplate {
   final String placeholder;
   final String template;
-
   _FilterTemplate(this.placeholder, this.template);
-
   String render(String value) => template.replaceFirst(placeholder, _escapeFFmpegText(value));
 }
 
@@ -137,7 +128,6 @@ class _PrecomputedStyle {
   final double blockHeight;
   final double blockLineHeight;
   final List<String> staticFilters;
-
   _PrecomputedStyle({
     required this.filterTemplates,
     required this.logoXY,
@@ -145,7 +135,6 @@ class _PrecomputedStyle {
     required this.blockLineHeight,
     required this.staticFilters,
   });
-
   List<String> buildFilters(List<String> dynamicTexts) {
     final result = <String>[];
     result.addAll(staticFilters);
@@ -162,14 +151,12 @@ class _PrecomputedTimestamp {
   final List<String> staticFilters;
   final _XY logoXY;
   final double barHeight;
-
   _PrecomputedTimestamp({
     required this.dynamicFilters,
     required this.staticFilters,
     required this.logoXY,
     required this.barHeight,
   });
-
   List<String> buildFilters(List<String> dynamicData) {
     final result = <String>[];
     result.addAll(staticFilters);
@@ -181,8 +168,53 @@ class _PrecomputedTimestamp {
   }
 }
 
+// ─── TAMBAHAN: Kelas untuk watermark Full Info ──────────────
+
+class _PrecomputedFullInfo {
+  final List<_FilterTemplate> dynamicFilters;
+  final List<String> staticFilters;
+  final _XY logoXY;
+  final double barHeight;
+
+  _PrecomputedFullInfo({
+    required this.dynamicFilters,
+    required this.staticFilters,
+    required this.logoXY,
+    required this.barHeight,
+  });
+
+  List<String> buildFilters({
+    required String barcode,
+    required String date,
+    required String time,
+    required String operator,
+    required String company,
+    required String gpsText,
+    required String location,
+    required String code,
+  }) {
+    final data = [
+      barcode,
+      date,
+      time,
+      operator,
+      company,
+      gpsText,
+      location,
+      code,
+    ];
+    final result = <String>[];
+    result.addAll(staticFilters);
+    for (var i = 0; i < data.length && i < dynamicFilters.length; i++) {
+      if (data[i].isEmpty) continue;
+      result.add(dynamicFilters[i].render(data[i]));
+    }
+    return result;
+  }
+}
+
 // ─────────────────────────────────────────────────────────────
-//  2.  CACHE WATERMARK (SINGLETON) DENGAN LOGO ui.Image
+//  2.  CACHE WATERMARK (DENGAN FULL INFO)
 // ─────────────────────────────────────────────────────────────
 
 class _WatermarkCache {
@@ -196,19 +228,14 @@ class _WatermarkCache {
   String? _cachedLogoPath;
   ui.Image? _cachedLogoImage;
 
-  // Cache layout per (gaya, skala) — skala baru diketahui setelah resolusi
-  // video asli di-probe di addWatermark(), jadi tidak bisa dihitung di sini.
   final Map<String, _PrecomputedStyle> _styleCache = {};
   final Map<double, _PrecomputedTimestamp> _timestampCache = {};
+  final Map<double, _PrecomputedFullInfo> _fullInfoCache = {};
 
   Future<void> initialize(WatermarkSettings settings) async {
     if (_initialized && _settings == settings) return;
     _settings = settings;
-
-    // 1. Font
     _cachedFontPath = await _getFontPath(settings.fontFamily);
-
-    // 2. Logo (path dan image)
     _cachedLogoPath = null;
     _cachedLogoImage = null;
     if (settings.hasLogo && settings.logoPath != null) {
@@ -218,13 +245,9 @@ class _WatermarkCache {
         _cachedLogoImage = await _decodeLogo(logoFile);
       }
     }
-
-    // Catatan: layout style/timestamp SENGAJA tidak dihitung di sini lagi,
-    // karena ukurannya bergantung pada resolusi video asli (lihat getStyle
-    // / getTimestamp di bawah, dipanggil dengan `scale` hasil probe FFprobe).
     _styleCache.clear();
     _timestampCache.clear();
-
+    _fullInfoCache.clear();
     _initialized = true;
   }
 
@@ -240,12 +263,7 @@ class _WatermarkCache {
     }
   }
 
-  // ─── Akses untuk logo ──────────────────────────────────────
-
-  /// Untuk video (FFmpeg) – kembalikan path file logo.
   String? get logoPath => _cachedLogoPath;
-
-  /// Untuk foto (Canvas) – kembalikan [ui.Image] yang sudah didecode.
   Future<ui.Image?> getLogoImage() async {
     if (_cachedLogoImage != null) return _cachedLogoImage;
     if (_cachedLogoPath != null) {
@@ -258,7 +276,7 @@ class _WatermarkCache {
     return null;
   }
 
-  // ─── Prekomputasi gaya umum ──────────────────────────────
+  // ─── Prekomputasi gaya umum (sama seperti sebelumnya) ────
 
   _PrecomputedStyle _precomputeGeneral(
     WatermarkSettings settings,
@@ -321,7 +339,7 @@ class _WatermarkCache {
     );
   }
 
-  // ─── Prekomputasi timestamp ──────────────────────────────
+  // ─── Prekomputasi timestamp (sama) ──────────────────────
 
   _PrecomputedTimestamp _precomputeTimestamp(WatermarkSettings settings, double scale) {
     final padding = (22 * scale).round();
@@ -357,13 +375,11 @@ class _WatermarkCache {
     final escapedFontPath = _escapeFFmpegPath(_cachedFontPath!);
     final staticParts = <String>[];
 
-    // Background bar
     staticParts.add(
       "drawbox=x=0:y=ih-$barHeight:w=iw:h=$barHeight:"
       "color=black@${settings.backgroundOpacity.clamp(0.4, 1.0)}:t=fill",
     );
 
-    // Brand badge (pojok kanan atas)
     final brandText = settings.companyName.isNotEmpty ? settings.companyName : 'TermulScan';
     staticParts.add(
       "drawtext=text='${_escapeFFmpegText(brandText)}':"
@@ -378,7 +394,6 @@ class _WatermarkCache {
       "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1",
     );
 
-    // Kode verifikasi (bawah kanan) – template dengan placeholder
     staticParts.add(
       "drawtext=text='{{code}}  •  TERMULSCAN VERIFIED':"
       "fontfile='$escapedFontPath':fontcolor=white@0.75:fontsize=$codeFontSize:"
@@ -388,7 +403,6 @@ class _WatermarkCache {
 
     final dynamicTemplates = <_FilterTemplate>[];
 
-    // Meta baris (maks 2)
     for (var i = 0; i < maxMetaLines; i++) {
       final placeholder = '{{meta$i}}';
       final yPos = padding + i * (metaFontSize + gap8);
@@ -400,7 +414,6 @@ class _WatermarkCache {
       dynamicTemplates.add(_FilterTemplate(placeholder, filter));
     }
 
-    // Jam besar
     final timeRowTop = (maxMetaLines > 0) ? padding + maxMetaLines * (metaFontSize + gap8) : padding;
     dynamicTemplates.add(
       _FilterTemplate(
@@ -412,14 +425,12 @@ class _WatermarkCache {
       ),
     );
 
-    // Divider vertikal
     final dividerX = padding + (timeFontSize * 2.6).round();
     staticParts.add(
       "drawbox=x=$dividerX:y=ih-$barHeight+$timeRowTop:w=$barWidth:h=$timeFontSize:"
       "color=$accentColor@0.95:t=fill",
     );
 
-    // Tanggal + hari
     final dateColX = dividerX + gap16;
     dynamicTemplates.add(
       _FilterTemplate(
@@ -440,7 +451,6 @@ class _WatermarkCache {
       ),
     );
 
-    // Alamat (2 baris)
     final addressStartY = timeRowTop + timeRowH;
     for (var i = 0; i < maxAddressLines; i++) {
       final placeholder = '{{addr$i}}';
@@ -456,6 +466,149 @@ class _WatermarkCache {
     final logoXY = _XY('W-w-$logoGap', 'H-h-$logoGap');
 
     return _PrecomputedTimestamp(
+      dynamicFilters: dynamicTemplates,
+      staticFilters: staticParts,
+      logoXY: logoXY,
+      barHeight: barHeight.toDouble(),
+    );
+  }
+
+  // ─── PREKOMPUTASI FULL INFO (BARU) ────────────────────────
+
+  _PrecomputedFullInfo _precomputeFullInfo(WatermarkSettings settings, double scale) {
+    final padding = (20 * scale).round();
+    const accentColor = 'orange';
+
+    int scaled(num px, {int min = 1}) => math.max(min, (px * scale).round());
+
+    final barcodeSize = scaled(settings.fontSize * 2.2, min: (32 * scale).round());
+    final dateSize = scaled(settings.fontSize * 1.2, min: (18 * scale).round());
+    final timeSize = scaled(settings.fontSize * 1.2, min: (18 * scale).round());
+    final operatorSize = scaled(settings.fontSize * 0.9, min: (14 * scale).round());
+    final companySize = scaled(settings.fontSize * 0.9, min: (14 * scale).round());
+    final gpsSize = scaled(settings.fontSize * 0.8, min: (12 * scale).round());
+    final locationSize = scaled(settings.fontSize * 0.8, min: (12 * scale).round());
+    final codeSize = scaled(settings.fontSize * 0.65, min: (10 * scale).round());
+
+    final gap4 = scaled(4);
+    final gap6 = scaled(6);
+    final gap8 = scaled(8);
+    final gap10 = scaled(10);
+    final gap12 = scaled(12);
+    final gap16 = scaled(16);
+    final shadow1 = scaled(1);
+    final shadow2 = scaled(2);
+    final logoGap = scaled(20);
+
+    // Hitung tinggi bar berdasarkan semua elemen
+    final row1 = barcodeSize;
+    final row2 = math.max(dateSize, timeSize) + gap4;
+    final row3 = math.max(operatorSize, companySize) + gap4;
+    final row4 = gpsSize + gap4;
+    final row5 = locationSize + gap4;
+    final row6 = codeSize + gap10;
+
+    final totalRows = (row1 + row2 + row3 + row4 + row5 + row6).toInt();
+    final barHeight = padding * 2 + totalRows;
+
+    final escapedFontPath = _escapeFFmpegPath(_cachedFontPath!);
+    final staticParts = <String>[];
+
+    // Background
+    staticParts.add(
+      "drawbox=x=0:y=ih-$barHeight:w=iw:h=$barHeight:"
+      "color=black@${settings.backgroundOpacity.clamp(0.4, 1.0)}:t=fill",
+    );
+
+    // Divider horizontal tipis di atas bar (opsional)
+    staticParts.add(
+      "drawbox=x=$padding:y=ih-$barHeight:w=iw-${padding*2}:h=1:color=white@0.15:t=fill",
+    );
+
+    // Logo overlay akan ditambahkan di luar.
+
+    final dynamicTemplates = <_FilterTemplate>[];
+
+    int cursorY = padding;
+
+    // 1. Barcode (baris pertama)
+    dynamicTemplates.add(
+      _FilterTemplate(
+        '{{barcode}}',
+        "drawtext=text='{{barcode}}':"
+        "fontfile='$escapedFontPath':fontcolor=white:fontsize=$barcodeSize:"
+        "x=$padding:y=ih-$barHeight+$cursorY:"
+        "shadowcolor=black@0.85:shadowx=$shadow2:shadowy=$shadow2",
+      ),
+    );
+    cursorY += barcodeSize + gap6;
+
+    // 2. Tanggal & Jam (satu baris)
+    final dateTimeText = "{{date}}  {{time}} WIB";
+    dynamicTemplates.add(
+      _FilterTemplate(
+        '{{datetime}}',
+        "drawtext=text='$dateTimeText':"
+        "fontfile='$escapedFontPath':fontcolor=white@0.95:fontsize=$dateSize:"
+        "x=$padding:y=ih-$barHeight+$cursorY:"
+        "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1",
+      ),
+    );
+    cursorY += dateSize + gap8;
+
+    // 3. Operator & Perusahaan (satu baris)
+    final opText = "{{operator}}  •  {{company}}";
+    dynamicTemplates.add(
+      _FilterTemplate(
+        '{{operator_company}}',
+        "drawtext=text='$opText':"
+        "fontfile='$escapedFontPath':fontcolor=white@0.9:fontsize=$operatorSize:"
+        "x=$padding:y=ih-$barHeight+$cursorY:"
+        "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1",
+      ),
+    );
+    cursorY += operatorSize + gap8;
+
+    // 4. GPS (latitude, longitude)
+    if (settings.showGps) { // jika ada flag showGps
+      dynamicTemplates.add(
+        _FilterTemplate(
+          '{{gps}}',
+          "drawtext=text='📍 {{gps}}':"
+          "fontfile='$escapedFontPath':fontcolor=white@0.85:fontsize=$gpsSize:"
+          "x=$padding:y=ih-$barHeight+$cursorY:"
+          "shadowcolor=black@0.7:shadowx=$shadow1:shadowy=$shadow1",
+        ),
+      );
+      cursorY += gpsSize + gap4;
+    }
+
+    // 5. Lokasi (jika ada)
+    if (settings.showLocation) {
+      dynamicTemplates.add(
+        _FilterTemplate(
+          '{{location}}',
+          "drawtext=text='🏷️ {{location}}':"
+          "fontfile='$escapedFontPath':fontcolor=white@0.8:fontsize=$locationSize:"
+          "x=$padding:y=ih-$barHeight+$cursorY:"
+          "shadowcolor=black@0.7:shadowx=$shadow1:shadowy=$shadow1",
+        ),
+      );
+      cursorY += locationSize + gap4;
+    }
+
+    // 6. Kode verifikasi (bawah kanan)
+    // Sebagai tambahan, kita letakkan di pojok kanan bawah bar (bukan di bawah foto)
+    staticParts.add(
+      "drawtext=text='{{code}}  •  TERMULSCAN VERIFIED':"
+      "fontfile='$escapedFontPath':fontcolor=white@0.7:fontsize=$codeSize:"
+      "x=w-text_w-$padding:y=ih-$barHeight-${codeSize + gap10}:"
+      "shadowcolor=black@0.6:shadowx=$shadow1:shadowy=$shadow1",
+    );
+
+    final logoXY = _XY('W-w-$logoGap', 'H-h-$logoGap');
+
+    return _PrecomputedFullInfo(
       dynamicFilters: dynamicTemplates,
       staticFilters: staticParts,
       logoXY: logoXY,
@@ -504,6 +657,27 @@ class _WatermarkCache {
     ];
   }
 
+  /// Data untuk full info: [barcode, date, time, operator, company, gpsText, location, code]
+  List<String> getFullInfoData(ScanEntry entry, WatermarkSettings settings) {
+    final dateStr = _ddmmyyyyFF(entry.timestamp);
+    final timeStr = _hhmmFF(entry.timestamp);
+    final gpsText = (entry.latitude != null && entry.longitude != null)
+        ? '${entry.latitude!.toStringAsFixed(4)}, ${entry.longitude!.toStringAsFixed(4)}'
+        : 'GPS tidak tersedia';
+    final location = entry.locationName ?? '';
+    final code = _generateVerificationCode(entry, settings);
+    return [
+      entry.value,
+      dateStr,
+      timeStr,
+      settings.operatorName.isNotEmpty ? settings.operatorName : '-',
+      settings.companyName.isNotEmpty ? settings.companyName : '-',
+      gpsText,
+      location,
+      code,
+    ];
+  }
+
   // ─── Akses cache ──────────────────────────────────────────
 
   _PrecomputedStyle getStyle(WatermarkStyle style, double scale) {
@@ -518,6 +692,11 @@ class _WatermarkCache {
   _PrecomputedTimestamp getTimestamp(double scale) {
     if (!_initialized) throw StateError('Cache belum diinisialisasi');
     return _timestampCache.putIfAbsent(scale, () => _precomputeTimestamp(_settings!, scale));
+  }
+
+  _PrecomputedFullInfo getFullInfo(double scale) {
+    if (!_initialized) throw StateError('Cache belum diinisialisasi');
+    return _fullInfoCache.putIfAbsent(scale, () => _precomputeFullInfo(_settings!, scale));
   }
 
   // ─── Font helper ──────────────────────────────────────────
@@ -578,7 +757,6 @@ class VideoWatermarkService {
   static String? lastError;
   static bool _warmedUp = false;
 
-  /// Warm-up FFmpeg dengan menjalankan perintah `-version`.
   static Future<void> warmUp() async {
     if (_warmedUp) return;
     try {
@@ -599,8 +777,6 @@ class VideoWatermarkService {
 
   static final _WatermarkCache _cache = _WatermarkCache();
 
-  /// Preload semua komponen watermark (font, logo, layout) agar siap pakai.
-  /// Panggil metode ini di `main()` setelah `WatermarkSettings` dimuat.
   static Future<void> preload(WatermarkSettings settings) async {
     await _cache.initialize(settings);
   }
@@ -613,19 +789,32 @@ class VideoWatermarkService {
   }) async {
     lastError = null;
     try {
-      // 1. Inisialisasi cache (jika perlu)
       await _cache.initialize(settings);
 
-      // 1b. Probe resolusi video asli agar ukuran watermark (font, padding,
-      // tebal garis) proporsional terhadap frame, bukan pixel absolut tetap.
       final scale = await _probeVideoScale(inputPath);
       debugPrint('📐 Skala watermark video: $scale');
 
-      // 2. Bangun filter chain berdasarkan gaya
       final List<String> filterParts;
       final _XY logoXY;
 
-      if (settings.style == WatermarkStyle.timestamp) {
+      // Pilih gaya berdasarkan settings
+      if (settings.style == WatermarkStyle.fullInfo) {
+        // Gaya baru: full info
+        final precomputed = _cache.getFullInfo(scale);
+        final data = _cache.getFullInfoData(entry, settings);
+        // data: [barcode, date, time, operator, company, gpsText, location, code]
+        filterParts = precomputed.buildFilters(
+          barcode: data[0],
+          date: data[1],
+          time: data[2],
+          operator: data[3],
+          company: data[4],
+          gpsText: data[5],
+          location: data[6],
+          code: data[7],
+        );
+        logoXY = precomputed.logoXY;
+      } else if (settings.style == WatermarkStyle.timestamp) {
         final precomputed = _cache.getTimestamp(scale);
         final dynamicData = _cache.getTimestampDynamicData(entry, settings);
         filterParts = precomputed.buildFilters(dynamicData);
@@ -637,7 +826,7 @@ class VideoWatermarkService {
         logoXY = precomputed.logoXY;
       }
 
-      // 3. Logo overlay (untuk video gunakan path)
+      // Logo overlay
       final logoPath = _cache.logoPath;
       final List<String> filterArgs;
       if (logoPath != null) {
@@ -657,7 +846,7 @@ class VideoWatermarkService {
         ];
       }
 
-      // 4. Argumen FFmpeg
+      // Argumen FFmpeg
       final arguments = <String>[
         '-i', inputPath,
         ...filterArgs,
@@ -673,7 +862,6 @@ class VideoWatermarkService {
 
       debugPrint('🎬 FFmpeg arguments: $arguments');
 
-      // 5. Eksekusi
       final session = await FFmpegKit.executeWithArguments(arguments);
       final returnCode = await session.getReturnCode();
 
@@ -733,7 +921,7 @@ class VideoWatermarkService {
 }
 
 // ─────────────────────────────────────────────────────────────
-//  4.  HELPER CLASSES
+//  4.  HELPER CLASSES (tidak berubah)
 // ─────────────────────────────────────────────────────────────
 
 class _TextLine {
