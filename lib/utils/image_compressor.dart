@@ -1,12 +1,9 @@
-// ============================================================
-// lib/utils/image_compressor.dart (FINAL - dengan Isolate)
-// ============================================================
+// lib/utils/image_compressor.dart
 import 'dart:io';
 import 'package:image/image.dart' as img;
 import 'package:flutter/foundation.dart';
 import '../config/app_config.dart';
 
-/// Argumen untuk dikirim ke isolate
 class _CompressArgs {
   final String imagePath;
   final int maxSizeBytes;
@@ -22,27 +19,23 @@ class _CompressArgs {
 }
 
 class ImageCompressor {
-  static const int maxSizeBytes = AppConfig.maxImageSizeMB * 1024 * 1024; // 5MB
-  static const int targetSizeBytes = AppConfig.targetImageSizeKB * 1024; // 1MB
+  static const int maxSizeBytes = AppConfig.maxImageSizeMB * 1024 * 1024;
+  static const int targetSizeBytes = AppConfig.targetImageSizeKB * 1024;
   static const int maxDimension = 1920;
 
-  /// Kompres gambar di isolate terpisah agar UI tidak freeze.
-  /// Mengembalikan path file hasil (atau path asli jika tidak perlu).
   static Future<String> compressIfNeeded(String imagePath) async {
     try {
       final file = File(imagePath);
       if (!await file.exists()) return imagePath;
 
       final size = await file.length();
-      // Jika ukuran sudah <= batas, tidak perlu kompresi
       if (size <= maxSizeBytes) {
         debugPrint('✅ Ukuran file $size bytes, tidak perlu kompresi');
         return imagePath;
       }
 
-      debugPrint('⚠️ Ukuran file $size bytes (>${AppConfig.maxImageSizeMB}MB), mulai kompresi di isolate...');
+      debugPrint('⚠️ Ukuran $size bytes, mulai kompresi di isolate...');
 
-      // Kirim ke isolate
       final args = _CompressArgs(
         imagePath: imagePath,
         maxSizeBytes: maxSizeBytes,
@@ -50,8 +43,7 @@ class ImageCompressor {
         maxDimension: maxDimension,
       );
 
-      final result = await compute(_compressInIsolate, args);
-      return result;
+      return await compute(_compressInIsolate, args);
     } catch (e) {
       debugPrint('⚠️ Gagal kompresi: $e, menggunakan file asli');
       return imagePath;
@@ -59,32 +51,27 @@ class ImageCompressor {
   }
 }
 
-/// Fungsi yang berjalan di isolate.
-/// Tidak boleh mengakses variabel global atau context UI.
 String _compressInIsolate(_CompressArgs args) {
   try {
     final file = File(args.imagePath);
     if (!file.existsSync()) return args.imagePath;
 
-    // Baca gambar
     final bytes = file.readAsBytesSync();
     img.Image? image = img.decodeImage(bytes);
     if (image == null) return args.imagePath;
 
-    // STEP 1: Resize jika dimensi > maxDimension
+    // Resize jika dimensi > maxDimension
     if (image.width > args.maxDimension || image.height > args.maxDimension) {
       double scale = args.maxDimension / (image.width > image.height ? image.width : image.height);
-      int newWidth = (image.width * scale).toInt();
-      int newHeight = (image.height * scale).toInt();
-      image = img.copyResize(image, width: newWidth, height: newHeight);
+      image = img.copyResize(image, width: (image.width * scale).toInt(), height: (image.height * scale).toInt());
     }
 
-    // STEP 2: Kompresi dengan kualitas adaptif
-    int quality = 75;
+    // Kompresi dengan kualitas adaptif
+    int quality = 85;
     List<int> compressedBytes = img.encodeJpg(image, quality: quality);
     int compressedSize = compressedBytes.length;
 
-    // Turunkan kualitas sampai target atau quality 20
+    // Turunkan kualitas hingga target atau quality 20
     while (compressedSize > args.targetSizeBytes * 2 && quality > 20) {
       quality -= 10;
       compressedBytes = img.encodeJpg(image, quality: quality);
@@ -95,21 +82,26 @@ String _compressInIsolate(_CompressArgs args) {
     if (compressedSize > args.targetSizeBytes * 3) {
       double scale = (args.targetSizeBytes * 2) / compressedSize;
       scale = scale.clamp(0.3, 0.9);
-      final newWidth = (image.width * scale).toInt();
-      final newHeight = (image.height * scale).toInt();
-      final resized = img.copyResize(image, width: newWidth, height: newHeight);
-      final finalBytes = img.encodeJpg(resized, quality: quality);
-      compressedSize = finalBytes.length;
-      compressedBytes = finalBytes;
+      final resized = img.copyResize(image, width: (image.width * scale).toInt(), height: (image.height * scale).toInt());
+      compressedBytes = img.encodeJpg(resized, quality: quality);
+      compressedSize = compressedBytes.length;
     }
 
-    // Simpan hasil kompresi
-    final dir = file.parent.path;
-    final filename = 'compressed_${DateTime.now().millisecondsSinceEpoch}.jpg';
-    final compressedPath = '$dir/$filename';
-    File(compressedPath).writeAsBytesSync(compressedBytes);
+    // Pastikan tidak melebihi batas maksimum
+    if (compressedSize > args.maxSizeBytes) {
+      final scale = 0.7;
+      final smaller = img.copyResize(image, width: (image.width * scale).toInt(), height: (image.height * scale).toInt());
+      compressedBytes = img.encodeJpg(smaller, quality: 70);
+    }
 
-    debugPrint('✅ Kompresi selesai di isolate: ${compressedSize ~/ 1024}KB (target ~${args.targetSizeBytes ~/ 1024}KB)');
+    // Simpan hasil
+    final dir = file.parent.path;
+    final originalName = file.path.split('/').last;
+    final baseName = originalName.split('.').first;
+    final compressedPath = '$dir/${baseName}_compressed.jpg';
+    await File(compressedPath).writeAsBytes(compressedBytes);
+
+    debugPrint('✅ Kompresi selesai: ${compressedSize ~/ 1024}KB (target ~${args.targetSizeBytes ~/ 1024}KB)');
     return compressedPath;
   } catch (e) {
     debugPrint('⚠️ Gagal kompresi di isolate: $e');
