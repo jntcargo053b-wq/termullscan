@@ -7,15 +7,28 @@ import 'theme/app_theme.dart';
 import 'screens/home_screen.dart';
 import 'watermark/watermark_settings.dart';
 import 'services/storage_service.dart';
+import 'services/video_watermark_service.dart'; // untuk warmUp()
+import 'services/watermark_cache.dart'; // jika kita ekspor cache-nya
 import 'models/scan_entry.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Muat watermark settings (singleton) – cukup sekali
+  // ─── 1. Muat watermark settings ──────────────────────────
   final watermarkSettings = WatermarkSettings();
   await watermarkSettings.load();
 
+  // ─── 2. Preload watermark (font, logo, layout) ──────────
+  // Asumsikan kita memiliki WatermarkCache singleton yang bisa diinisialisasi
+  final cache = WatermarkCache();
+  await cache.initialize(watermarkSettings);
+  debugPrint('✅ Watermark cache siap (font, logo, layout)');
+
+  // ─── 3. Warm-up FFmpeg (agar panggilan pertama cepat) ──
+  // Jalankan di background agar tidak menghambat startup
+  unawaited(VideoWatermarkService.warmUp());
+
+  // ─── 4. Inisialisasi database dan migrasi dari JSON ────
   final storage = StorageService();
   try {
     final dir = await getApplicationDocumentsDirectory();
@@ -36,10 +49,12 @@ void main() async {
     debugPrint('⚠️ Migration error: $e (maybe no JSON data)');
   }
 
-  // ✅ Cleanup berjalan di isolate (background) – tidak blocking UI
-  storage.cleanupOldFilesInBackground(days: 45);
+  // ─── 5. Cleanup file lama di background ──────────────────
+  // Tidak blocking UI
+  unawaited(storage.cleanupOldFilesInBackground(days: 45));
 
-  SystemChrome.setPreferredOrientations([
+  // ─── 6. Konfigurasi orientasi dan system UI ─────────────
+  await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
   ]);
@@ -49,6 +64,7 @@ void main() async {
     systemNavigationBarColor: AppTheme.bg,
   ));
 
+  // ─── 7. Jalankan aplikasi ────────────────────────────────
   runApp(const WHScannerApp());
 }
 
