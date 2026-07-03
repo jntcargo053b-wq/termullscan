@@ -1,4 +1,3 @@
-// lib/watermark/watermark_settings.dart
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'watermark_style.dart';
@@ -26,8 +25,9 @@ class WatermarkSettings extends ChangeNotifier {
   static const String _keyFontSize = 'watermark_font_size';
   static const String _keyBgOpacity = 'watermark_bg_opacity';
   static const String _keyFontFamily = 'watermark_font_family';
-  static const String _keyShowGps = 'watermark_show_gps';       // baru
-  static const String _keyShowLocation = 'watermark_show_location'; // baru
+  static const String _keyShowGps = 'watermark_show_gps';
+  static const String _keyShowLocation = 'watermark_show_location';
+  static const String _keyVideoQuality = 'watermark_video_quality';
 
   // ========== PROPERTIES ==========
   String operatorName = '';
@@ -39,11 +39,27 @@ class WatermarkSettings extends ChangeNotifier {
   double fontSize = 14.0;
   double backgroundOpacity = 0.85;
   String fontFamily = 'Roboto';
-  bool showGps = true;       // baru
-  bool showLocation = true;  // baru
+  bool showGps = true;
+  bool showLocation = true;
+  VideoQuality videoQuality = VideoQuality.high; // default Tinggi
 
   bool _loaded = false;
 
+  // ─── Getter bitrate berdasarkan kualitas ──────────────────
+  int get videoBitrateKbps {
+    switch (videoQuality) {
+      case VideoQuality.low:
+        return 2500;
+      case VideoQuality.medium:
+        return 3500;
+      case VideoQuality.high:
+        return 4000;
+    }
+  }
+
+  String get videoBitrateString => '${videoBitrateKbps}k';
+
+  // ─── Load ──────────────────────────────────────────────────
   Future<void> load() async {
     if (_loaded) return;
     try {
@@ -67,6 +83,11 @@ class WatermarkSettings extends ChangeNotifier {
       fontFamily = prefs.getString(_keyFontFamily) ?? 'Roboto';
       showGps = prefs.getBool(_keyShowGps) ?? true;
       showLocation = prefs.getBool(_keyShowLocation) ?? true;
+      final qualityIndex = prefs.getInt(_keyVideoQuality) ?? VideoQuality.high.index;
+      final qValues = VideoQuality.values;
+      videoQuality = (qualityIndex >= 0 && qualityIndex < qValues.length)
+          ? qValues[qualityIndex]
+          : VideoQuality.high;
       _loaded = true;
       debugPrint('✅ Watermark settings loaded');
     } catch (e) {
@@ -75,6 +96,7 @@ class WatermarkSettings extends ChangeNotifier {
     }
   }
 
+  // ─── Save ──────────────────────────────────────────────────
   Future<void> save() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -93,13 +115,14 @@ class WatermarkSettings extends ChangeNotifier {
       await prefs.setString(_keyFontFamily, fontFamily);
       await prefs.setBool(_keyShowGps, showGps);
       await prefs.setBool(_keyShowLocation, showLocation);
+      await prefs.setInt(_keyVideoQuality, videoQuality.index);
       debugPrint('✅ Watermark settings saved');
     } catch (e) {
       debugPrint('⚠️ Error saving watermark settings: $e');
     }
   }
 
-  // ========== SETTERS (tambahkan untuk flags baru) ==========
+  // ─── Setters ──────────────────────────────────────────────
   Future<void> setOperatorName(String name) async {
     operatorName = name;
     notifyListeners();
@@ -156,7 +179,6 @@ class WatermarkSettings extends ChangeNotifier {
     await save();
   }
 
-  // ========== SETTERS UNTUK FLAGS ==========
   Future<void> setShowGps(bool value) async {
     showGps = value;
     notifyListeners();
@@ -165,6 +187,12 @@ class WatermarkSettings extends ChangeNotifier {
 
   Future<void> setShowLocation(bool value) async {
     showLocation = value;
+    notifyListeners();
+    await save();
+  }
+
+  Future<void> setVideoQuality(VideoQuality quality) async {
+    videoQuality = quality;
     notifyListeners();
     await save();
   }
