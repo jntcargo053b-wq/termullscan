@@ -4,4 +4,5 @@ enum WatermarkStyle {
   polaroid,
   stamp,
   timestamp,
+  fullInfo, // ← tambahkan ini
 }
