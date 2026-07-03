@@ -1,6 +1,3 @@
-// ============================================================
-// lib/screens/photo_scan_screen.dart (FINAL – MEMORY SAFE BATCH)
-// ============================================================
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -105,7 +102,7 @@ class _HeaderWidget extends StatelessWidget {
   }
 }
 
-// ─── WIDGET: Photo Thumbnails (optimised memory) ─────────────
+// ─── WIDGET: Photo Thumbnails ────────────────────────────────
 class _PhotoThumbnailsWidget extends StatelessWidget {
   final List<String> photoPaths;
   const _PhotoThumbnailsWidget({required this.photoPaths});
@@ -304,7 +301,7 @@ class PhotoScanScreen extends StatefulWidget {
 class _PhotoScanScreenState extends State<PhotoScanScreen> {
   final ImagePicker _picker = ImagePicker();
   final StorageService _storage = StorageService();
-  final WatermarkSettings _wmSettings = WatermarkSettings();
+  final WatermarkSettings _wmSettings = WatermarkSettings.instance; // ✅ singleton
 
   bool _isSaving = false;
   bool _isCapturing = false;
@@ -320,6 +317,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     super.initState();
     _requestPermissions();
   }
+
+  // ─── Permission ─────────────────────────────────────────────
 
   Future<void> _requestPermissions() async {
     final cameraStatus = await Permission.camera.status;
@@ -375,6 +374,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     return granted;
   }
 
+  // ─── Settings ───────────────────────────────────────────────
+
   void _openWatermarkSettings() {
     showModalBottomSheet(
       context: context,
@@ -387,12 +388,16 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     );
   }
 
+  // ─── File naming ────────────────────────────────────────────
+
   String _resolveFileName(int photoIndex) {
     if (widget.barcode == null) return 'photo_$photoIndex';
     return photoIndex == 1
         ? widget.barcode!
         : '${widget.barcode}${photoIndex.toString().padLeft(3, '0')}';
   }
+
+  // ─── Core processing ────────────────────────────────────────
 
   Future<String> _applyWatermark(String imagePath, DateTime timestamp, int photoIndex) async {
     final fileName = _resolveFileName(photoIndex);
@@ -410,11 +415,13 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       locationName: null,
     );
 
+    // ✅ Gunakan RenderContext yang sudah di-preload
     final result = await WatermarkRenderer.render(
       imagePath: imagePath,
       outputPath: outputPath,
       settings: _wmSettings,
       entry: tempEntry,
+      // renderContext: RenderContext.instance, // jika sudah tersedia
     );
 
     if (result != null && result != imagePath) {
@@ -451,6 +458,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       return false;
     }
   }
+
+  // ─── Take photo ─────────────────────────────────────────────
 
   Future<void> _takePhoto() async {
     if (_isSaving || _isCapturing || _processingRequest) return;
@@ -526,6 +535,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         throw Exception('Ukuran foto terlalu besar (>20MB)');
       }
 
+      // ✅ Kompresi di isolate (sudah menggunakan compute)
       compressedPath = await ImageCompressor.compressIfNeeded(xfile.path);
 
       final timestamp = DateTime.now();
@@ -541,6 +551,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       final savedPath = await _storage.savePhoto(watermarkedPath, name: name);
       if (savedPath.isEmpty) throw Exception('Gagal menyimpan file foto');
 
+      // Hapus file watermark jika berbeda dengan savedPath
       if (watermarkedPath != savedPath &&
           await FileHelper.isTemporaryFile(watermarkedPath)) {
         try { await File(watermarkedPath).delete(); } catch (_) {}
@@ -597,6 +608,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       }
     }
   }
+
+  // ─── Batch finish ───────────────────────────────────────────
 
   Future<void> _finishBatch() async {
     if (widget.entryId != null && _photoPaths.isNotEmpty) {
@@ -658,6 +671,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     if (mounted) Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
   }
 
+  // ─── Feedback ──────────────────────────────────────────────
+
   void _showSuccess() {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -685,6 +700,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       ),
     );
   }
+
+  // ─── Build ──────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -774,6 +791,15 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                 _BatchFinishButtonWidget(photoCount: _photoCount, onFinish: _finishBatch),
               const Gap(32),
               _InfoBoxWidget(batchMode: widget.batchMode),
+              // ✅ Indikator progres saat menyimpan
+              if (_isSaving)
+                Padding(
+                  padding: const EdgeInsets.only(top: 16),
+                  child: LinearProgressIndicator(
+                    backgroundColor: Colors.grey[800],
+                    valueColor: AlwaysStoppedAnimation(AppTheme.accentOrange),
+                  ),
+                ),
             ],
           ),
         ),
