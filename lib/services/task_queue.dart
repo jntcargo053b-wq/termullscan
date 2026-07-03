@@ -1,59 +1,81 @@
 import 'dart:async';
 import 'dart:collection';
 import 'package:flutter/foundation.dart';
+import 'package:uuid/uuid.dart'; // tambahkan dependency di pubspec.yaml
 
+enum TaskPriority { high, normal, low }
 enum TaskStatus { pending, running, completed, failed, cancelled }
 
 class Task<T> {
   final String id;
   final String label;
+  final TaskPriority priority;
+  final int maxRetries;
+  int retryCount = 0;
   final Future<T> Function() work;
   final void Function(T result)? onSuccess;
   final void Function(Object error)? onError;
-  TaskStatus status;
+  TaskStatus status = TaskStatus.pending;
   Object? error;
   T? result;
 
   Task({
     required this.id,
     required this.label,
+    this.priority = TaskPriority.normal,
+    this.maxRetries = 3,
     required this.work,
     this.onSuccess,
     this.onError,
-  }) : status = TaskStatus.pending;
+  });
 }
 
 class TaskQueue {
   final Queue<Task> _queue = Queue();
   int _running = 0;
   final int maxWorkers;
-
   final _statusController = StreamController<Task>.broadcast();
-  Stream<Task> get statusStream => _statusController.stream;
-
   final _doneController = StreamController<void>.broadcast();
-  Stream<void> get doneStream => _doneController.stream;
 
-  TaskQueue({this.maxWorkers = 2});
+  // Persistence (opsional)
+  final TaskPersister? persister;
+
+  TaskQueue({this.maxWorkers = 2, this.persister});
+
+  Stream<Task> get statusStream => _statusController.stream;
+  Stream<void> get doneStream => _doneController.stream;
 
   String add<T>({
     required String label,
     required Future<T> Function() work,
+    TaskPriority priority = TaskPriority.normal,
+    int maxRetries = 3,
     void Function(T result)? onSuccess,
     void Function(Object error)? onError,
   }) {
-    final id = DateTime.now().millisecondsSinceEpoch.toString();
+    final id = const Uuid().v4(); // UUID unik
     final task = Task<T>(
       id: id,
       label: label,
+      priority: priority,
+      maxRetries: maxRetries,
       work: work,
       onSuccess: onSuccess,
       onError: onError,
     );
     _queue.add(task);
+    _sortQueue(); // urutkan berdasarkan prioritas
     _statusController.add(task);
+    _persistPending();
     _processQueue();
     return id;
+  }
+
+  void _sortQueue() {
+    final list = _queue.toList();
+    list.sort((a, b) => a.priority.index.compareTo(b.priority.index));
+    _queue.clear();
+    _queue.addAll(list);
   }
 
   bool cancel(String id) {
@@ -62,6 +84,7 @@ class TaskQueue {
       task.status = TaskStatus.cancelled;
       _queue.remove(task);
       _statusController.add(task);
+      _persistPending();
       return true;
     }
     return false;
@@ -74,17 +97,11 @@ class TaskQueue {
       _queue.remove(task);
       _statusController.add(task);
     }
+    _persistPending();
   }
 
   int get pendingCount => _queue.length;
   int get runningCount => _running;
-
-  void clearCompleted() {
-    _queue.removeWhere((t) =>
-        t.status == TaskStatus.completed ||
-        t.status == TaskStatus.failed ||
-        t.status == TaskStatus.cancelled);
-  }
 
   Future<void> _processQueue() async {
     if (_running >= maxWorkers || _queue.isEmpty) return;
@@ -98,31 +115,55 @@ class TaskQueue {
     _running++;
     task.status = TaskStatus.running;
     _statusController.add(task);
+    _persistPending();
 
     try {
       final result = await task.work();
       task.status = TaskStatus.completed;
       task.result = result;
-      if (task.onSuccess != null) {
-        task.onSuccess!(result);
-      }
+      if (task.onSuccess != null) task.onSuccess!(result);
     } catch (e) {
-      task.status = TaskStatus.failed;
-      task.error = e;
-      if (task.onError != null) {
-        task.onError!(e);
+      if (task.retryCount < task.maxRetries) {
+        task.retryCount++;
+        task.status = TaskStatus.pending;
+        // Masukkan kembali ke antrian dengan prioritas yang sama
+        _queue.addFirst(task);
+        _sortQueue();
+        debugPrint('🔄 Retry ${task.retryCount}/${task.maxRetries} for "${task.label}"');
+      } else {
+        task.status = TaskStatus.failed;
+        task.error = e;
+        if (task.onError != null) task.onError!(e);
+        debugPrint('❌ Task "${task.label}" gagal permanen: $e');
       }
-      debugPrint('❌ Task "${task.label}" gagal: $e');
     } finally {
       _running--;
       _statusController.add(task);
+      _persistPending();
 
       if (_queue.isEmpty && _running == 0) {
         _doneController.add(null);
       }
-
       _processQueue();
     }
+  }
+
+  // ─── Persistence ──────────────────────────────────────────
+
+  Future<void> _persistPending() async {
+    if (persister == null) return;
+    final pending = _queue.where((t) => t.status == TaskStatus.pending).toList();
+    await persister!.save(pending);
+  }
+
+  Future<void> loadPending() async {
+    if (persister == null) return;
+    final tasks = await persister!.load();
+    for (final task in tasks) {
+      _queue.add(task);
+    }
+    _sortQueue();
+    _processQueue();
   }
 
   void dispose() {
@@ -131,11 +172,14 @@ class TaskQueue {
   }
 }
 
-extension _QueueExtension<T> on Queue<T> {
-  T? firstWhereOrNull(bool Function(T) test) {
-    for (final item in this) {
-      if (test(item)) return item;
-    }
-    return null;
-  }
+// ─── Persistence Interface ──────────────────────────────────
+
+abstract class TaskPersister {
+  Future<void> save(List<Task> tasks);
+  Future<List<Task>> load();
 }
+
+// ─── SQLite Implementation (contoh) ─────────────────────────
+
+// Anda bisa implementasikan dengan DatabaseHelper atau SharedPreferences.
+// Karena kita sudah punya DatabaseHelper, kita bisa membuat tabel task_queue.
