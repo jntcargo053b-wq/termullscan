@@ -1,5 +1,5 @@
 // ================================================================
-// lib/services/storage_service.dart (CLEANUP VIDEO + FOTO)
+// lib/services/storage_service.dart (OPTIMASI RENAME + CLEANUP)
 // ================================================================
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -54,16 +54,39 @@ class StorageService {
   Future<void> migrateFromJson(List<ScanEntry> entries) async =>
       _db.migrateFromJson(entries);
 
+  // ─── Utility: move file (rename jika mungkin, fallback copy+delete) ──
+  Future<String> _moveFile(String sourcePath, String destPath) async {
+    final source = File(sourcePath);
+    if (!await source.exists()) {
+      throw FileSystemException('Source file not found: $sourcePath');
+    }
+
+    // Pastikan folder tujuan ada
+    final destDir = Directory(dirname(destPath));
+    if (!await destDir.exists()) {
+      await destDir.create(recursive: true);
+    }
+
+    try {
+      // Coba rename (instan jika di volume yang sama)
+      await source.rename(destPath);
+      debugPrint('✅ File moved (rename) to: $destPath');
+      return destPath;
+    } catch (e) {
+      // Fallback: copy + delete (misal lintas filesystem)
+      debugPrint('⚠️ Rename failed, fallback to copy+delete: $e');
+      await source.copy(destPath);
+      await source.delete();
+      debugPrint('✅ File moved (copy+delete) to: $destPath');
+      return destPath;
+    }
+  }
+
   // ──────────────────────────────────────────────────────────
   // PHOTO – simpan ke internal (tidak terdeteksi galeri)
   // ──────────────────────────────────────────────────────────
   Future<String> savePhoto(String sourcePath, {String? name}) async {
     try {
-      final source = File(sourcePath);
-      if (!await source.exists()) {
-        throw FileSystemException('Source file not found', sourcePath);
-      }
-
       final appDir = await getApplicationDocumentsDirectory();
       final photosDir = Directory(join(appDir.path, 'photos'));
       if (!await photosDir.exists()) {
@@ -72,7 +95,6 @@ class StorageService {
 
       String fileName;
       if (name != null && name.isNotEmpty) {
-        // Gunakan nama yang diberikan, tambahkan timestamp jika sudah ada
         final baseName = name.endsWith('.jpg') ? name.substring(0, name.length - 4) : name;
         final candidate = '$baseName.jpg';
         if (!await File(join(photosDir.path, candidate)).exists()) {
@@ -85,15 +107,10 @@ class StorageService {
       }
 
       final destPath = join(photosDir.path, fileName);
-      await source.copy(destPath);
-
-      // Hapus file asli jika berbeda
-      if (sourcePath != destPath && await source.exists()) {
-        await source.delete();
-      }
-
-      debugPrint('📸 Photo saved to internal: $destPath');
-      return destPath;
+      // Gunakan _moveFile (rename jika mungkin)
+      final finalPath = await _moveFile(sourcePath, destPath);
+      debugPrint('📸 Photo saved: $finalPath');
+      return finalPath;
     } catch (e) {
       debugPrint('⚠️ Storage: error saving photo: $e');
       rethrow;
@@ -105,11 +122,6 @@ class StorageService {
   // ──────────────────────────────────────────────────────────
   Future<String> saveVideo(String sourcePath, {String? name}) async {
     try {
-      final source = File(sourcePath);
-      if (!await source.exists()) {
-        throw FileSystemException('Source file not found', sourcePath);
-      }
-
       final appDir = await getApplicationDocumentsDirectory();
       final videosDir = Directory(join(appDir.path, 'videos'));
       if (!await videosDir.exists()) {
@@ -121,14 +133,9 @@ class StorageService {
           : '${DateTime.now().millisecondsSinceEpoch}.mp4';
 
       final destPath = join(videosDir.path, fileName);
-      await source.copy(destPath);
-
-      if (sourcePath != destPath && await source.exists()) {
-        await source.delete();
-      }
-
-      debugPrint('🎥 Video saved to internal: $destPath');
-      return destPath;
+      final finalPath = await _moveFile(sourcePath, destPath);
+      debugPrint('🎥 Video saved: $finalPath');
+      return finalPath;
     } catch (e) {
       debugPrint('⚠️ Storage: error saving video: $e');
       rethrow;
@@ -223,7 +230,7 @@ class StorageService {
   }
 
   // ──────────────────────────────────────────────────────────
-  // BACKUP & RESTORE (ringkas, tetap dipertahankan)
+  // BACKUP & RESTORE
   // ──────────────────────────────────────────────────────────
   Future<String> backup() async {
     // Implementasi backup ke zip
@@ -255,7 +262,7 @@ class StorageService {
   }
 
   // ──────────────────────────────────────────────────────────
-  // CLOSE DATABASE (jika diperlukan)
+  // CLOSE DATABASE
   // ──────────────────────────────────────────────────────────
   Future<void> close() async {
     await _db.close();
@@ -276,7 +283,6 @@ class _CleanupArgs {
   });
 }
 
-/// Fungsi yang dijalankan di isolate untuk cleanup file lama
 Future<void> _cleanupInIsolate(_CleanupArgs args) async {
   await _cleanupDir(Directory(args.photosDir), args.days);
   await _cleanupDir(Directory(args.videosDir), args.days);
