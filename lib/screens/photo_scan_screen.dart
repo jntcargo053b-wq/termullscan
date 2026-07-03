@@ -310,12 +310,12 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   final TaskQueue _taskQueue = TaskQueue(maxWorkers: 2);
   int _pendingTasks = 0;
   int _runningTasks = 0;
-  int _nextPhotoIndex = 1; // counter untuk indeks unik
+  int _nextPhotoIndex = 1;
 
   bool _isSaving = false;
   bool _isCapturing = false;
   bool _processingRequest = false;
-  int _photoCount = 0; // hanya untuk UI
+  int _photoCount = 0;
   bool _cameraGranted = false;
   final List<String> _photoPaths = [];
 
@@ -499,11 +499,10 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       );
       if (!mounted) return;
       if (xfile != null) {
-        // Ambil indeks unik SEBELUM enqueue
         final photoIndex = _nextPhotoIndex++;
         _taskQueue.add(
           label: 'Foto $photoIndex',
-          priority: TaskPriority.high,  // watermark prioritas tinggi
+          priority: TaskPriority.high,
           maxRetries: 3,
           work: () => _processPhoto(xfile, photoIndex),
           onSuccess: (path) {
@@ -515,17 +514,26 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                   _photoPaths.removeAt(0);
                 }
               });
+              if (!widget.batchMode) {
+                _showSuccess();
+                Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
+              }
             }
           },
           onError: (error) {
-            _showError('Gagal memproses foto: $error');
+            if (mounted) {
+              _showError('Gagal memproses foto: $error');
+              if (!widget.batchMode) {
+                Navigator.pop(context, {'error': error.toString()});
+              }
+            }
           },
         );
-        // Kembali tanpa menunggu
         if (!widget.batchMode) {
-          _showSuccess();
-          Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
-          return;
+          // Tampilkan status "Memproses..." agar user tidak bingung
+          setState(() {
+            _statusText = 'Memproses foto...';
+          });
         }
       }
     } catch (e) {
@@ -573,16 +581,25 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                   _photoPaths.removeAt(0);
                 }
               });
+              if (!widget.batchMode) {
+                _showSuccess();
+                Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
+              }
             }
           },
           onError: (error) {
-            _showError('Gagal memproses foto: $error');
+            if (mounted) {
+              _showError('Gagal memproses foto: $error');
+              if (!widget.batchMode) {
+                Navigator.pop(context, {'error': error.toString()});
+              }
+            }
           },
         );
         if (!widget.batchMode) {
-          _showSuccess();
-          Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
-          return;
+          setState(() {
+            _statusText = 'Memproses foto...';
+          });
         }
       }
     } catch (e) {
@@ -600,7 +617,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
   // ─── Core processing logic ──────────────────────────────────
 
-  /// Proses foto dan mengembalikan path hasil (untuk TaskQueue)
   Future<String> _processPhoto(XFile xfile, int photoIndex) async {
     String? watermarkedPath;
     String compressedPath = xfile.path;
@@ -645,9 +661,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       await _saveToGallery(savedPath);
 
       // Notifikasi (snackbar) untuk batch mode
-      if (!widget.batchMode) {
-        _showSuccess();
-      } else {
+      if (widget.batchMode) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
