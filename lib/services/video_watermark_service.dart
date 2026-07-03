@@ -8,178 +8,188 @@ import '../watermark/watermark_settings.dart';
 import '../watermark/watermark_style.dart';
 import '../models/scan_entry.dart';
 
-class VideoWatermarkService {
-  static String? lastError;
+// ─────────────────────────────────────────────────────────────
+//  1.  Kelas pembantu untuk menyimpan template
+// ─────────────────────────────────────────────────────────────
 
-  static Future<String?> addWatermark({
-    required String inputPath,
-    required String outputPath,
-    required ScanEntry entry,
-    required WatermarkSettings settings,
-  }) async {
-    lastError = null;
-    try {
-      final fontPath = await _getFontPath(settings.fontFamily);
-      final escapedFontPath = _escapeFFmpegPath(fontPath);
+class _FilterTemplate {
+  final String placeholder;
+  final String template; // string filter dengan placeholder
 
-      final List<String> filterParts;
-      final _XY logoXY;
+  _FilterTemplate(this.placeholder, this.template);
 
-      if (settings.style == WatermarkStyle.timestamp) {
-        filterParts = _buildTimestampFilterChain(
-          entry: entry,
-          settings: settings,
-          escapedFontPath: escapedFontPath,
-        );
-        // Logo ditaruh di pojok kanan-bawah bar, konsisten dgn versi foto.
-        logoXY = _XY('W-w-22', 'H-h-22');
-      } else {
-        final lines = _buildTextLines(entry, settings);
-        final layout = _StyleLayout.forStyle(settings.style, settings.position);
+  String render(String value) => template.replaceFirst(placeholder, _escapeFFmpegText(value));
+}
 
-        final blockLineHeight = settings.fontSize + 8;
-        final blockHeight = (lines.isEmpty)
-            ? 0.0
-            : (lines.length * blockLineHeight).toDouble() + (layout.padding * 2);
+class _PrecomputedStyle {
+  final List<_FilterTemplate> filterTemplates; // semua filter teks (dengan placeholder)
+  final _XY logoXY;
+  final double blockHeight;
+  final double blockLineHeight;
+  final List<String> staticFilters; // filter non-teks (background, accent, divider)
 
-        final parts = <String>[];
+  _PrecomputedStyle({
+    required this.filterTemplates,
+    required this.logoXY,
+    required this.blockHeight,
+    required this.blockLineHeight,
+    required this.staticFilters,
+  });
 
-        // 1. Background panel
-        final bg = layout.buildBackground(
-          blockHeight: blockHeight,
-          opacity: settings.backgroundOpacity,
-        );
-        if (bg != null) parts.add(bg);
-
-        // 2. Accent bar (garis vertikal berwarna)
-        final accentBar = layout.buildAccentBar(blockHeight: blockHeight);
-        if (accentBar != null) parts.add(accentBar);
-
-        // 3. Divider horizontal (garis pemisah)
-        final divider = layout.buildDivider(blockHeight: blockHeight);
-        if (divider != null) parts.add(divider);
-
-        // 4. Teks dengan shadow lebih kuat
-        for (var i = 0; i < lines.length; i++) {
-          final line = lines[i];
-          if (line.text.isEmpty) continue;
-          final escapedText = _escapeFFmpegText(line.text);
-          final fontSize = (settings.fontSize + line.sizeOffset).clamp(10, 64).round();
-          final color = layout.textColor(line.isTitle);
-          final xExpr = layout.textX();
-          final yExpr = layout.textY(
-            lineIndex: i,
-            lineHeight: blockLineHeight,
-            blockHeight: blockHeight,
-          );
-
-          parts.add(
-            "drawtext=text='$escapedText':"
-            "fontfile='$escapedFontPath':"
-            "fontcolor=$color:"
-            "fontsize=$fontSize:"
-            "x=$xExpr:"
-            "y=$yExpr:"
-            "shadowcolor=black@0.8:"
-            "shadowx=2:"
-            "shadowy=2:"
-            "bordercolor=black@0.3:"
-            "borderw=1",
-          );
-        }
-        filterParts = parts;
-        logoXY = layout.logoXY();
-      }
-
-      final baseChain = filterParts;
-      final logoOverlay = await _buildLogoOverlay(settings);
-
-      final List<String> filterArgs;
-      if (logoOverlay != null) {
-        final escapedLogoPath = _escapeFFmpegPath(logoOverlay);
-        final buffer = StringBuffer();
-        buffer.write("movie='$escapedLogoPath'[logo];");
-        buffer.write("[0:v]${baseChain.join(',')}[base];");
-        buffer.write("[base][logo]overlay=${logoXY.x}:${logoXY.y}:format=auto[outv]");
-        filterArgs = [
-          '-filter_complex', buffer.toString(),
-          '-map', '[outv]',
-          '-map', '0:a?',
-        ];
-      } else {
-        filterArgs = [
-          '-vf', baseChain.join(','),
-        ];
-      }
-
-      final arguments = <String>[
-        '-i', inputPath,
-        ...filterArgs,
-        '-pix_fmt', 'yuv420p',
-        '-c:v', 'mpeg4',
-        '-b:v', '4M',
-        '-c:a', 'aac',
-        '-b:a', '128k',
-        '-movflags', '+faststart',
-        '-y',
-        outputPath,
-      ];
-
-      debugPrint('🎬 FFmpeg arguments: $arguments');
-
-      final session = await FFmpegKit.executeWithArguments(arguments);
-      final returnCode = await session.getReturnCode();
-
-      debugPrint('🔢 ReturnCode = ${returnCode?.getValue()}');
-      final output = await session.getOutput();
-      if (output != null && output.isNotEmpty) {
-        debugPrint('📤 Output: $output');
-      }
-      final logs = await session.getAllLogsAsString();
-      debugPrint('📜 Full logs: $logs');
-
-      if (returnCode?.isValueSuccess() == true) {
-        debugPrint('✅ Video watermark berhasil: $outputPath');
-        return outputPath;
-      } else {
-        final diagnosis = _diagnoseFailure(logs ?? '');
-        debugPrint('❌ FFmpeg gagal. Diagnosis: $diagnosis');
-        final fullLog = logs ?? '';
-        final tail = fullLog.length > 1500 ? fullLog.substring(fullLog.length - 1500) : fullLog;
-        lastError = 'rc=${returnCode?.getValue()} | $diagnosis\n'
-            '---arguments---\n${arguments.join(' ')}\n'
-            '---log tail---\n$tail';
-        return null;
-      }
-    } catch (e) {
-      debugPrint('❌ Error video watermark: $e');
-      lastError = 'Exception: $e';
-      return null;
+  /// Menghasilkan daftar filter lengkap dengan mengganti placeholder menggunakan data dinamis.
+  List<String> buildFilters(List<String> dynamicTexts) {
+    final result = <String>[];
+    result.addAll(staticFilters);
+    for (var i = 0; i < dynamicTexts.length && i < filterTemplates.length; i++) {
+      if (dynamicTexts[i].isEmpty) continue;
+      result.add(filterTemplates[i].render(dynamicTexts[i]));
     }
+    return result;
+  }
+}
+
+class _PrecomputedTimestamp {
+  final List<_FilterTemplate> dynamicFilters; // filter yang mengandung placeholder dinamis
+  final List<String> staticFilters;          // filter tanpa placeholder (background, brand, tagline, dll)
+  final _XY logoXY;
+  final double barHeight;
+
+  _PrecomputedTimestamp({
+    required this.dynamicFilters,
+    required this.staticFilters,
+    required this.logoXY,
+    required this.barHeight,
+  });
+
+  /// Menghasilkan daftar filter dengan data dinamis.
+  /// `dynamicData` berisi: [time, date, day, addr0, addr1, meta0, meta1, code]
+  List<String> buildFilters(List<String> dynamicData) {
+    final result = <String>[];
+    result.addAll(staticFilters);
+    for (var i = 0; i < dynamicData.length && i < dynamicFilters.length; i++) {
+      if (dynamicData[i].isEmpty) continue;
+      result.add(dynamicFilters[i].render(dynamicData[i]));
+    }
+    return result;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+//  2.  Cache watermark (singleton)
+// ─────────────────────────────────────────────────────────────
+
+class _WatermarkCache {
+  static final _WatermarkCache _instance = _WatermarkCache._internal();
+  factory _WatermarkCache() => _instance;
+  _WatermarkCache._internal();
+
+  bool _initialized = false;
+  WatermarkSettings? _settings;
+  String? _cachedFontPath;
+  String? _cachedLogoPath;
+  Map<WatermarkStyle, _PrecomputedStyle>? _styleCache;
+  _PrecomputedTimestamp? _timestampCache;
+
+  /// Inisialisasi cache jika `settings` berbeda dari yang terakhir.
+  Future<void> initialize(WatermarkSettings settings) async {
+    if (_initialized && _settings == settings) return;
+    _settings = settings;
+
+    // 1. Font
+    _cachedFontPath = await _getFontPath(settings.fontFamily);
+
+    // 2. Logo
+    if (settings.hasLogo && settings.logoPath != null) {
+      final logo = File(settings.logoPath!);
+      if (await logo.exists()) _cachedLogoPath = logo.path;
+    } else {
+      _cachedLogoPath = null;
+    }
+
+    // 3. Prekomputasi untuk semua gaya
+    _styleCache = {};
+    for (var style in WatermarkStyle.values) {
+      if (style == WatermarkStyle.timestamp) {
+        _timestampCache = _precomputeTimestamp(settings);
+      } else {
+        _styleCache![style] = _precomputeGeneral(settings, style);
+      }
+    }
+
+    _initialized = true;
   }
 
-  // ─────────────────────────────────────────────────────────
-  // Helper methods
-  // ─────────────────────────────────────────────────────────
+  // ─── Prekomputasi untuk gaya umum (professional, polaroid, stamp, minimal) ───
 
-  /// Filter chain khusus style `timestamp` (jam besar + divider + tanggal/hari
-  /// + alamat + brand pojok kanan-atas), meniru layout foto `TimestampLayout`.
-  ///
-  /// CATATAN KETERBATASAN: versi foto punya teks kode verifikasi vertikal
-  /// (rotate 90°) di tepi kanan. FFmpeg `drawtext` TIDAK punya opsi rotasi
-  /// bawaan — rotasi teks butuh render ke layer terpisah lalu filter `rotate`,
-  /// yang belum tentu tersedia di build `ffmpeg_kit_flutter_new_video` (varian
-  /// GPL minimal yang dipakai proyek ini, mengingat riwayat error "No such
-  /// filter" sebelumnya). Daripada berisiko bikin build FFmpeg gagal lagi,
-  /// kode verifikasi untuk video ditampilkan mendatar di pojok kanan bawah,
-  /// bukan vertikal.
-  static List<String> _buildTimestampFilterChain({
-    required ScanEntry entry,
-    required WatermarkSettings settings,
-    required String escapedFontPath,
-  }) {
+  _PrecomputedStyle _precomputeGeneral(WatermarkSettings settings, WatermarkStyle style) {
+    final layout = _StyleLayout.forStyle(style, settings.position);
+    final lines = _buildStaticTextLines(settings); // label statis (tanpa nilai)
+    final blockLineHeight = settings.fontSize + 8;
+    final blockHeight = lines.isEmpty
+        ? 0.0
+        : (lines.length * blockLineHeight) + (layout.padding * 2);
+
+    final staticParts = <String>[];
+
+    // Background
+    final bg = layout.buildBackground(
+      blockHeight: blockHeight,
+      opacity: settings.backgroundOpacity,
+    );
+    if (bg != null) staticParts.add(bg);
+
+    // Accent bar
+    final accent = layout.buildAccentBar(blockHeight: blockHeight);
+    if (accent != null) staticParts.add(accent);
+
+    // Divider
+    final divider = layout.buildDivider(blockHeight: blockHeight);
+    if (divider != null) staticParts.add(divider);
+
+    // Filter teks dengan placeholder
+    final templates = <_FilterTemplate>[];
+    final escapedFontPath = _escapeFFmpegPath(_cachedFontPath!);
+    for (var i = 0; i < lines.length; i++) {
+      final line = lines[i];
+      final fontSize = (settings.fontSize + line.sizeOffset).clamp(10, 64).round();
+      final color = layout.textColor(line.isTitle);
+      final x = layout.textX();
+      final y = layout.textY(
+        lineIndex: i,
+        lineHeight: blockLineHeight,
+        blockHeight: blockHeight,
+      );
+      final placeholder = '{{line$i}}';
+      final filter =
+          "drawtext=text='$placeholder':"
+          "fontfile='$escapedFontPath':"
+          "fontcolor=$color:"
+          "fontsize=$fontSize:"
+          "x=$x:"
+          "y=$y:"
+          "shadowcolor=black@0.8:"
+          "shadowx=2:"
+          "shadowy=2:"
+          "bordercolor=black@0.3:"
+          "borderw=1";
+      templates.add(_FilterTemplate(placeholder, filter));
+    }
+
+    final logoXY = layout.logoXY();
+    return _PrecomputedStyle(
+      filterTemplates: templates,
+      logoXY: logoXY,
+      blockHeight: blockHeight,
+      blockLineHeight: blockLineHeight,
+      staticFilters: staticParts,
+    );
+  }
+
+  // ─── Prekomputasi untuk gaya timestamp ────────────────────
+
+  _PrecomputedTimestamp _precomputeTimestamp(WatermarkSettings settings) {
     const padding = 22;
-    const accentColor = 'yellow'; // dekat dengan amber 0xFFFFC107 di palet ffmpeg
+    const accentColor = 'yellow';
 
     final timeFontSize = (settings.fontSize * 2.9).round().clamp(28, 90);
     final dateFontSize = (settings.fontSize * 0.95).round().clamp(12, 30);
@@ -190,6 +200,150 @@ class VideoWatermarkService {
     final taglineFontSize = (settings.fontSize * 0.7).round().clamp(9, 20);
     final codeFontSize = (settings.fontSize * 0.65).round().clamp(9, 18);
 
+    // Asumsikan maksimal 2 baris meta, 2 baris alamat (kita siapkan placeholder)
+    // Kita akan tetap hitung barHeight berdasarkan data statis (hanya brand, tagline, dan struktur)
+    // Tapi karena kita tidak tahu panjang alamat/meta, kita pakai perkiraan maksimal 2 baris.
+    // Untuk perhitungan posisi, kita butuh barHeight. Kita asumsikan 2 baris meta dan 2 baris alamat.
+    const maxMetaLines = 2;
+    const maxAddressLines = 2;
+    final metaBlockH = maxMetaLines * (metaFontSize + 8);
+    final timeRowH = math.max(timeFontSize, dateFontSize + 4 + dayFontSize) + 10;
+    final addressBlockH = maxAddressLines * (addressFontSize + 8);
+    final barHeight = padding * 2 + metaBlockH + timeRowH + addressBlockH;
+
+    final escapedFontPath = _escapeFFmpegPath(_cachedFontPath!);
+    final staticParts = <String>[];
+
+    // 1. Background bar
+    staticParts.add(
+      "drawbox=x=0:y=ih-$barHeight:w=iw:h=$barHeight:"
+      "color=black@${settings.backgroundOpacity.clamp(0.4, 1.0)}:t=fill",
+    );
+
+    // 2. Brand badge (pojok kanan atas)
+    final brandText = settings.companyName.isNotEmpty ? settings.companyName : 'TermulScan';
+    staticParts.add(
+      "drawtext=text='${_escapeFFmpegText(brandText)}':"
+      "fontfile='$escapedFontPath':fontcolor=$accentColor:fontsize=$brandFontSize:"
+      "x=w-text_w-$padding:y=$padding:"
+      "shadowcolor=black@0.8:shadowx=2:shadowy=2",
+    );
+    staticParts.add(
+      "drawtext=text='Foto Terverifikasi GPS':"
+      "fontfile='$escapedFontPath':fontcolor=white@0.9:fontsize=$taglineFontSize:"
+      "x=w-text_w-$padding:y=${padding + brandFontSize + 4}:"
+      "shadowcolor=black@0.8:shadowx=1:shadowy=1",
+    );
+
+    // 3. Kode verifikasi (bawah kanan) – statis template dengan placeholder {{code}}
+    final codePlaceholder = '{{code}}';
+    staticParts.add(
+      "drawtext=text='$codePlaceholder  •  TERMULSCAN VERIFIED':"
+      "fontfile='$escapedFontPath':fontcolor=white@0.75:fontsize=$codeFontSize:"
+      "x=w-text_w-$padding:y=ih-$barHeight-${codeFontSize + 10}:"
+      "shadowcolor=black@0.7:shadowx=1:shadowy=1",
+    );
+
+    // ─── Filter dinamis ──────────────────────────────────────
+
+    final dynamicTemplates = <_FilterTemplate>[];
+
+    // Meta baris (maks 2)
+    for (var i = 0; i < maxMetaLines; i++) {
+      final placeholder = '{{meta$i}}';
+      final yPos = padding + i * (metaFontSize + 8);
+      final filter =
+          "drawtext=text='$placeholder':"
+          "fontfile='$escapedFontPath':fontcolor=white@0.9:fontsize=$metaFontSize:"
+          "x=$padding:y=ih-$barHeight+$yPos:"
+          "shadowcolor=black@0.8:shadowx=1:shadowy=1";
+      dynamicTemplates.add(_FilterTemplate(placeholder, filter));
+    }
+
+    // Jam besar
+    final timeRowTop = (maxMetaLines > 0) ? padding + maxMetaLines * (metaFontSize + 8) : padding;
+    dynamicTemplates.add(
+      _FilterTemplate(
+        '{{time}}',
+        "drawtext=text='{{time}}':"
+        "fontfile='$escapedFontPath':fontcolor=white:fontsize=$timeFontSize:"
+        "x=$padding:y=ih-$barHeight+$timeRowTop:"
+        "shadowcolor=black@0.85:shadowx=2:shadowy=2",
+      ),
+    );
+
+    // Divider vertikal (statis posisi tergantung timeFontSize)
+    final dividerX = padding + (timeFontSize * 2.6).round();
+    staticParts.add(
+      "drawbox=x=$dividerX:y=ih-$barHeight+$timeRowTop:w=4:h=$timeFontSize:"
+      "color=$accentColor@0.95:t=fill",
+    );
+
+    // Tanggal + hari
+    final dateColX = dividerX + 16;
+    dynamicTemplates.add(
+      _FilterTemplate(
+        '{{date}}',
+        "drawtext=text='{{date}}':"
+        "fontfile='$escapedFontPath':fontcolor=white:fontsize=$dateFontSize:"
+        "x=$dateColX:y=ih-$barHeight+$timeRowTop:"
+        "shadowcolor=black@0.8:shadowx=1:shadowy=1",
+      ),
+    );
+    dynamicTemplates.add(
+      _FilterTemplate(
+        '{{day}}',
+        "drawtext=text='{{day}}':"
+        "fontfile='$escapedFontPath':fontcolor=white@0.8:fontsize=$dayFontSize:"
+        "x=$dateColX:y=ih-$barHeight+$timeRowTop+${dateFontSize + 4}:"
+        "shadowcolor=black@0.8:shadowx=1:shadowy=1",
+      ),
+    );
+
+    // Alamat (2 baris)
+    final addressStartY = timeRowTop + timeRowH;
+    for (var i = 0; i < maxAddressLines; i++) {
+      final placeholder = '{{addr$i}}';
+      final yPos = addressStartY + i * (addressFontSize + 8);
+      final filter =
+          "drawtext=text='$placeholder':"
+          "fontfile='$escapedFontPath':fontcolor=white:fontsize=$addressFontSize:"
+          "x=$padding:y=ih-$barHeight+$yPos:"
+          "shadowcolor=black@0.8:shadowx=1:shadowy=1";
+      dynamicTemplates.add(_FilterTemplate(placeholder, filter));
+    }
+
+    // Logo posisi
+    final logoXY = _XY('W-w-22', 'H-h-22');
+
+    return _PrecomputedTimestamp(
+      dynamicFilters: dynamicTemplates,
+      staticFilters: staticParts,
+      logoXY: logoXY,
+      barHeight: barHeight,
+    );
+  }
+
+  // ─── Pembantu untuk mendapatkan data dinamis ─────────────
+
+  /// Untuk gaya umum: mengembalikan daftar teks dinamis (nilai barcode, operator, waktu, lokasi)
+  List<String> getDynamicTexts(ScanEntry entry, WatermarkSettings settings) {
+    final lines = <String>[];
+    if (entry.value.isNotEmpty) lines.add(entry.value);
+    if (settings.operatorName.isNotEmpty) lines.add(settings.operatorName);
+    lines.add(_formatTimestamp(entry.timestamp));
+    if (entry.locationName != null && entry.locationName!.isNotEmpty) {
+      lines.add(entry.locationName!);
+    } else if (entry.latitude != null && entry.longitude != null) {
+      lines.add('${entry.latitude!.toStringAsFixed(4)}, ${entry.longitude!.toStringAsFixed(4)}');
+    } else {
+      lines.add('Lokasi tidak tersedia');
+    }
+    return lines;
+  }
+
+  /// Untuk gaya timestamp: mengembalikan list [time, date, day, addr0, addr1, meta0, meta1, code]
+  List<String> getTimestampDynamicData(ScanEntry entry, WatermarkSettings settings) {
     final metaLines = <String>[];
     if (entry.value.isNotEmpty) metaLines.add('📦 ${entry.value}');
     if (settings.operatorName.isNotEmpty) metaLines.add('👤 ${settings.operatorName}');
@@ -201,103 +355,73 @@ class VideoWatermarkService {
             : 'Lokasi tidak tersedia';
     final addressLines = _wrapAddress(addressText, maxLineLen: 42);
 
-    final metaBlockH = metaLines.isEmpty ? 0 : metaLines.length * (metaFontSize + 8);
-    final timeRowH = math.max(timeFontSize, dateFontSize + 4 + dayFontSize) + 10;
-    final addressBlockH = addressLines.length * (addressFontSize + 8);
-    final barHeight = padding * 2 + metaBlockH + timeRowH + addressBlockH;
+    final data = <String>[
+      _hhmmFF(entry.timestamp),
+      _ddmmyyyyFF(entry.timestamp),
+      _dayNameFF(entry.timestamp),
+      addressLines.isNotEmpty ? addressLines[0] : '',
+      addressLines.length > 1 ? addressLines[1] : '',
+      metaLines.isNotEmpty ? metaLines[0] : '',
+      metaLines.length > 1 ? metaLines[1] : '',
+      _generateVerificationCode(entry, settings),
+    ];
+    return data;
+  }
 
-    final parts = <String>[];
+  // ─── Metode akses cache ─────────────────────────────────
 
-    // 1. Bar bawah solid (bukan gradient — FFmpeg drawbox tidak punya gradient).
-    parts.add(
-      "drawbox=x=0:y=ih-$barHeight:w=iw:h=$barHeight:"
-      "color=black@${settings.backgroundOpacity.clamp(0.4, 1.0)}:t=fill",
-    );
-
-    int cursorTop = padding; // offset dari atas bar
-
-    // 2. Baris meta (barcode / operator), opsional.
-    for (final meta in metaLines) {
-      parts.add(
-        "drawtext=text='${_escapeFFmpegText(meta)}':"
-        "fontfile='$escapedFontPath':fontcolor=white@0.9:fontsize=$metaFontSize:"
-        "x=$padding:y=ih-$barHeight+$cursorTop:"
-        "shadowcolor=black@0.8:shadowx=1:shadowy=1",
-      );
-      cursorTop += metaFontSize + 8;
+  _PrecomputedStyle getStyle(WatermarkStyle style) {
+    if (!_initialized) throw StateError('Cache belum diinisialisasi');
+    if (style == WatermarkStyle.timestamp) {
+      throw ArgumentError('Gunakan getTimestamp() untuk gaya timestamp');
     }
+    return _styleCache![style]!;
+  }
 
-    // 3. Jam besar (kiri).
-    final timeRowTop = cursorTop;
-    parts.add(
-      "drawtext=text='${_escapeFFmpegText(_hhmmFF(entry.timestamp))}':"
-      "fontfile='$escapedFontPath':fontcolor=white:fontsize=$timeFontSize:"
-      "x=$padding:y=ih-$barHeight+$timeRowTop:"
-      "shadowcolor=black@0.85:shadowx=2:shadowy=2",
-    );
+  _PrecomputedTimestamp getTimestamp() {
+    if (!_initialized) throw StateError('Cache belum diinisialisasi');
+    return _timestampCache!;
+  }
 
-    // 4. Divider vertikal kuning, di sebelah kanan jam.
-    // Estimasi lebar teks "HH:mm" ≈ 2.6× font size (aman untuk font default).
-    final dividerX = padding + (timeFontSize * 2.6).round();
-    parts.add(
-      "drawbox=x=$dividerX:y=ih-$barHeight+$timeRowTop:w=4:h=$timeFontSize:"
-      "color=$accentColor@0.95:t=fill",
-    );
+  String? get logoPath => _cachedLogoPath;
 
-    // 5. Tanggal + nama hari, di sebelah kanan divider.
-    final dateColX = dividerX + 16;
-    parts.add(
-      "drawtext=text='${_ddmmyyyyFF(entry.timestamp)}':"
-      "fontfile='$escapedFontPath':fontcolor=white:fontsize=$dateFontSize:"
-      "x=$dateColX:y=ih-$barHeight+$timeRowTop:"
-      "shadowcolor=black@0.8:shadowx=1:shadowy=1",
-    );
-    parts.add(
-      "drawtext=text='${_dayNameFF(entry.timestamp)}':"
-      "fontfile='$escapedFontPath':fontcolor=white@0.8:fontsize=$dayFontSize:"
-      "x=$dateColX:y=ih-$barHeight+$timeRowTop+${dateFontSize + 4}:"
-      "shadowcolor=black@0.8:shadowx=1:shadowy=1",
-    );
+  // ─── Metode utilitas internal (diambil dari kode asli) ──
 
-    cursorTop = timeRowTop + timeRowH;
-
-    // 6. Alamat (maks 2 baris).
-    for (final line in addressLines) {
-      parts.add(
-        "drawtext=text='${_escapeFFmpegText(line)}':"
-        "fontfile='$escapedFontPath':fontcolor=white:fontsize=$addressFontSize:"
-        "x=$padding:y=ih-$barHeight+$cursorTop:"
-        "shadowcolor=black@0.8:shadowx=1:shadowy=1",
+  static Future<String> _getFontPath(String fontFamily) async {
+    final assetPath = _assetFontPath(fontFamily);
+    final dir = await getApplicationDocumentsDirectory();
+    final safeName = fontFamily.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+    final destFile = File('${dir.path}/ffmpeg_font_$safeName.ttf');
+    if (!await destFile.exists()) {
+      final fontData = await rootBundle.load(assetPath);
+      await destFile.writeAsBytes(
+        fontData.buffer.asUint8List(fontData.offsetInBytes, fontData.lengthInBytes),
       );
-      cursorTop += addressFontSize + 8;
     }
+    return destFile.path;
+  }
 
-    // 7. Badge brand pojok kanan-atas (di atas foto, bukan di dalam bar).
-    final brandText = settings.companyName.isNotEmpty ? settings.companyName : 'TermulScan';
-    parts.add(
-      "drawtext=text='${_escapeFFmpegText(brandText)}':"
-      "fontfile='$escapedFontPath':fontcolor=$accentColor:fontsize=$brandFontSize:"
-      "x=w-text_w-$padding:y=$padding:"
-      "shadowcolor=black@0.8:shadowx=2:shadowy=2",
-    );
-    parts.add(
-      "drawtext=text='Foto Terverifikasi GPS':"
-      "fontfile='$escapedFontPath':fontcolor=white@0.9:fontsize=$taglineFontSize:"
-      "x=w-text_w-$padding:y=${padding + brandFontSize + 4}:"
-      "shadowcolor=black@0.8:shadowx=1:shadowy=1",
-    );
+  static String _assetFontPath(String fontFamily) {
+    switch (fontFamily) {
+      case 'Roboto':
+        return 'assets/fonts/Roboto-VariableFont_wdth,wght.ttf';
+      case 'Inter':
+        return 'assets/fonts/Inter-VariableFont_opsz,wght.ttf';
+      case 'Montserrat':
+        return 'assets/fonts/Montserrat-VariableFont_wght.ttf';
+      case 'Poppins':
+        return 'assets/fonts/Poppins-Regular.ttf';
+      default:
+        return 'assets/fonts/Roboto-VariableFont_wdth,wght.ttf';
+    }
+  }
 
-    // 8. Kode verifikasi — mendatar di pojok kanan-bawah bar (lihat catatan
-    //    keterbatasan rotasi di atas).
-    final code = _generateVerificationCode(entry, settings);
-    parts.add(
-      "drawtext=text='$code  •  TERMULSCAN VERIFIED':"
-      "fontfile='$escapedFontPath':fontcolor=white@0.75:fontsize=$codeFontSize:"
-      "x=w-text_w-$padding:y=ih-$barHeight-${codeFontSize + 10}:"
-      "shadowcolor=black@0.7:shadowx=1:shadowy=1",
-    );
+  static String _escapeFFmpegText(String text) {
+    return text.replaceAll("'", r"'\''").replaceAll(':', r'\:');
+  }
 
-    return parts;
+  static String _escapeFFmpegPath(String path) {
+    return path.replaceAll("'", r"'\''").replaceAll(':', r'\:');
   }
 
   static List<String> _wrapAddress(String text, {int maxLineLen = 42}) {
@@ -340,10 +464,18 @@ class VideoWatermarkService {
   ];
   static String _dayNameFF(DateTime dt) => _hariIndoFF[dt.weekday - 1];
 
-  static List<_TextLine> _buildTextLines(
-      ScanEntry entry, WatermarkSettings settings) {
-    final lines = <_TextLine>[];
+  static String _formatTimestamp(DateTime dt) {
+    return '${dt.day.toString().padLeft(2, '0')}-'
+        '${dt.month.toString().padLeft(2, '0')}-'
+        '${dt.year} '
+        '${dt.hour.toString().padLeft(2, '0')}:'
+        '${dt.minute.toString().padLeft(2, '0')}:'
+        '${dt.second.toString().padLeft(2, '0')}';
+  }
 
+  // Untuk membangun label statis (tanpa nilai) pada gaya umum
+  static List<_TextLine> _buildStaticTextLines(WatermarkSettings settings) {
+    final lines = <_TextLine>[];
     if (settings.companyName.isNotEmpty) {
       lines.add(_TextLine(
         text: settings.companyName.toUpperCase(),
@@ -351,74 +483,127 @@ class VideoWatermarkService {
         isTitle: true,
       ));
     }
-    if (entry.value.isNotEmpty) {
-      lines.add(_TextLine(text: 'Barcode: ${entry.value}', sizeOffset: 0));
-    }
-    if (settings.operatorName.isNotEmpty) {
-      lines.add(_TextLine(text: 'Operator: ${settings.operatorName}', sizeOffset: 0));
-    }
-    lines.add(_TextLine(
-      text: 'Waktu: ${_formatTimestamp(entry.timestamp)}',
-      sizeOffset: -1,
-    ));
-    if (entry.locationName != null && entry.locationName!.isNotEmpty) {
-      lines.add(_TextLine(text: 'Lokasi: ${entry.locationName}', sizeOffset: -1));
-    } else if (entry.latitude != null && entry.longitude != null) {
-      lines.add(_TextLine(
-        text: 'GPS: ${entry.latitude!.toStringAsFixed(4)}, ${entry.longitude!.toStringAsFixed(4)}',
-        sizeOffset: -1,
-      ));
-    }
-
+    // Label statis (placeholder akan diganti dengan nilai dinamis)
+    lines.add(_TextLine(text: 'Barcode: {{line0}}', sizeOffset: 0));
+    lines.add(_TextLine(text: 'Operator: {{line1}}', sizeOffset: 0));
+    lines.add(_TextLine(text: 'Waktu: {{line2}}', sizeOffset: -1));
+    lines.add(_TextLine(text: 'Lokasi: {{line3}}', sizeOffset: -1));
     return lines;
   }
+}
 
-  static Future<String> _getFontPath(String fontFamily) async {
-    final assetPath = _assetFontPath(fontFamily);
-    final dir = await getApplicationDocumentsDirectory();
-    final safeName = fontFamily.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
-    final destFile = File('${dir.path}/ffmpeg_font_$safeName.ttf');
-    if (!await destFile.exists()) {
-      final fontData = await rootBundle.load(assetPath);
-      await destFile.writeAsBytes(
-        fontData.buffer.asUint8List(fontData.offsetInBytes, fontData.lengthInBytes),
-      );
+// ─────────────────────────────────────────────────────────────
+//  3.  VideoWatermarkService yang dimodifikasi
+// ─────────────────────────────────────────────────────────────
+
+class VideoWatermarkService {
+  static String? lastError;
+
+  static final _WatermarkCache _cache = _WatermarkCache();
+
+  static Future<String?> addWatermark({
+    required String inputPath,
+    required String outputPath,
+    required ScanEntry entry,
+    required WatermarkSettings settings,
+  }) async {
+    lastError = null;
+    try {
+      // 1. Inisialisasi cache (jika perlu)
+      await _cache.initialize(settings);
+
+      // 2. Bangun filter chain berdasarkan gaya
+      final List<String> filterParts;
+      final _XY logoXY;
+
+      if (settings.style == WatermarkStyle.timestamp) {
+        final precomputed = _cache.getTimestamp();
+        final dynamicData = _cache.getTimestampDynamicData(entry, settings);
+        filterParts = precomputed.buildFilters(dynamicData);
+        logoXY = precomputed.logoXY;
+      } else {
+        final precomputed = _cache.getStyle(settings.style);
+        final dynamicTexts = _cache.getDynamicTexts(entry, settings);
+        filterParts = precomputed.buildFilters(dynamicTexts);
+        logoXY = precomputed.logoXY;
+      }
+
+      // 3. Logo overlay
+      final logoPath = _cache.logoPath;
+      final List<String> filterArgs;
+      if (logoPath != null) {
+        final escapedLogoPath = _escapeFFmpegPath(logoPath);
+        final buffer = StringBuffer();
+        buffer.write("movie='$escapedLogoPath'[logo];");
+        buffer.write("[0:v]${filterParts.join(',')}[base];");
+        buffer.write("[base][logo]overlay=${logoXY.x}:${logoXY.y}:format=auto[outv]");
+        filterArgs = [
+          '-filter_complex', buffer.toString(),
+          '-map', '[outv]',
+          '-map', '0:a?',
+        ];
+      } else {
+        filterArgs = [
+          '-vf', filterParts.join(','),
+        ];
+      }
+
+      // 4. Argumen FFmpeg
+      final arguments = <String>[
+        '-i', inputPath,
+        ...filterArgs,
+        '-pix_fmt', 'yuv420p',
+        '-c:v', 'mpeg4',
+        '-b:v', '4M',
+        '-c:a', 'aac',
+        '-b:a', '128k',
+        '-movflags', '+faststart',
+        '-y',
+        outputPath,
+      ];
+
+      debugPrint('🎬 FFmpeg arguments: $arguments');
+
+      // 5. Eksekusi
+      final session = await FFmpegKit.executeWithArguments(arguments);
+      final returnCode = await session.getReturnCode();
+
+      debugPrint('🔢 ReturnCode = ${returnCode?.getValue()}');
+      final output = await session.getOutput();
+      if (output != null && output.isNotEmpty) {
+        debugPrint('📤 Output: $output');
+      }
+      final logs = await session.getAllLogsAsString();
+      debugPrint('📜 Full logs: $logs');
+
+      if (returnCode?.isValueSuccess() == true) {
+        debugPrint('✅ Video watermark berhasil: $outputPath');
+        return outputPath;
+      } else {
+        final diagnosis = _diagnoseFailure(logs ?? '');
+        debugPrint('❌ FFmpeg gagal. Diagnosis: $diagnosis');
+        final fullLog = logs ?? '';
+        final tail = fullLog.length > 1500 ? fullLog.substring(fullLog.length - 1500) : fullLog;
+        lastError = 'rc=${returnCode?.getValue()} | $diagnosis\n'
+            '---arguments---\n${arguments.join(' ')}\n'
+            '---log tail---\n$tail';
+        return null;
+      }
+    } catch (e) {
+      debugPrint('❌ Error video watermark: $e');
+      lastError = 'Exception: $e';
+      return null;
     }
-    return destFile.path;
   }
 
-  static String _assetFontPath(String fontFamily) {
-    switch (fontFamily) {
-      case 'Roboto':
-        return 'assets/fonts/Roboto-VariableFont_wdth,wght.ttf';
-      case 'Inter':
-        return 'assets/fonts/Inter-VariableFont_opsz,wght.ttf';
-      case 'Montserrat':
-        return 'assets/fonts/Montserrat-VariableFont_wght.ttf';
-      case 'Poppins':
-        return 'assets/fonts/Poppins-Regular.ttf';
-      default:
-        return 'assets/fonts/Roboto-VariableFont_wdth,wght.ttf';
-    }
-  }
-
-  static Future<String?> _buildLogoOverlay(WatermarkSettings settings) async {
-    if (!settings.hasLogo || settings.logoPath == null) return null;
-    final logoFile = File(settings.logoPath!);
-    if (!await logoFile.exists()) return null;
-    return logoFile.path;
-  }
+  // ─── Metode pembantu (tetap statis) ──────────────────────
 
   static String _escapeFFmpegText(String text) {
-    return text
-        .replaceAll("'", r"'\''")
-        .replaceAll(':', r'\:');
+    return text.replaceAll("'", r"'\''").replaceAll(':', r'\:');
   }
 
   static String _escapeFFmpegPath(String path) {
-    return path
-        .replaceAll("'", r"'\''")
-        .replaceAll(':', r'\:');
+    return path.replaceAll("'", r"'\''").replaceAll(':', r'\:');
   }
 
   static String _diagnoseFailure(String logs) {
@@ -446,18 +631,10 @@ class VideoWatermarkService {
     }
     return 'Penyebab tidak dikenal. Cek log lengkap di atas.';
   }
-
-  static String _formatTimestamp(DateTime dt) {
-    return '${dt.day.toString().padLeft(2,'0')}-'
-        '${dt.month.toString().padLeft(2,'0')}-'
-        '${dt.year} '
-        '${dt.hour.toString().padLeft(2,'0')}:'
-        '${dt.minute.toString().padLeft(2,'0')}:'
-        '${dt.second.toString().padLeft(2,'0')}';
-  }
 }
 
-// ─── Helper classes ──────────────────────────────
+// ─── Helper classes (sama seperti sebelumnya) ──────────────
+
 class _TextLine {
   final String text;
   final double sizeOffset;
@@ -499,7 +676,6 @@ class _StyleLayout {
       return "drawbox=x=0:y=$y:w=iw:h=${blockHeight.toInt()}:color=$color@${opacity.clamp(0.0, 1.0)}:t=fill";
     }
 
-    // stamp: bordered badge
     final boxWidth = 'iw*0.45';
     final x = _isRight ? 'iw-($boxWidth)-20' : '20';
     final y = _isBottom ? 'ih-${blockHeight.toInt()}-20' : '20';
@@ -509,7 +685,6 @@ class _StyleLayout {
     return '$fill,$border';
   }
 
-  // ✅ Accent bar: garis vertikal berwarna di samping teks
   String? buildAccentBar({required double blockHeight}) {
     if (style == WatermarkStyle.minimal) return null;
 
@@ -520,7 +695,6 @@ class _StyleLayout {
     return "drawbox=x=$x:y=$y:w=$barWidth:h=${blockHeight.toInt()}:color=$accentColor@0.9:t=fill";
   }
 
-  // ✅ Divider horizontal: garis tipis di atas teks
   String? buildDivider({required double blockHeight}) {
     if (style == WatermarkStyle.minimal || style == WatermarkStyle.stamp) return null;
 
@@ -529,7 +703,6 @@ class _StyleLayout {
   }
 
   String textX() {
-    // Sisakan ruang untuk accent bar
     final accentSpace = (style == WatermarkStyle.minimal) ? 0 : 12;
     if (_isFullWidthBanner) return '(w-text_w)/2';
     final inset = style == WatermarkStyle.stamp ? 32 : 20;
@@ -546,8 +719,9 @@ class _StyleLayout {
       return '($barTop)+${padding.toInt()}+($lineIndex*${lineHeight.toInt()})';
     }
     final inset = style == WatermarkStyle.stamp ? 20 + padding : 20;
-    final top = _isBottom ? 'h-${blockHeight.toInt()}-${inset.toInt()}+${padding.toInt()}'
-                          : '${inset.toInt()}+${padding.toInt()}';
+    final top = _isBottom
+        ? 'h-${blockHeight.toInt()}-${inset.toInt()}+${padding.toInt()}'
+        : '${inset.toInt()}+${padding.toInt()}';
     return '($top)+($lineIndex*${lineHeight.toInt()})';
   }
 
