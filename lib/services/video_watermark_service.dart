@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:ffmpeg_kit_flutter_new_video/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_new_video/ffprobe_kit.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
@@ -69,6 +70,52 @@ String _formatTimestamp(DateTime dt) {
       '${dt.hour.toString().padLeft(2, '0')}:'
       '${dt.minute.toString().padLeft(2, '0')}:'
       '${dt.second.toString().padLeft(2, '0')}';
+}
+
+// ─────────────────────────────────────────────────────────────
+//  0b. SKALA RESOLUSI VIDEO
+//
+//  Semua ukuran watermark (fontSize, padding, tebal garis, dst) di file
+//  ini pada dasarnya dikalibrasi terhadap video portrait ~1920px tinggi.
+//  Tanpa penyesuaian, watermark akan tampak kekecilan di video resolusi
+//  tinggi (4K) dan kebesaran/kepenuhan di video resolusi rendah (480p).
+//  `_probeVideoScale` membaca tinggi video asli lewat FFprobe lalu
+//  menghasilkan faktor kali yang dipakai untuk menskalakan semua ukuran.
+// ─────────────────────────────────────────────────────────────
+
+const double _kReferenceHeight = 1920.0;
+const double _kMinScale = 0.45;
+const double _kMaxScale = 2.5;
+
+Future<double> _probeVideoScale(String inputPath) async {
+  try {
+    final session = await FFprobeKit.getMediaInformation(inputPath);
+    final info = await session.getMediaInformation();
+    if (info == null) {
+      debugPrint('⚠️ FFprobe: media information null, pakai skala default 1.0');
+      return 1.0;
+    }
+    final streams = info.getStreams();
+    for (final stream in streams) {
+      final props = stream.getAllProperties();
+      if (props == null) continue;
+      final codecType = props['codec_type']?.toString();
+      if (codecType != 'video') continue;
+      final rawHeight = props['height'] ?? props['coded_height'];
+      final height = rawHeight is int
+          ? rawHeight
+          : int.tryParse(rawHeight?.toString() ?? '');
+      if (height != null && height > 0) {
+        final scale = height / _kReferenceHeight;
+        return scale.clamp(_kMinScale, _kMaxScale);
+      }
+    }
+    debugPrint('⚠️ FFprobe: stream video/height tidak ditemukan, pakai skala default 1.0');
+    return 1.0;
+  } catch (e) {
+    debugPrint('⚠️ FFprobe gagal probe resolusi ($e), pakai skala default 1.0');
+    return 1.0;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -148,8 +195,11 @@ class _WatermarkCache {
   String? _cachedFontPath;
   String? _cachedLogoPath;
   ui.Image? _cachedLogoImage;
-  Map<WatermarkStyle, _PrecomputedStyle>? _styleCache;
-  _PrecomputedTimestamp? _timestampCache;
+
+  // Cache layout per (gaya, skala) — skala baru diketahui setelah resolusi
+  // video asli di-probe di addWatermark(), jadi tidak bisa dihitung di sini.
+  final Map<String, _PrecomputedStyle> _styleCache = {};
+  final Map<double, _PrecomputedTimestamp> _timestampCache = {};
 
   Future<void> initialize(WatermarkSettings settings) async {
     if (_initialized && _settings == settings) return;
@@ -169,15 +219,11 @@ class _WatermarkCache {
       }
     }
 
-    // 3. Prekomputasi untuk semua gaya
-    _styleCache = {};
-    for (var style in WatermarkStyle.values) {
-      if (style == WatermarkStyle.timestamp) {
-        _timestampCache = _precomputeTimestamp(settings);
-      } else {
-        _styleCache![style] = _precomputeGeneral(settings, style);
-      }
-    }
+    // Catatan: layout style/timestamp SENGAJA tidak dihitung di sini lagi,
+    // karena ukurannya bergantung pada resolusi video asli (lihat getStyle
+    // / getTimestamp di bawah, dipanggil dengan `scale` hasil probe FFprobe).
+    _styleCache.clear();
+    _timestampCache.clear();
 
     _initialized = true;
   }
@@ -214,10 +260,15 @@ class _WatermarkCache {
 
   // ─── Prekomputasi gaya umum ──────────────────────────────
 
-  _PrecomputedStyle _precomputeGeneral(WatermarkSettings settings, WatermarkStyle style) {
-    final layout = _StyleLayout.forStyle(style, settings.position);
+  _PrecomputedStyle _precomputeGeneral(
+    WatermarkSettings settings,
+    WatermarkStyle style,
+    double scale,
+  ) {
+    final layout = _StyleLayout.forStyle(style, settings.position, scale);
     final lines = _buildStaticTextLines(settings);
-    final blockLineHeight = settings.fontSize + 8;
+    final baseFontSize = settings.fontSize * scale;
+    final blockLineHeight = baseFontSize + (8 * scale);
     final blockHeight = lines.isEmpty
         ? 0.0
         : (lines.length * blockLineHeight) + (layout.padding * 2);
@@ -234,7 +285,9 @@ class _WatermarkCache {
     final escapedFontPath = _escapeFFmpegPath(_cachedFontPath!);
     for (var i = 0; i < lines.length; i++) {
       final line = lines[i];
-      final fontSize = (settings.fontSize + line.sizeOffset).clamp(10, 64).round();
+      final fontSize = (baseFontSize + line.sizeOffset * scale)
+          .clamp(10 * scale, 64 * scale)
+          .round();
       final color = layout.textColor(line.isTitle);
       final x = layout.textX();
       final y = layout.textY(
@@ -251,10 +304,10 @@ class _WatermarkCache {
           "x=$x:"
           "y=$y:"
           "shadowcolor=black@0.8:"
-          "shadowx=2:"
-          "shadowy=2:"
+          "shadowx=${math.max(1, (2 * scale).round())}:"
+          "shadowy=${math.max(1, (2 * scale).round())}:"
           "bordercolor=black@0.3:"
-          "borderw=1";
+          "borderw=${math.max(1, (1 * scale).round())}";
       templates.add(_FilterTemplate(placeholder, filter));
     }
 
@@ -270,24 +323,35 @@ class _WatermarkCache {
 
   // ─── Prekomputasi timestamp ──────────────────────────────
 
-  _PrecomputedTimestamp _precomputeTimestamp(WatermarkSettings settings) {
-    const padding = 22;
+  _PrecomputedTimestamp _precomputeTimestamp(WatermarkSettings settings, double scale) {
+    final padding = (22 * scale).round();
     const accentColor = 'yellow';
 
-    final timeFontSize = (settings.fontSize * 2.9).round().clamp(28, 90);
-    final dateFontSize = (settings.fontSize * 0.95).round().clamp(12, 30);
-    final dayFontSize = (settings.fontSize * 0.8).round().clamp(10, 26);
-    final addressFontSize = settings.fontSize.round().clamp(10, 28);
-    final metaFontSize = (settings.fontSize * 0.85).round().clamp(10, 26);
-    final brandFontSize = (settings.fontSize * 1.15).round().clamp(12, 32);
-    final taglineFontSize = (settings.fontSize * 0.7).round().clamp(9, 20);
-    final codeFontSize = (settings.fontSize * 0.65).round().clamp(9, 18);
+    int scaled(num px, {int min = 1}) => math.max(min, (px * scale).round());
+
+    final timeFontSize = scaled(settings.fontSize * 2.9, min: (28 * scale).round());
+    final dateFontSize = scaled(settings.fontSize * 0.95, min: (12 * scale).round());
+    final dayFontSize = scaled(settings.fontSize * 0.8, min: (10 * scale).round());
+    final addressFontSize = scaled(settings.fontSize, min: (10 * scale).round());
+    final metaFontSize = scaled(settings.fontSize * 0.85, min: (10 * scale).round());
+    final brandFontSize = scaled(settings.fontSize * 1.15, min: (12 * scale).round());
+    final taglineFontSize = scaled(settings.fontSize * 0.7, min: (9 * scale).round());
+    final codeFontSize = scaled(settings.fontSize * 0.65, min: (9 * scale).round());
+
+    final gap4 = scaled(4);
+    final gap8 = scaled(8);
+    final gap10 = scaled(10);
+    final gap16 = scaled(16);
+    final shadow1 = scaled(1);
+    final shadow2 = scaled(2);
+    final barWidth = scaled(4, min: 2);
+    final logoGap = scaled(22);
 
     const maxMetaLines = 2;
     const maxAddressLines = 2;
-    final metaBlockH = maxMetaLines * (metaFontSize + 8);
-    final timeRowH = math.max(timeFontSize, dateFontSize + 4 + dayFontSize) + 10;
-    final addressBlockH = maxAddressLines * (addressFontSize + 8);
+    final metaBlockH = maxMetaLines * (metaFontSize + gap8);
+    final timeRowH = math.max(timeFontSize, dateFontSize + gap4 + dayFontSize) + gap10;
+    final addressBlockH = maxAddressLines * (addressFontSize + gap8);
     final barHeight = padding * 2 + metaBlockH + timeRowH + addressBlockH;
 
     final escapedFontPath = _escapeFFmpegPath(_cachedFontPath!);
@@ -305,21 +369,21 @@ class _WatermarkCache {
       "drawtext=text='${_escapeFFmpegText(brandText)}':"
       "fontfile='$escapedFontPath':fontcolor=$accentColor:fontsize=$brandFontSize:"
       "x=w-text_w-$padding:y=$padding:"
-      "shadowcolor=black@0.8:shadowx=2:shadowy=2",
+      "shadowcolor=black@0.8:shadowx=$shadow2:shadowy=$shadow2",
     );
     staticParts.add(
       "drawtext=text='Foto Terverifikasi GPS':"
       "fontfile='$escapedFontPath':fontcolor=white@0.9:fontsize=$taglineFontSize:"
-      "x=w-text_w-$padding:y=${padding + brandFontSize + 4}:"
-      "shadowcolor=black@0.8:shadowx=1:shadowy=1",
+      "x=w-text_w-$padding:y=${padding + brandFontSize + gap4}:"
+      "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1",
     );
 
     // Kode verifikasi (bawah kanan) – template dengan placeholder
     staticParts.add(
       "drawtext=text='{{code}}  •  TERMULSCAN VERIFIED':"
       "fontfile='$escapedFontPath':fontcolor=white@0.75:fontsize=$codeFontSize:"
-      "x=w-text_w-$padding:y=ih-$barHeight-${codeFontSize + 10}:"
-      "shadowcolor=black@0.7:shadowx=1:shadowy=1",
+      "x=w-text_w-$padding:y=ih-$barHeight-${codeFontSize + gap10}:"
+      "shadowcolor=black@0.7:shadowx=$shadow1:shadowy=$shadow1",
     );
 
     final dynamicTemplates = <_FilterTemplate>[];
@@ -327,43 +391,43 @@ class _WatermarkCache {
     // Meta baris (maks 2)
     for (var i = 0; i < maxMetaLines; i++) {
       final placeholder = '{{meta$i}}';
-      final yPos = padding + i * (metaFontSize + 8);
+      final yPos = padding + i * (metaFontSize + gap8);
       final filter =
           "drawtext=text='$placeholder':"
           "fontfile='$escapedFontPath':fontcolor=white@0.9:fontsize=$metaFontSize:"
           "x=$padding:y=ih-$barHeight+$yPos:"
-          "shadowcolor=black@0.8:shadowx=1:shadowy=1";
+          "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1";
       dynamicTemplates.add(_FilterTemplate(placeholder, filter));
     }
 
     // Jam besar
-    final timeRowTop = (maxMetaLines > 0) ? padding + maxMetaLines * (metaFontSize + 8) : padding;
+    final timeRowTop = (maxMetaLines > 0) ? padding + maxMetaLines * (metaFontSize + gap8) : padding;
     dynamicTemplates.add(
       _FilterTemplate(
         '{{time}}',
         "drawtext=text='{{time}}':"
         "fontfile='$escapedFontPath':fontcolor=white:fontsize=$timeFontSize:"
         "x=$padding:y=ih-$barHeight+$timeRowTop:"
-        "shadowcolor=black@0.85:shadowx=2:shadowy=2",
+        "shadowcolor=black@0.85:shadowx=$shadow2:shadowy=$shadow2",
       ),
     );
 
     // Divider vertikal
     final dividerX = padding + (timeFontSize * 2.6).round();
     staticParts.add(
-      "drawbox=x=$dividerX:y=ih-$barHeight+$timeRowTop:w=4:h=$timeFontSize:"
+      "drawbox=x=$dividerX:y=ih-$barHeight+$timeRowTop:w=$barWidth:h=$timeFontSize:"
       "color=$accentColor@0.95:t=fill",
     );
 
     // Tanggal + hari
-    final dateColX = dividerX + 16;
+    final dateColX = dividerX + gap16;
     dynamicTemplates.add(
       _FilterTemplate(
         '{{date}}',
         "drawtext=text='{{date}}':"
         "fontfile='$escapedFontPath':fontcolor=white:fontsize=$dateFontSize:"
         "x=$dateColX:y=ih-$barHeight+$timeRowTop:"
-        "shadowcolor=black@0.8:shadowx=1:shadowy=1",
+        "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1",
       ),
     );
     dynamicTemplates.add(
@@ -371,8 +435,8 @@ class _WatermarkCache {
         '{{day}}',
         "drawtext=text='{{day}}':"
         "fontfile='$escapedFontPath':fontcolor=white@0.8:fontsize=$dayFontSize:"
-        "x=$dateColX:y=ih-$barHeight+$timeRowTop+${dateFontSize + 4}:"
-        "shadowcolor=black@0.8:shadowx=1:shadowy=1",
+        "x=$dateColX:y=ih-$barHeight+$timeRowTop+${dateFontSize + gap4}:"
+        "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1",
       ),
     );
 
@@ -380,16 +444,16 @@ class _WatermarkCache {
     final addressStartY = timeRowTop + timeRowH;
     for (var i = 0; i < maxAddressLines; i++) {
       final placeholder = '{{addr$i}}';
-      final yPos = addressStartY + i * (addressFontSize + 8);
+      final yPos = addressStartY + i * (addressFontSize + gap8);
       final filter =
           "drawtext=text='$placeholder':"
           "fontfile='$escapedFontPath':fontcolor=white:fontsize=$addressFontSize:"
           "x=$padding:y=ih-$barHeight+$yPos:"
-          "shadowcolor=black@0.8:shadowx=1:shadowy=1";
+          "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1";
       dynamicTemplates.add(_FilterTemplate(placeholder, filter));
     }
 
-    final logoXY = _XY('W-w-22', 'H-h-22');
+    final logoXY = _XY('W-w-$logoGap', 'H-h-$logoGap');
 
     return _PrecomputedTimestamp(
       dynamicFilters: dynamicTemplates,
@@ -442,17 +506,18 @@ class _WatermarkCache {
 
   // ─── Akses cache ──────────────────────────────────────────
 
-  _PrecomputedStyle getStyle(WatermarkStyle style) {
+  _PrecomputedStyle getStyle(WatermarkStyle style, double scale) {
     if (!_initialized) throw StateError('Cache belum diinisialisasi');
     if (style == WatermarkStyle.timestamp) {
       throw ArgumentError('Gunakan getTimestamp() untuk gaya timestamp');
     }
-    return _styleCache![style]!;
+    final key = '${style.name}_${scale.toStringAsFixed(3)}';
+    return _styleCache.putIfAbsent(key, () => _precomputeGeneral(_settings!, style, scale));
   }
 
-  _PrecomputedTimestamp getTimestamp() {
+  _PrecomputedTimestamp getTimestamp(double scale) {
     if (!_initialized) throw StateError('Cache belum diinisialisasi');
-    return _timestampCache!;
+    return _timestampCache.putIfAbsent(scale, () => _precomputeTimestamp(_settings!, scale));
   }
 
   // ─── Font helper ──────────────────────────────────────────
@@ -551,17 +616,22 @@ class VideoWatermarkService {
       // 1. Inisialisasi cache (jika perlu)
       await _cache.initialize(settings);
 
+      // 1b. Probe resolusi video asli agar ukuran watermark (font, padding,
+      // tebal garis) proporsional terhadap frame, bukan pixel absolut tetap.
+      final scale = await _probeVideoScale(inputPath);
+      debugPrint('📐 Skala watermark video: $scale');
+
       // 2. Bangun filter chain berdasarkan gaya
       final List<String> filterParts;
       final _XY logoXY;
 
       if (settings.style == WatermarkStyle.timestamp) {
-        final precomputed = _cache.getTimestamp();
+        final precomputed = _cache.getTimestamp(scale);
         final dynamicData = _cache.getTimestampDynamicData(entry, settings);
         filterParts = precomputed.buildFilters(dynamicData);
         logoXY = precomputed.logoXY;
       } else {
-        final precomputed = _cache.getStyle(settings.style);
+        final precomputed = _cache.getStyle(settings.style, scale);
         final dynamicTexts = _cache.getDynamicTexts(entry, settings);
         filterParts = precomputed.buildFilters(dynamicTexts);
         logoXY = precomputed.logoXY;
@@ -682,12 +752,13 @@ class _XY {
 class _StyleLayout {
   final WatermarkStyle style;
   final WatermarkPosition position;
-  final double padding = 14;
+  final double scale;
+  late final double padding = 14 * scale;
 
-  _StyleLayout._(this.style, this.position);
+  _StyleLayout._(this.style, this.position, this.scale);
 
-  factory _StyleLayout.forStyle(WatermarkStyle style, WatermarkPosition position) {
-    return _StyleLayout._(style, position);
+  factory _StyleLayout.forStyle(WatermarkStyle style, WatermarkPosition position, double scale) {
+    return _StyleLayout._(style, position, scale);
   }
 
   bool get _isBottom =>
@@ -707,21 +778,24 @@ class _StyleLayout {
       return "drawbox=x=0:y=$y:w=iw:h=${blockHeight.toInt()}:color=$color@${opacity.clamp(0.0, 1.0)}:t=fill";
     }
 
+    final edgeGap = (20 * scale).round();
+    final borderWidth = math.max(1, (2 * scale).round());
     final boxWidth = 'iw*0.45';
-    final x = _isRight ? 'iw-($boxWidth)-20' : '20';
-    final y = _isBottom ? 'ih-${blockHeight.toInt()}-20' : '20';
+    final x = _isRight ? 'iw-($boxWidth)-$edgeGap' : '$edgeGap';
+    final y = _isBottom ? 'ih-${blockHeight.toInt()}-$edgeGap' : '$edgeGap';
     final fill = "drawbox=x=$x:y=$y:w=$boxWidth:h=${blockHeight.toInt()}:"
         "color=black@${opacity.clamp(0.0, 1.0)}:t=fill";
-    final border = "drawbox=x=$x:y=$y:w=$boxWidth:h=${blockHeight.toInt()}:color=white@0.9:t=2";
+    final border = "drawbox=x=$x:y=$y:w=$boxWidth:h=${blockHeight.toInt()}:color=white@0.9:t=$borderWidth";
     return '$fill,$border';
   }
 
   String? buildAccentBar({required double blockHeight}) {
     if (style == WatermarkStyle.minimal) return null;
 
-    final barWidth = 4;
+    final barWidth = math.max(2, (4 * scale).round());
+    final edgeGap = (18 * scale).round();
     final accentColor = style == WatermarkStyle.polaroid ? 'darkorange' : 'orange';
-    final x = _isRight ? 'iw-$barWidth-18' : '18';
+    final x = _isRight ? 'iw-$barWidth-$edgeGap' : '$edgeGap';
     final y = _isBottom ? 'ih-${blockHeight.toInt()}' : '0';
     return "drawbox=x=$x:y=$y:w=$barWidth:h=${blockHeight.toInt()}:color=$accentColor@0.9:t=fill";
   }
@@ -729,15 +803,17 @@ class _StyleLayout {
   String? buildDivider({required double blockHeight}) {
     if (style == WatermarkStyle.minimal || style == WatermarkStyle.stamp) return null;
 
+    final edgeGap = (18 * scale).round();
+    final lineHeight = math.max(1, (1 * scale).round());
     final y = _isBottom ? 'ih-${blockHeight.toInt()}' : '0';
-    return "drawbox=x=18:y=$y:w=iw-36:h=1:color=white@0.2:t=fill";
+    return "drawbox=x=$edgeGap:y=$y:w=iw-${edgeGap * 2}:h=$lineHeight:color=white@0.2:t=fill";
   }
 
   String textX() {
-    final accentSpace = (style == WatermarkStyle.minimal) ? 0 : 12;
+    final accentSpace = (style == WatermarkStyle.minimal) ? 0 : (12 * scale).round();
     if (_isFullWidthBanner) return '(w-text_w)/2';
-    final inset = style == WatermarkStyle.stamp ? 32 : 20;
-    return _isRight ? 'w-text_w-$inset' : '${inset + accentSpace}';
+    final inset = (style == WatermarkStyle.stamp ? 32 : 20) * scale;
+    return _isRight ? 'w-text_w-${inset.round()}' : '${(inset).round() + accentSpace}';
   }
 
   String textY({
@@ -749,7 +825,8 @@ class _StyleLayout {
       final barTop = _isBottom ? 'h-${blockHeight.toInt()}' : '0';
       return '($barTop)+${padding.toInt()}+($lineIndex*${lineHeight.toInt()})';
     }
-    final inset = style == WatermarkStyle.stamp ? 20 + padding : 20;
+    final baseInset = 20 * scale;
+    final inset = style == WatermarkStyle.stamp ? baseInset + padding : baseInset;
     final top = _isBottom
         ? 'h-${blockHeight.toInt()}-${inset.toInt()}+${padding.toInt()}'
         : '${inset.toInt()}+${padding.toInt()}';
@@ -762,8 +839,9 @@ class _StyleLayout {
   }
 
   _XY logoXY() {
-    final x = _isRight ? 'W-w-20' : '20';
-    final y = _isBottom ? '20' : 'H-h-20';
+    final edgeGap = (20 * scale).round();
+    final x = _isRight ? 'W-w-$edgeGap' : '$edgeGap';
+    final y = _isBottom ? '$edgeGap' : 'H-h-$edgeGap';
     return _XY(x, y);
   }
 }
