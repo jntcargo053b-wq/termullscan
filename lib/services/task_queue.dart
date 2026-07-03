@@ -26,14 +26,6 @@ class Task<T> {
 }
 
 /// TaskQueue dengan worker pool dan antrian FIFO.
-///
-/// Fitur:
-/// - Eksekusi tugas secara berurutan (FIFO)
-/// - Worker pool (bisa diatur jumlahnya)
-/// - Status setiap tugas (pending, running, completed, failed, cancelled)
-/// - Pembatalan tugas yang masih pending
-/// - Stream untuk notifikasi status
-/// - Stream untuk notifikasi semua tugas selesai
 class TaskQueue {
   static final TaskQueue _instance = TaskQueue._internal();
   factory TaskQueue() => _instance;
@@ -53,8 +45,7 @@ class TaskQueue {
 
   TaskQueue({this.maxWorkers = 2});
 
-  /// Tambahkan tugas ke antrian.
-  /// Mengembalikan ID tugas yang dapat digunakan untuk membatalkan.
+  /// Tambahkan tugas ke antrian. Mengembalikan ID tugas.
   String add<T>({
     required String label,
     required Future<T> Function() work,
@@ -75,8 +66,7 @@ class TaskQueue {
     return id;
   }
 
-  /// Batalkan tugas berdasarkan ID (hanya jika masih pending).
-  /// Mengembalikan true jika berhasil dibatalkan.
+  /// Batalkan tugas berdasarkan ID (hanya jika pending)
   bool cancel(String id) {
     final task = _queue.firstWhereOrNull((t) => t.id == id && t.status == TaskStatus.pending);
     if (task != null) {
@@ -88,7 +78,7 @@ class TaskQueue {
     return false;
   }
 
-  /// Batalkan semua tugas yang masih pending.
+  /// Batalkan semua tugas yang pending
   void cancelAllPending() {
     final toRemove = _queue.where((t) => t.status == TaskStatus.pending).toList();
     for (final task in toRemove) {
@@ -98,13 +88,9 @@ class TaskQueue {
     }
   }
 
-  /// Jumlah tugas dalam antrian (pending)
   int get pendingCount => _queue.length;
-
-  /// Jumlah tugas yang sedang berjalan
   int get runningCount => _running;
 
-  /// Bersihkan tugas yang sudah selesai/gagal dari antrian (opsional)
   void clearCompleted() {
     _queue.removeWhere((t) =>
         t.status == TaskStatus.completed ||
@@ -112,15 +98,11 @@ class TaskQueue {
         t.status == TaskStatus.cancelled);
   }
 
-  /// Proses antrian secara rekursif dengan worker pool
   Future<void> _processQueue() async {
-    // Jika sudah mencapai batas worker atau antrian kosong, berhenti
     if (_running >= maxWorkers || _queue.isEmpty) return;
 
-    // Ambil satu tugas dari depan antrian
     final task = _queue.removeFirst();
     if (task.status == TaskStatus.cancelled) {
-      // Tugas sudah dibatalkan, lanjutkan ke tugas berikutnya
       _processQueue();
       return;
     }
@@ -147,24 +129,21 @@ class TaskQueue {
       _running--;
       _statusController.add(task);
 
-      // Jika antrian kosong dan tidak ada worker yang berjalan, tandai selesai
       if (_queue.isEmpty && _running == 0) {
         _doneController.add(null);
       }
 
-      // Lanjutkan ke tugas berikutnya
       _processQueue();
     }
   }
 
-  /// Dispose resources
   void dispose() {
     _statusController.close();
     _doneController.close();
   }
 }
 
-/// Ekstensi untuk mendapatkan firstWhereOrNull (tanpa dependensi tambahan)
+/// Ekstensi untuk firstWhereOrNull (tanpa dependensi tambahan)
 extension _QueueExtension<T> on Queue<T> {
   T? firstWhereOrNull(bool Function(T) test) {
     for (final item in this) {
