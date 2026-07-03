@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:ffmpeg_kit_flutter_new_video/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_new_video/ffmpeg_kit_config.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
@@ -11,7 +12,7 @@ import '../watermark/watermark_style.dart';
 import '../models/scan_entry.dart';
 
 // ─────────────────────────────────────────────────────────────
-//  0.  FUNGSI UTILITAS TOP-LEVEL (tidak berubah)
+//  0.  FUNGSI UTILITAS TOP-LEVEL
 // ─────────────────────────────────────────────────────────────
 
 String _escapeFFmpegText(String text) {
@@ -72,7 +73,32 @@ String _formatTimestamp(DateTime dt) {
 }
 
 // ─────────────────────────────────────────────────────────────
-//  1.  KELAS PEMBANTU TEMPLATE FILTER (tidak berubah)
+//  0b. DURASI VIDEO (via FFprobe)
+// ─────────────────────────────────────────────────────────────
+
+Future<int> _probeVideoDuration(String inputPath) async {
+  try {
+    // Gunakan FFprobe dari package yang sama
+    final session = await FFmpegKit.executeWithArguments([
+      '-i', inputPath,
+      '-show_entries', 'format=duration',
+      '-v', 'quiet',
+      '-of', 'csv=p=0',
+    ]);
+    final output = await session.getOutput();
+    if (output != null && output.isNotEmpty) {
+      final durationStr = output.trim();
+      final duration = double.tryParse(durationStr);
+      if (duration != null) return duration.round();
+    }
+    return 0;
+  } catch (e) {
+    return 0;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+//  1.  KELAS PEMBANTU TEMPLATE FILTER
 // ─────────────────────────────────────────────────────────────
 
 class _FilterTemplate {
@@ -128,8 +154,6 @@ class _PrecomputedTimestamp {
   }
 }
 
-// ─── TAMBAHAN: Kelas untuk watermark Full Info ──────────────
-
 class _PrecomputedFullInfo {
   final List<_FilterTemplate> dynamicFilters;
   final List<String> staticFilters;
@@ -174,7 +198,7 @@ class _PrecomputedFullInfo {
 }
 
 // ─────────────────────────────────────────────────────────────
-//  2.  CACHE WATERMARK (DENGAN FULL INFO)
+//  2.  CACHE WATERMARK
 // ─────────────────────────────────────────────────────────────
 
 class _WatermarkCache {
@@ -302,7 +326,7 @@ class _WatermarkCache {
     );
   }
 
-  // ─── Prekomputasi timestamp (sama) ──────────────────────
+  // ─── Prekomputasi timestamp ──────────────────────────────
 
   _PrecomputedTimestamp _precomputeTimestamp(WatermarkSettings settings, double scale) {
     final padding = (22 * scale).round();
@@ -578,7 +602,7 @@ class _WatermarkCache {
     );
   }
 
-  // ─── Data dinamis (sama) ─────────────────────────────────
+  // ─── Data dinamis ─────────────────────────────────────────
 
   List<String> getDynamicTexts(ScanEntry entry, WatermarkSettings settings) {
     final lines = <String>[];
@@ -745,11 +769,15 @@ class VideoWatermarkService {
     required String outputPath,
     required ScanEntry entry,
     required WatermarkSettings settings,
-    bool includeAudio = false, // default nonaktif
+    bool includeAudio = false,
+    void Function(double progress)? onProgress,
   }) async {
     lastError = null;
     try {
       await _cache.initialize(settings);
+
+      final durationSeconds = await _probeVideoDuration(inputPath);
+      debugPrint('⏱️ Durasi video: ${durationSeconds}s');
 
       // Faktor skala tetap untuk resolusi output 720p
       const double scale = 720.0 / 1920.0; // ~0.375
@@ -833,17 +861,36 @@ class VideoWatermarkService {
       if (!includeAudio) {
         arguments.insertAll(arguments.length - 1, ['-an']);
       } else {
-        // Jika audio diaktifkan, tambahkan encoder audio
         arguments.insertAll(arguments.length - 1, [
           '-c:a', 'aac',
           '-b:a', '128k',
         ]);
       }
 
+      // ─── Aktifkan callback progress ──────────────────────
+      if (onProgress != null && durationSeconds > 0) {
+        FFmpegKitConfig.enableLogCallback((log) {
+          final message = log.getMessage();
+          if (message.contains('out_time_ms=')) {
+            final regex = RegExp(r'out_time_ms=(\d+)');
+            final match = regex.firstMatch(message);
+            if (match != null) {
+              final outTimeMs = int.parse(match.group(1)!);
+              double progress = outTimeMs / (durationSeconds * 1000);
+              if (progress > 1.0) progress = 1.0;
+              onProgress(progress);
+            }
+          }
+        });
+      }
+
       debugPrint('🎬 FFmpeg arguments: $arguments');
 
       final session = await FFmpegKit.executeWithArguments(arguments);
       final returnCode = await session.getReturnCode();
+
+      // Matikan callback
+      FFmpegKitConfig.enableLogCallback(null);
 
       debugPrint('🔢 ReturnCode = ${returnCode?.getValue()}');
       final output = await session.getOutput();
@@ -867,6 +914,8 @@ class VideoWatermarkService {
         return null;
       }
     } catch (e) {
+      // Pastikan callback dimatikan jika terjadi error
+      FFmpegKitConfig.enableLogCallback(null);
       debugPrint('❌ Error video watermark: $e');
       lastError = 'Exception: $e';
       return null;
@@ -901,7 +950,7 @@ class VideoWatermarkService {
 }
 
 // ─────────────────────────────────────────────────────────────
-//  4.  HELPER CLASSES (tidak berubah)
+//  4.  HELPER CLASSES
 // ─────────────────────────────────────────────────────────────
 
 class _TextLine {
