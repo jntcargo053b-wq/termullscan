@@ -24,7 +24,7 @@ class DatabaseHelper {
     final path = join(dir.path, 'scan_log.db');
     return await openDatabase(
       path,
-      version: 3,
+      version: 4, // ⬆️ upgrade ke versi 4
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -48,7 +48,8 @@ class DatabaseHelper {
         photoPaths TEXT,
         videoPath TEXT,
         videoDuration INTEGER,
-        videoThumbnail TEXT
+        videoThumbnail TEXT,
+        galleryExported INTEGER DEFAULT 0
       )
     ''');
     await db.execute('CREATE INDEX idx_value ON scan_entries(value)');
@@ -64,6 +65,11 @@ class DatabaseHelper {
       await db.execute('ALTER TABLE scan_entries ADD COLUMN videoPath TEXT');
       await db.execute('ALTER TABLE scan_entries ADD COLUMN videoDuration INTEGER');
       await db.execute('ALTER TABLE scan_entries ADD COLUMN videoThumbnail TEXT');
+    }
+    // ─── MIGRASI VERSI 3 → 4 ──────────────────────────────
+    if (oldVersion < 4) {
+      await db.execute('ALTER TABLE scan_entries ADD COLUMN galleryExported INTEGER DEFAULT 0');
+      debugPrint('✅ Database migrated to version 4: added galleryExported column');
     }
   }
 
@@ -122,7 +128,6 @@ class DatabaseHelper {
     });
   }
 
-  // ✅ getEntries dengan sorting + pencarian note & lokasi
   Future<List<ScanEntry>> getEntries({
     int limit = 20,
     int offset = 0,
@@ -188,7 +193,6 @@ class DatabaseHelper {
     });
   }
 
-  // ✅ getCount dengan pencarian note & lokasi
   Future<int> getCount({
     String? searchQuery,
     String? period,
