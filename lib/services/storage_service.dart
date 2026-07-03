@@ -19,7 +19,7 @@ class StorageService {
   String generateId() => _uuid.v4();
 
   // ─── Database methods (delegasi ke _db) ──────────────────
-
+  Future<void> add(ScanEntry entry) async => _db.insert(entry);
   Future<void> insert(ScanEntry entry) async => _db.insert(entry);
   Future<void> update(ScanEntry entry) async => _db.update(entry);
   Future<void> delete(String id) async => _db.delete(id);
