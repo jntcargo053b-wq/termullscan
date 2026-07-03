@@ -3,7 +3,6 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:ffmpeg_kit_flutter_new_video/ffmpeg_kit.dart';
-import 'package:ffmpeg_kit_flutter_new_video/ffprobe_kit.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
@@ -70,45 +69,6 @@ String _formatTimestamp(DateTime dt) {
       '${dt.hour.toString().padLeft(2, '0')}:'
       '${dt.minute.toString().padLeft(2, '0')}:'
       '${dt.second.toString().padLeft(2, '0')}';
-}
-
-// ─────────────────────────────────────────────────────────────
-//  0b. SKALA RESOLUSI VIDEO (tidak berubah)
-// ─────────────────────────────────────────────────────────────
-
-const double _kReferenceHeight = 1920.0;
-const double _kMinScale = 0.45;
-const double _kMaxScale = 2.5;
-
-Future<double> _probeVideoScale(String inputPath) async {
-  try {
-    final session = await FFprobeKit.getMediaInformation(inputPath);
-    final info = await session.getMediaInformation();
-    if (info == null) {
-      debugPrint('⚠️ FFprobe: media information null, pakai skala default 1.0');
-      return 1.0;
-    }
-    final streams = info.getStreams();
-    for (final stream in streams) {
-      final props = stream.getAllProperties();
-      if (props == null) continue;
-      final codecType = props['codec_type']?.toString();
-      if (codecType != 'video') continue;
-      final rawHeight = props['height'] ?? props['coded_height'];
-      final height = rawHeight is int
-          ? rawHeight
-          : int.tryParse(rawHeight?.toString() ?? '');
-      if (height != null && height > 0) {
-        final scale = height / _kReferenceHeight;
-        return scale.clamp(_kMinScale, _kMaxScale);
-      }
-    }
-    debugPrint('⚠️ FFprobe: stream video/height tidak ditemukan, pakai skala default 1.0');
-    return 1.0;
-  } catch (e) {
-    debugPrint('⚠️ FFprobe gagal probe resolusi ($e), pakai skala default 1.0');
-    return 1.0;
-  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -232,6 +192,9 @@ class _WatermarkCache {
   final Map<double, _PrecomputedTimestamp> _timestampCache = {};
   final Map<double, _PrecomputedFullInfo> _fullInfoCache = {};
 
+  /// Faktor skala tetap untuk resolusi output 720p (referensi 1920)
+  static const double _fixedScale = 720.0 / 1920.0; // 0.375
+
   Future<void> initialize(WatermarkSettings settings) async {
     if (_initialized && _settings == settings) return;
     _settings = settings;
@@ -276,7 +239,7 @@ class _WatermarkCache {
     return null;
   }
 
-  // ─── Prekomputasi gaya umum (sama seperti sebelumnya) ────
+  // ─── Prekomputasi gaya umum ──────────────────────────────
 
   _PrecomputedStyle _precomputeGeneral(
     WatermarkSettings settings,
@@ -473,7 +436,7 @@ class _WatermarkCache {
     );
   }
 
-  // ─── PREKOMPUTASI FULL INFO (BARU) ────────────────────────
+  // ─── PREKOMPUTASI FULL INFO ─────────────────────────────
 
   _PrecomputedFullInfo _precomputeFullInfo(WatermarkSettings settings, double scale) {
     final padding = (20 * scale).round();
@@ -531,7 +494,7 @@ class _WatermarkCache {
 
     int cursorY = padding;
 
-    // 1. Barcode (baris pertama)
+    // 1. Barcode
     dynamicTemplates.add(
       _FilterTemplate(
         '{{barcode}}',
@@ -543,7 +506,7 @@ class _WatermarkCache {
     );
     cursorY += barcodeSize + gap6;
 
-    // 2. Tanggal & Jam (satu baris)
+    // 2. Tanggal & Jam
     final dateTimeText = "{{date}}  {{time}} WIB";
     dynamicTemplates.add(
       _FilterTemplate(
@@ -556,7 +519,7 @@ class _WatermarkCache {
     );
     cursorY += dateSize + gap8;
 
-    // 3. Operator & Perusahaan (satu baris)
+    // 3. Operator & Perusahaan
     final opText = "{{operator}}  •  {{company}}";
     dynamicTemplates.add(
       _FilterTemplate(
@@ -569,8 +532,8 @@ class _WatermarkCache {
     );
     cursorY += operatorSize + gap8;
 
-    // 4. GPS (latitude, longitude)
-    if (settings.showGps) { // jika ada flag showGps
+    // 4. GPS
+    if (settings.showGps) {
       dynamicTemplates.add(
         _FilterTemplate(
           '{{gps}}',
@@ -583,7 +546,7 @@ class _WatermarkCache {
       cursorY += gpsSize + gap4;
     }
 
-    // 5. Lokasi (jika ada)
+    // 5. Lokasi
     if (settings.showLocation) {
       dynamicTemplates.add(
         _FilterTemplate(
@@ -597,8 +560,7 @@ class _WatermarkCache {
       cursorY += locationSize + gap4;
     }
 
-    // 6. Kode verifikasi (bawah kanan)
-    // Sebagai tambahan, kita letakkan di pojok kanan bawah bar (bukan di bawah foto)
+    // 6. Kode verifikasi (pojok kanan bawah bar)
     staticParts.add(
       "drawtext=text='{{code}}  •  TERMULSCAN VERIFIED':"
       "fontfile='$escapedFontPath':fontcolor=white@0.7:fontsize=$codeSize:"
@@ -616,7 +578,7 @@ class _WatermarkCache {
     );
   }
 
-  // ─── Data dinamis ─────────────────────────────────────────
+  // ─── Data dinamis (sama) ─────────────────────────────────
 
   List<String> getDynamicTexts(ScanEntry entry, WatermarkSettings settings) {
     final lines = <String>[];
@@ -657,7 +619,6 @@ class _WatermarkCache {
     ];
   }
 
-  /// Data untuk full info: [barcode, date, time, operator, company, gpsText, location, code]
   List<String> getFullInfoData(ScanEntry entry, WatermarkSettings settings) {
     final dateStr = _ddmmyyyyFF(entry.timestamp);
     final timeStr = _hhmmFF(entry.timestamp);
@@ -730,8 +691,6 @@ class _WatermarkCache {
     }
   }
 
-  // ─── Teks statis untuk gaya umum ──────────────────────────
-
   static List<_TextLine> _buildStaticTextLines(WatermarkSettings settings) {
     final lines = <_TextLine>[];
     if (settings.companyName.isNotEmpty) {
@@ -786,24 +745,24 @@ class VideoWatermarkService {
     required String outputPath,
     required ScanEntry entry,
     required WatermarkSettings settings,
+    bool includeAudio = false, // default nonaktif
   }) async {
     lastError = null;
     try {
       await _cache.initialize(settings);
 
-      final scale = await _probeVideoScale(inputPath);
-      debugPrint('📐 Skala watermark video: $scale');
+      // Faktor skala tetap untuk resolusi output 720p
+      const double scale = 720.0 / 1920.0; // ~0.375
+      debugPrint('📐 Skala watermark (fixed 720p): $scale');
 
-      final List<String> filterParts;
+      // 1. Siapkan filter watermark (drawtext, background, dll.)
+      final List<String> watermarkFilters;
       final _XY logoXY;
 
-      // Pilih gaya berdasarkan settings
       if (settings.style == WatermarkStyle.fullInfo) {
-        // Gaya baru: full info
         final precomputed = _cache.getFullInfo(scale);
         final data = _cache.getFullInfoData(entry, settings);
-        // data: [barcode, date, time, operator, company, gpsText, location, code]
-        filterParts = precomputed.buildFilters(
+        watermarkFilters = precomputed.buildFilters(
           barcode: data[0],
           date: data[1],
           time: data[2],
@@ -817,48 +776,69 @@ class VideoWatermarkService {
       } else if (settings.style == WatermarkStyle.timestamp) {
         final precomputed = _cache.getTimestamp(scale);
         final dynamicData = _cache.getTimestampDynamicData(entry, settings);
-        filterParts = precomputed.buildFilters(dynamicData);
+        watermarkFilters = precomputed.buildFilters(dynamicData);
         logoXY = precomputed.logoXY;
       } else {
         final precomputed = _cache.getStyle(settings.style, scale);
         final dynamicTexts = _cache.getDynamicTexts(entry, settings);
-        filterParts = precomputed.buildFilters(dynamicTexts);
+        watermarkFilters = precomputed.buildFilters(dynamicTexts);
         logoXY = precomputed.logoXY;
       }
 
-      // Logo overlay
+      // 2. Filter scaling ke 720p (pertahankan aspek rasio, padding hitam jika perlu)
+      const String scaleFilter =
+          'scale=1280:720:force_original_aspect_ratio=decrease,'
+          'pad=1280:720:(ow-iw)/2:(oh-ih)/2';
+
+      // 3. Gabungkan semua filter (scale + watermark)
+      final String videoFilterChain =
+          '[0:v]$scaleFilter,${watermarkFilters.join(',')}';
+
+      // 4. Logo overlay (jika ada)
       final logoPath = _cache.logoPath;
       final List<String> filterArgs;
       if (logoPath != null) {
         final escapedLogoPath = _escapeFFmpegPath(logoPath);
         final buffer = StringBuffer();
         buffer.write("movie='$escapedLogoPath'[logo];");
-        buffer.write("[0:v]${filterParts.join(',')}[base];");
-        buffer.write("[base][logo]overlay=${logoXY.x}:${logoXY.y}:format=auto[outv]");
+        buffer.write('$videoFilterChain[base];');
+        buffer.write('[base][logo]overlay=${logoXY.x}:${logoXY.y}:format=auto[outv]');
         filterArgs = [
           '-filter_complex', buffer.toString(),
           '-map', '[outv]',
-          '-map', '0:a?',
+          '-map', '0:a?', // audio hanya jika ada dan kita inginkan
         ];
       } else {
         filterArgs = [
-          '-vf', filterParts.join(','),
+          '-vf', videoFilterChain,
         ];
       }
 
-      // Argumen FFmpeg
+      // 5. Argumen FFmpeg dengan encoding 720p, H.264 4 Mbps
       final arguments = <String>[
         '-i', inputPath,
         ...filterArgs,
-        '-pix_fmt', 'yuv420p',
-        '-c:v', 'mpeg4',
+        '-c:v', 'libx264',
+        '-preset', 'veryfast',
         '-b:v', '4M',
-        '-c:a', 'aac',
-        '-b:a', '128k',
+        '-maxrate', '4M',
+        '-bufsize', '8M',
+        '-pix_fmt', 'yuv420p',
         '-movflags', '+faststart',
         '-y',
         outputPath,
       ];
+
+      // 6. Audio (opsional)
+      if (!includeAudio) {
+        arguments.insertAll(arguments.length - 1, ['-an']);
+      } else {
+        // Jika audio diaktifkan, tambahkan encoder audio
+        arguments.insertAll(arguments.length - 1, [
+          '-c:a', 'aac',
+          '-b:a', '128k',
+        ]);
+      }
 
       debugPrint('🎬 FFmpeg arguments: $arguments');
 
