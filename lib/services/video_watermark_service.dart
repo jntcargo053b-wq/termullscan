@@ -102,7 +102,7 @@ Future<_XY2> _probeVideoDimensions(String inputPath) async {
     if (mediaInfo != null) {
       final streams = mediaInfo.getStreams();
       for (final stream in streams) {
-        // Versi 5.x tidak memiliki getCodecType(), kita cukup cek width/height
+        // Versi 5.0.0 tidak memiliki getCodecType(), jadi cukup cek width/height > 0
         final w = stream.getWidth();
         final h = stream.getHeight();
         if (w != null && h != null && w > 0 && h > 0) {
