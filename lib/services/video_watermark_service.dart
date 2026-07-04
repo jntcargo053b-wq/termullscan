@@ -75,7 +75,7 @@ String _formatTimestamp(DateTime dt) {
 }
 
 // ─────────────────────────────────────────────────────────────
-//  0b. DURASI & DIMENSI VIDEO (via FFprobe) – DIPERBAIKI
+//  0b. DURASI & DIMENSI VIDEO (via FFprobe)
 // ─────────────────────────────────────────────────────────────
 
 Future<int> _probeVideoDuration(String inputPath) async {
@@ -102,14 +102,11 @@ Future<_XY2> _probeVideoDimensions(String inputPath) async {
     if (mediaInfo != null) {
       final streams = mediaInfo.getStreams();
       for (final stream in streams) {
-        // ✅ Perbaikan: gunakan getCodecType() bukan getCodecName()
-        final codecType = stream.getCodecType() ?? '';
-        if (codecType == 'video') {
-          final w = stream.getWidth();
-          final h = stream.getHeight();
-          if (w != null && h != null && w > 0 && h > 0) {
-            return _XY2(w, h);
-          }
+        // Versi 5.x tidak memiliki getCodecType(), kita cukup cek width/height
+        final w = stream.getWidth();
+        final h = stream.getHeight();
+        if (w != null && h != null && w > 0 && h > 0) {
+          return _XY2(w, h);
         }
       }
     }
@@ -242,7 +239,7 @@ class _WatermarkCache {
   final Map<double, _PrecomputedTimestamp> _timestampCache = {};
   final Map<double, _PrecomputedFullInfo> _fullInfoCache = {};
 
-  // ✅ Fallback font
+  // Fallback font
   String get _fontSpec {
     if (_cachedFontPath != null) {
       final file = File(_cachedFontPath!);
