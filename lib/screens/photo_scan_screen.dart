@@ -19,6 +19,7 @@ import '../watermark/watermark_settings.dart';
 import '../utils/image_compressor.dart';
 import '../utils/file_helper.dart';
 import 'watermark_settings_sheet.dart';
+import 'preview_screen.dart'; // ⬅️ import preview
 
 // ─── WIDGET: Camera Icon ──────────────────────────────────────
 class _CameraIconWidget extends StatelessWidget {
@@ -318,7 +319,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   int _photoCount = 0;
   bool _cameraGranted = false;
   final List<String> _photoPaths = [];
-  String _statusText = ''; // ✅ tambahan
+  String _statusText = '';
 
   static const int _maxCachedPaths = 100;
 
@@ -479,6 +480,22 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     }
   }
 
+  // ─── Preview helper ─────────────────────────────────────────
+
+  Future<String?> _showPreview(XFile file, MediaType type) async {
+    return Navigator.push<String>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PreviewScreen(
+          file: file,
+          mediaType: type,
+          onSave: () => Navigator.pop(context, 'save'),
+          onRetake: () => Navigator.pop(context, 'retake'),
+        ),
+      ),
+    );
+  }
+
   // ─── Take photo ─────────────────────────────────────────────
 
   Future<void> _takePhoto() async {
@@ -500,40 +517,46 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       );
       if (!mounted) return;
       if (xfile != null) {
-        final photoIndex = _nextPhotoIndex++;
-        _taskQueue.add(
-          label: 'Foto $photoIndex',
-          priority: TaskPriority.high,
-          maxRetries: 3,
-          work: () => _processPhoto(xfile, photoIndex),
-          onSuccess: (path) {
-            if (mounted) {
-              setState(() {
-                _photoPaths.add(path);
-                _photoCount++;
-                if (_photoPaths.length > _maxCachedPaths) {
-                  _photoPaths.removeAt(0);
+        // ─── Tampilkan Preview ────────────────────────────
+        final previewResult = await _showPreview(xfile, MediaType.photo);
+        if (previewResult == 'save') {
+          final photoIndex = _nextPhotoIndex++;
+          _taskQueue.add(
+            label: 'Foto $photoIndex',
+            priority: TaskPriority.high,
+            maxRetries: 3,
+            work: () => _processPhoto(xfile, photoIndex),
+            onSuccess: (path) {
+              if (mounted) {
+                setState(() {
+                  _photoPaths.add(path);
+                  _photoCount++;
+                  if (_photoPaths.length > _maxCachedPaths) {
+                    _photoPaths.removeAt(0);
+                  }
+                });
+                if (!widget.batchMode) {
+                  _showSuccess();
+                  Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
                 }
-              });
-              if (!widget.batchMode) {
-                _showSuccess();
-                Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
               }
-            }
-          },
-          onError: (error) {
-            if (mounted) {
-              _showError('Gagal memproses foto: $error');
-              if (!widget.batchMode) {
-                Navigator.pop(context, {'error': error.toString()});
+            },
+            onError: (error) {
+              if (mounted) {
+                _showError('Gagal memproses foto: $error');
+                if (!widget.batchMode) {
+                  Navigator.pop(context, {'error': error.toString()});
+                }
               }
-            }
-          },
-        );
-        if (!widget.batchMode) {
-          setState(() {
-            _statusText = 'Memproses foto...';
-          });
+            },
+          );
+          if (!widget.batchMode) {
+            setState(() => _statusText = 'Memproses foto...');
+          }
+        } else {
+          // Retake → hapus file
+          try { await File(xfile.path).delete(); } catch (_) {}
+          if (mounted) setState(() => _statusText = 'Dibatalkan');
         }
       }
     } catch (e) {
@@ -566,40 +589,45 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       );
       if (!mounted) return;
       if (xfile != null) {
-        final photoIndex = _nextPhotoIndex++;
-        _taskQueue.add(
-          label: 'Foto dari Galeri $photoIndex',
-          priority: TaskPriority.high,
-          maxRetries: 3,
-          work: () => _processPhoto(xfile, photoIndex),
-          onSuccess: (path) {
-            if (mounted) {
-              setState(() {
-                _photoPaths.add(path);
-                _photoCount++;
-                if (_photoPaths.length > _maxCachedPaths) {
-                  _photoPaths.removeAt(0);
+        // ─── Tampilkan Preview ────────────────────────────
+        final previewResult = await _showPreview(xfile, MediaType.photo);
+        if (previewResult == 'save') {
+          final photoIndex = _nextPhotoIndex++;
+          _taskQueue.add(
+            label: 'Foto dari Galeri $photoIndex',
+            priority: TaskPriority.high,
+            maxRetries: 3,
+            work: () => _processPhoto(xfile, photoIndex),
+            onSuccess: (path) {
+              if (mounted) {
+                setState(() {
+                  _photoPaths.add(path);
+                  _photoCount++;
+                  if (_photoPaths.length > _maxCachedPaths) {
+                    _photoPaths.removeAt(0);
+                  }
+                });
+                if (!widget.batchMode) {
+                  _showSuccess();
+                  Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
                 }
-              });
-              if (!widget.batchMode) {
-                _showSuccess();
-                Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
               }
-            }
-          },
-          onError: (error) {
-            if (mounted) {
-              _showError('Gagal memproses foto: $error');
-              if (!widget.batchMode) {
-                Navigator.pop(context, {'error': error.toString()});
+            },
+            onError: (error) {
+              if (mounted) {
+                _showError('Gagal memproses foto: $error');
+                if (!widget.batchMode) {
+                  Navigator.pop(context, {'error': error.toString()});
+                }
               }
-            }
-          },
-        );
-        if (!widget.batchMode) {
-          setState(() {
-            _statusText = 'Memproses foto...';
-          });
+            },
+          );
+          if (!widget.batchMode) {
+            setState(() => _statusText = 'Memproses foto...');
+          }
+        } else {
+          try { await File(xfile.path).delete(); } catch (_) {}
+          if (mounted) setState(() => _statusText = 'Dibatalkan');
         }
       }
     } catch (e) {
