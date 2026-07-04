@@ -1,17 +1,9 @@
-allprojects {
-    repositories {
-        google()
-        mavenCentral()
-        maven { url "https://jitpack.io" }
-        // Repository for FFmpegKit - use Maven Central as primary source
-        maven { url "https://repo.maven.apache.org/maven2" }
-    }
-}
-
 rootProject.buildDir = '../build'
+
 subprojects {
     project.buildDir = "${rootProject.buildDir}/${project.name}"
 }
+
 subprojects {
     project.evaluationDependsOn(':app')
 }
