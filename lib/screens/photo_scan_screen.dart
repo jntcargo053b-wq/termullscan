@@ -808,7 +808,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       return savedPath;
 
     } catch (e, stack) {
-      debugPrint('❌ Error processing photo: $e\n$stack');
+      debugPrint('❌ Error processing photo #$photoIndex ($imagePath): $e\n$stack');
       // Bersihkan file sisa
       if (watermarkedPath != null && watermarkedPath != compressedPath) {
         try { await File(watermarkedPath).delete(); } catch (_) {}
@@ -818,12 +818,18 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       }
       rethrow;
     } finally {
-      // Hapus file temporary
+      // Hapus file temporary hasil kompresi (bukan file pending asli)
       if (compressedIsTemp && compressedPath != imagePath) {
         try { await File(compressedPath).delete(); } catch (_) {}
       }
-      // Hapus file asli (sudah di-copy ke pending, jadi aman)
-      try { await File(imagePath).delete(); } catch (_) {}
+      // ⚠️ CATATAN: file pending (imagePath) SENGAJA TIDAK dihapus di sini.
+      // _processPhoto() dipanggil ulang oleh TaskQueue saat retry dengan
+      // path pending yang SAMA — jika dihapus di sini, percobaan retry
+      // berikutnya akan selalu gagal dengan "File input tidak ditemukan",
+      // menutupi penyebab kegagalan yang sebenarnya. Pembersihan file
+      // pending sudah ditangani di pemanggil (_takePhoto/_pickFromGallery)
+      // lewat callback onSuccess/onError, yang hanya jalan sekali setelah
+      // task benar-benar final (sukses atau gagal permanen).
     }
   }
 

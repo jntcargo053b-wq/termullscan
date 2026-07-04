@@ -1061,7 +1061,7 @@ class _StyleLayout {
   _XY logoXY() {
     final edgeGap = (20 * scale).round();
     final x = _isRight ? 'W-w-$edgeGap' : '$edgeGap';
-    final y = _isBottom ? '$edgeGap' : 'H-h-$edgeGap';
+    final y = _isBottom ? 'H-h-$edgeGap' : '$edgeGap';
     return _XY(x, y);
   }
 }

@@ -36,6 +36,7 @@ class TaskQueue {
   final int maxWorkers;
   final _statusController = StreamController<Task>.broadcast();
   final _doneController = StreamController<void>.broadcast();
+  bool _disposed = false;
 
   // Persistence (opsional, untuk nanti)
   final TaskPersister? persister;
@@ -45,6 +46,19 @@ class TaskQueue {
   Stream<Task> get statusStream => _statusController.stream;
   Stream<void> get doneStream => _doneController.stream;
 
+  /// Emit status secara aman — no-op jika queue sudah di-dispose atau
+  /// stream sudah ditutup, supaya task yang masih berjalan di background
+  /// tidak crash saat mencoba melapor setelah widget pemiliknya dispose.
+  void _emitStatus(Task task) {
+    if (_disposed || _statusController.isClosed) return;
+    _statusController.add(task);
+  }
+
+  void _emitDone() {
+    if (_disposed || _doneController.isClosed) return;
+    _doneController.add(null);
+  }
+
   String add<T>({
     required String label,
     required Future<T> Function() work,
@@ -53,6 +67,10 @@ class TaskQueue {
     void Function(T result)? onSuccess,
     void Function(Object error)? onError,
   }) {
+    if (_disposed) {
+      debugPrint('⚠️ TaskQueue sudah di-dispose, task "$label" diabaikan');
+      return '';
+    }
     final id = const Uuid().v4();
     final task = Task<T>(
       id: id,
@@ -65,7 +83,7 @@ class TaskQueue {
     );
     _queue.add(task);
     _sortQueue();
-    _statusController.add(task);
+    _emitStatus(task);
     _persistPending();
     _processQueue();
     return id;
@@ -93,7 +111,7 @@ class TaskQueue {
     if (task != null) {
       task.status = TaskStatus.cancelled;
       _queue.remove(task);
-      _statusController.add(task);
+      _emitStatus(task);
       _persistPending();
       return true;
     }
@@ -105,7 +123,7 @@ class TaskQueue {
     for (final task in toRemove) {
       task.status = TaskStatus.cancelled;
       _queue.remove(task);
-      _statusController.add(task);
+      _emitStatus(task);
     }
     _persistPending();
   }
@@ -114,6 +132,7 @@ class TaskQueue {
   int get runningCount => _running;
 
   Future<void> _processQueue() async {
+    if (_disposed) return;
     if (_running >= maxWorkers || _queue.isEmpty) return;
 
     final task = _queue.removeFirst();
@@ -124,7 +143,7 @@ class TaskQueue {
 
     _running++;
     task.status = TaskStatus.running;
-    _statusController.add(task);
+    _emitStatus(task);
     _persistPending();
 
     try {
@@ -133,7 +152,7 @@ class TaskQueue {
       task.result = result;
       if (task.onSuccess != null) task.onSuccess!(result);
     } catch (e) {
-      if (task.retryCount < task.maxRetries) {
+      if (task.retryCount < task.maxRetries && !_disposed) {
         task.retryCount++;
         task.status = TaskStatus.pending;
         _queue.addFirst(task);
@@ -147,13 +166,28 @@ class TaskQueue {
       }
     } finally {
       _running--;
-      _statusController.add(task);
+      _emitStatus(task);
       _persistPending();
 
       if (_queue.isEmpty && _running == 0) {
-        _doneController.add(null);
+        _emitDone();
       }
-      _processQueue();
+
+      if (_disposed) {
+        // dispose() dipanggil selagi task ini masih berjalan di background
+        // (mis. widget-nya sudah ditutup user sebelum FFmpeg selesai).
+        // Tutup stream sekarang, setelah task terakhir yang berjalan
+        // benar-benar selesai, supaya tidak ada event yang coba dikirim
+        // ke controller yang sudah closed.
+        if (_running == 0 &&
+            !_statusController.isClosed &&
+            !_doneController.isClosed) {
+          _statusController.close();
+          _doneController.close();
+        }
+      } else {
+        _processQueue();
+      }
     }
   }
 
@@ -176,8 +210,31 @@ class TaskQueue {
   }
 
   void dispose() {
-    _statusController.close();
-    _doneController.close();
+    _disposed = true;
+
+    // Batalkan task yang masih menunggu di antrian (belum sempat berjalan)
+    // dan panggil onError-nya, supaya pemanggil (mis. PhotoScanScreen)
+    // tetap sempat membersihkan file pending miliknya alih-alih
+    // meninggalkannya menggantung selamanya.
+    final stillPending = _queue.toList();
+    _queue.clear();
+    for (final task in stillPending) {
+      task.status = TaskStatus.cancelled;
+      if (task.onError != null) {
+        try {
+          task.onError!(Exception('Dibatalkan: layar ditutup'));
+        } catch (_) {}
+      }
+    }
+
+    if (_running == 0) {
+      // Tidak ada task yang sedang berjalan → aman ditutup sekarang.
+      if (!_statusController.isClosed) _statusController.close();
+      if (!_doneController.isClosed) _doneController.close();
+    }
+    // Jika masih ada task yang berjalan, penutupan stream ditunda dan
+    // dilakukan otomatis oleh _processQueue() begitu task itu selesai
+    // (lihat blok `finally` di atas).
   }
 }
 

@@ -67,6 +67,14 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     super.dispose();
   }
 
+  /// setState yang aman dipanggil dari task background (_processVideo),
+  /// yang bisa saja masih berjalan setelah widget ini sudah di-dispose
+  /// (mis. user menekan tombol back sebelum proses watermark selesai).
+  void _safeSetState(VoidCallback fn) {
+    if (!mounted) return;
+    setState(fn);
+  }
+
   // ─── Permission ─────────────────────────────────────────────
 
   Future<bool> _ensureCameraPermission() async {
@@ -222,7 +230,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       final tempDir = await getTemporaryDirectory();
       final wmOutputPath = '${tempDir.path}/wm_${DateTime.now().millisecondsSinceEpoch}.mp4';
 
-      setState(() {
+      _safeSetState(() {
         _statusText = 'Menambahkan watermark...';
         _progress = 0.0;
       });
@@ -239,22 +247,20 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         ),
         settings: WatermarkSettings(),
         onProgress: (progress) {
-          if (mounted) {
-            setState(() {
-              _progress = progress;
-              _statusText = 'Menambahkan watermark... ${(progress * 100).toInt()}%';
-            });
-          }
+          _safeSetState(() {
+            _progress = progress;
+            _statusText = 'Menambahkan watermark... ${(progress * 100).toInt()}%';
+          });
         },
       );
 
       // Reset progress setelah selesai (sukses atau gagal)
       _progress = 0.0;
-      if (mounted) setState(() {});
+      _safeSetState(() {});
 
       if (wmResult != null) {
         // 4. Watermark berhasil → simpan ke internal (rename)
-        setState(() => _statusText = 'Menyimpan video...');
+        _safeSetState(() => _statusText = 'Menyimpan video...');
         final savedPath = await _storage.saveVideo(wmResult, name: widget.barcode);
         if (savedPath.isEmpty) throw Exception('Gagal menyimpan video watermark');
         finalPath = savedPath;
@@ -263,7 +269,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         thumbnailPath = await _generateThumbnail(savedPath);
 
         // 6. Ekspor ke gallery dengan retry (3 kali) + verifikasi file
-        setState(() => _statusText = 'Ekspor ke Gallery...');
+        _safeSetState(() => _statusText = 'Ekspor ke Gallery...');
         galleryOk = await _saveToGallery(savedPath);
 
         if (galleryOk) {
@@ -283,12 +289,12 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         // 7. Hapus video mentah
         await file.delete();
 
-        setState(() => _statusText = galleryOk
+        _safeSetState(() => _statusText = galleryOk
             ? 'Video tersimpan di internal & Gallery'
             : 'Video tersimpan di internal (gagal ekspor)');
       } else {
         // 8. Watermark gagal → simpan video mentah
-        setState(() => _statusText = 'Watermark gagal, menyimpan video mentah...');
+        _safeSetState(() => _statusText = 'Watermark gagal, menyimpan video mentah...');
         final savedPath = await _storage.saveVideo(videoFile.path, name: widget.barcode);
         if (savedPath.isEmpty) throw Exception('Gagal menyimpan video mentah');
         finalPath = savedPath;
@@ -296,7 +302,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         thumbnailPath = await _generateThumbnail(savedPath);
         if (await file.exists()) await file.delete();
 
-        setState(() => _statusText = 'Video tersimpan (tanpa watermark)');
+        _safeSetState(() => _statusText = 'Video tersimpan (tanpa watermark)');
       }
 
       // 9. Simpan entry database (termasuk status gallery)
@@ -319,7 +325,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       debugPrint('❌ Error processing video: $e');
       // Reset progress jika error
       _progress = 0.0;
-      if (mounted) setState(() {});
+      _safeSetState(() {});
       rethrow;
     } finally {
       // Bersihkan file temp
