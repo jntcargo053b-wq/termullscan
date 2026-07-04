@@ -8,6 +8,7 @@ import 'package:gap/gap.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:saver_gallery/saver_gallery.dart';
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:path_provider/path_provider.dart';
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
 import '../services/permission_service.dart';
@@ -321,6 +322,9 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   final List<String> _photoPaths = [];
   String _statusText = '';
 
+  // ─── Pending directory ─────────────────────────────────────
+  late Directory _pendingDir;
+
   static const int _maxCachedPaths = 100;
 
   @override
@@ -334,6 +338,13 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         _runningTasks = _taskQueue.runningCount;
       });
     });
+    _initPendingDir();
+  }
+
+  Future<void> _initPendingDir() async {
+    final appDir = await getApplicationDocumentsDirectory();
+    _pendingDir = Directory('${appDir.path}/pending');
+    await _pendingDir.create(recursive: true);
   }
 
   @override
@@ -421,6 +432,21 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         : '${widget.barcode}${photoIndex.toString().padLeft(3, '0')}';
   }
 
+  // ─── Pending file helper ─────────────────────────────────────
+
+  Future<String> _saveToPending(XFile xfile) async {
+    final file = File(xfile.path);
+    if (!await file.exists()) {
+      throw Exception('File tidak ditemukan: ${xfile.path}');
+    }
+    final ext = file.path.split('.').last;
+    final destName = 'pending_${DateTime.now().millisecondsSinceEpoch}.$ext';
+    final destPath = '${_pendingDir.path}/$destName';
+    await file.copy(destPath);
+    debugPrint('📁 File disimpan ke pending: $destPath');
+    return destPath;
+  }
+
   // ─── Core processing ────────────────────────────────────────
 
   Future<String> _applyWatermark(String imagePath, DateTime timestamp, int photoIndex) async {
@@ -464,7 +490,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   // ─── ✅ PERBAIKAN: _saveToGallery dengan verifikasi & retry ──
   Future<bool> _saveToGallery(String filePath) async {
     try {
-      // ─── 1. Verifikasi keberadaan file ──────────────────────
       final file = File(filePath);
       if (!await file.exists()) {
         debugPrint('❌ File tidak ditemukan untuk ekspor: $filePath');
@@ -479,7 +504,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
       debugPrint('📤 Mengekspor foto: $filePath (${fileSize ~/ 1024}KB)');
 
-      // ─── 2. Retry ekspor (2 kali percobaan) ──────────────
       const maxRetries = 2;
       for (int attempt = 0; attempt <= maxRetries; attempt++) {
         try {
@@ -497,7 +521,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
           debugPrint('⚠️ Percobaan ${attempt + 1} gagal, retry...');
           if (attempt < maxRetries) {
             await Future.delayed(const Duration(milliseconds: 300));
-            // Cek ulang keberadaan file
             if (!await file.exists()) {
               debugPrint('❌ File hilang saat retry: $filePath');
               break;
@@ -545,23 +568,24 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     });
 
     try {
+      // ─── Ambil file asli (tanpa maxWidth/imageQuality) ──
       final xfile = await _picker.pickImage(
         source: ImageSource.camera,
-        maxWidth: AppConfig.maxWidth,
-        imageQuality: AppConfig.imageQuality,
         preferredCameraDevice: CameraDevice.rear,
       );
       if (!mounted) return;
       if (xfile != null) {
-        // ─── Tampilkan Preview ────────────────────────────
         final previewResult = await _showPreview(xfile, MediaType.photo);
         if (previewResult == 'save') {
+          // ─── Pindahkan ke pending ─────────────────────────
+          final pendingPath = await _saveToPending(xfile);
           final photoIndex = _nextPhotoIndex++;
+
           _taskQueue.add(
             label: 'Foto $photoIndex',
             priority: TaskPriority.high,
             maxRetries: 3,
-            work: () => _processPhoto(xfile, photoIndex),
+            work: () => _processPhoto(pendingPath, photoIndex),
             onSuccess: (path) {
               if (mounted) {
                 setState(() {
@@ -576,6 +600,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                   Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
                 }
               }
+              // Hapus pending file setelah sukses
+              try { File(pendingPath).delete(); } catch (_) {}
             },
             onError: (error) {
               if (mounted) {
@@ -584,6 +610,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                   Navigator.pop(context, {'error': error.toString()});
                 }
               }
+              try { File(pendingPath).delete(); } catch (_) {}
             },
           );
           if (!widget.batchMode) {
@@ -618,22 +645,23 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     });
 
     try {
+      // ─── Ambil file asli dari galeri ────────────────────
       final xfile = await _picker.pickImage(
         source: ImageSource.gallery,
-        maxWidth: AppConfig.maxWidth,
-        imageQuality: AppConfig.imageQuality,
+        // maxWidth/imageQuality dihilangkan
       );
       if (!mounted) return;
       if (xfile != null) {
-        // ─── Tampilkan Preview ────────────────────────────
         final previewResult = await _showPreview(xfile, MediaType.photo);
         if (previewResult == 'save') {
+          final pendingPath = await _saveToPending(xfile);
           final photoIndex = _nextPhotoIndex++;
+
           _taskQueue.add(
             label: 'Foto dari Galeri $photoIndex',
             priority: TaskPriority.high,
             maxRetries: 3,
-            work: () => _processPhoto(xfile, photoIndex),
+            work: () => _processPhoto(pendingPath, photoIndex),
             onSuccess: (path) {
               if (mounted) {
                 setState(() {
@@ -648,6 +676,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                   Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
                 }
               }
+              try { File(pendingPath).delete(); } catch (_) {}
             },
             onError: (error) {
               if (mounted) {
@@ -656,6 +685,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                   Navigator.pop(context, {'error': error.toString()});
                 }
               }
+              try { File(pendingPath).delete(); } catch (_) {}
             },
           );
           if (!widget.batchMode) {
@@ -681,27 +711,26 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
   // ─── Core processing logic ──────────────────────────────────
 
-  /// Proses foto dengan verifikasi file di setiap langkah untuk menghindari error "errno = 2".
-  Future<String> _processPhoto(XFile xfile, int photoIndex) async {
+  Future<String> _processPhoto(String imagePath, int photoIndex) async {
     String? watermarkedPath;
-    String compressedPath = xfile.path;
+    String compressedPath = imagePath;
     bool compressedIsTemp = false;
 
     try {
       // ─── 1. Verifikasi file input ──────────────────────────
-      final inputFile = File(xfile.path);
+      final inputFile = File(imagePath);
       if (!await inputFile.exists()) {
-        throw Exception('File input tidak ditemukan: ${xfile.path}');
+        throw Exception('File input tidak ditemukan: $imagePath');
       }
       final inputSize = await inputFile.length();
       if (inputSize == 0) {
-        throw Exception('File input kosong: ${xfile.path}');
+        throw Exception('File input kosong: $imagePath');
       }
-      debugPrint('📷 Input file OK: ${xfile.path} (${inputSize ~/ 1024}KB)');
+      debugPrint('📷 Input file OK: $imagePath (${inputSize ~/ 1024}KB)');
 
-      // ─── 2. Kompresi ──────────────────────────────────────
-      compressedPath = await ImageCompressor.compressIfNeeded(xfile.path);
-      compressedIsTemp = compressedPath != xfile.path &&
+      // ─── 2. Kompresi & resize (ImageCompressor) ──────────
+      compressedPath = await ImageCompressor.compressIfNeeded(imagePath);
+      compressedIsTemp = compressedPath != imagePath &&
           await FileHelper.isTemporaryFile(compressedPath);
 
       final compressedFile = File(compressedPath);
@@ -780,25 +809,21 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
     } catch (e, stack) {
       debugPrint('❌ Error processing photo: $e\n$stack');
-      // Bersihkan file sisa jika ada
+      // Bersihkan file sisa
       if (watermarkedPath != null && watermarkedPath != compressedPath) {
         try { await File(watermarkedPath).delete(); } catch (_) {}
       }
-      // Hanya hapus compressed jika temporary dan berbeda dari input
-      if (compressedIsTemp && compressedPath != xfile.path) {
+      if (compressedIsTemp && compressedPath != imagePath) {
         try { await File(compressedPath).delete(); } catch (_) {}
       }
       rethrow;
     } finally {
-      // ─── Hapus file temporary yang sudah tidak diperlukan ──
-      // Hapus compressed temp hanya jika berbeda dari input dan temporary
-      if (compressedIsTemp && compressedPath != xfile.path) {
+      // Hapus file temporary
+      if (compressedIsTemp && compressedPath != imagePath) {
         try { await File(compressedPath).delete(); } catch (_) {}
       }
-      // Hapus file input asli dari kamera/gallery (jika temporary)
-      if (await FileHelper.isTemporaryFile(xfile.path)) {
-        try { await File(xfile.path).delete(); } catch (_) {}
-      }
+      // Hapus file asli (sudah di-copy ke pending, jadi aman)
+      try { await File(imagePath).delete(); } catch (_) {}
     }
   }
 
