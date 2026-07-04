@@ -3,7 +3,7 @@ allprojects {
         google()
         mavenCentral()
         maven { url "https://jitpack.io" }
-        // ✅ WAJIB: repository untuk FFmpegKit native libraries
+        // Repository untuk FFmpegKit native libraries
         maven { url "https://artifactory.arthenica.com/artifactory/ffmpeg-kit-android" }
     }
 }
