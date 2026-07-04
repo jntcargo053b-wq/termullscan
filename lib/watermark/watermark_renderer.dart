@@ -7,6 +7,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import '../models/scan_entry.dart';
 import 'models/watermark_data.dart';
+import 'theme/watermark_theme.dart';
 import 'watermark_style.dart';
 import 'watermark_factory.dart';
 import 'watermark_settings.dart';
@@ -89,10 +90,22 @@ class WatermarkRenderer {
       );
 
       final layout = WatermarkFactory.create(settings.style);
+
+      // ✅ SATU instance WatermarkTheme untuk seluruh proses render ini —
+      // dibuat sekali di sini, lalu diterima oleh computeMetrics() dan
+      // paintOnCanvas(). Layout tidak lagi membangun theme sendiri-sendiri.
+      final baseSize = photoWidth < photoHeight ? photoWidth : photoHeight;
+      final theme = WatermarkTheme.of(
+        style: settings.style,
+        data: data,
+        baseSize: baseSize,
+      );
+
       final metrics = layout.computeMetrics(
         photoWidth: photoWidth,
         photoHeight: photoHeight,
         data: data,
+        theme: theme,
       );
 
       if (metrics.canvasWidth <= 0 || metrics.canvasHeight <= 0) {
@@ -110,6 +123,7 @@ class WatermarkRenderer {
         photoHeight: photoHeight,
         logoImage: logoImage,
         data: data,
+        theme: theme,
       );
 
       final picture = recorder.endRecording();
