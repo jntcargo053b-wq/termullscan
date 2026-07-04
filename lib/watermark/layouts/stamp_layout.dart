@@ -1,5 +1,5 @@
 // ============================================================
-// lib/watermark/layouts/stamp_layout.dart (FINAL)
+// lib/watermark/layouts/stamp_layout.dart (FINAL – WatermarkTheme)
 // ============================================================
 import 'dart:io';
 import 'dart:math' as math;
@@ -14,6 +14,7 @@ import '../watermark_style.dart';
 import '../watermark_settings.dart';
 import '../helpers/layout_helper.dart';
 import '../helpers/text_helper.dart';
+import '../theme/watermark_theme.dart';
 import '../widgets/logo_widget.dart';
 
 class StampLayout extends WatermarkLayout {
@@ -28,28 +29,29 @@ class StampLayout extends WatermarkLayout {
     required double photoWidth,
     required double photoHeight,
     required WatermarkData data,
+    required WatermarkTheme theme,
   }) {
-    final baseSize = LayoutHelper.getBaseSize(photoWidth, photoHeight);
-    final padding = LayoutHelper.padding(baseSize);
+    final baseSize = theme.baseSize;
+    final padding = theme.padding;
 
     int lineCount = 1;
     if (data.hasBarcode) lineCount++;
     if (data.hasOperator) lineCount++;
     lineCount++; // location
 
-    final fontSz = data.fontSize;
-    final lineH = fontSz * 1.7; // ✅ konsisten 1.7
+    final lineH = theme.lineHeight; // ✅ konsisten di semua layout
+    final barcodeBonus = data.hasBarcode ? theme.barcodeRowBonus : 0.0;
 
-    final panelHeight = lineCount * lineH + padding * 1.4;
+    final panelHeight = lineCount * lineH + barcodeBonus + padding * 1.4;
 
-    final logoMaxSize = baseSize * 0.18;
+    final logoMaxSize = theme.logoSize;
     final panelWidth = baseSize * 0.50;
     final textW = panelWidth - padding * 0.8;
 
     return LayoutMetrics(
       baseSize: baseSize,
       padding: padding,
-      fontSize: fontSz,
+      fontSize: theme.fontSize,
       lineHeight: lineH,
       stripHeight: panelHeight,
       logoMaxSize: logoMaxSize,
@@ -69,6 +71,7 @@ class StampLayout extends WatermarkLayout {
     required double photoHeight,
     required ui.Image? logoImage,
     required WatermarkData data,
+    required WatermarkTheme theme,
   }) {
     final padding = metrics.padding;
     final baseSize = metrics.baseSize;
@@ -116,7 +119,7 @@ class StampLayout extends WatermarkLayout {
     canvas.rotate(-0.06);
 
     final stampRect = Rect.fromCenter(center: Offset.zero, width: stampW, height: stampH);
-    final strokeWidth = math.max(2.5, baseSize * 0.005);
+    final strokeWidth = theme.stampStroke;
 
     canvas.drawRRect(
       RRect.fromRectAndRadius(stampRect, Radius.circular(stampH * 0.14)),
@@ -132,6 +135,18 @@ class StampLayout extends WatermarkLayout {
         ..strokeWidth = strokeWidth,
     );
 
+    // "VERIFIED"/"MANUAL" adalah elemen Judul stempel → idealnya mengikuti
+    // theme.titleFontSize (berbasis data.fontSize) supaya konsisten dengan
+    // layout lain saat fontSize diubah. TAPI kotak stempel (stampW x stampH)
+    // ukurannya tetap (berbasis baseSize foto, bukan fontSize), jadi di foto
+    // kecil + fontSize besar, teks bisa lebih besar dari kotaknya. Maka
+    // di-clamp ke rasio lama (stampH * 0.32 / 0.18) sebagai batas aman —
+    // dipakai rasio mana pun yang LEBIH KECIL.
+    final titleFontSize = theme.clampedFontSize(theme.titleFontSize, stampH * 0.32);
+    final captionFontSize = theme.clampedFontSize(theme.captionFontSize, stampH * 0.18);
+    final titleLineH = math.max(titleFontSize * 1.7, stampH * 0.30);
+    final captionLineH = math.max(captionFontSize * 1.7, stampH * 0.24);
+
     double textY = -stampH * 0.20;
     TextHelper.paintText(
       canvas: canvas,
@@ -140,7 +155,7 @@ class StampLayout extends WatermarkLayout {
       y: textY,
       maxWidth: stampW - 24,
       color: stampColor,
-      fontSize: stampH * 0.32,
+      fontSize: titleFontSize,
       fontWeight: FontWeight.w900,
       textAlign: TextAlign.center,
       fontFamily: data.fontFamily,
@@ -155,7 +170,7 @@ class StampLayout extends WatermarkLayout {
         y: textY,
         maxWidth: stampW - 24,
         color: stampColor,
-        fontSize: stampH * 0.18,
+        fontSize: captionFontSize,
         fontWeight: FontWeight.w600,
         textAlign: TextAlign.center,
         fontFamily: data.fontFamily,
@@ -171,7 +186,7 @@ class StampLayout extends WatermarkLayout {
       y: textY,
       maxWidth: stampW - 24,
       color: stampColor,
-      fontSize: stampH * 0.16,
+      fontSize: captionFontSize * 0.9,
       fontWeight: FontWeight.w600,
       textAlign: TextAlign.center,
       fontFamily: data.fontFamily,
@@ -180,15 +195,21 @@ class StampLayout extends WatermarkLayout {
     canvas.restore();
 
     // ─── INFO PANEL ────────────────────────────────────────────
-    final infoLines = <String>[];
-    if (data.hasBarcode) infoLines.add(data.barcodeValue!);
-    if (data.hasOperator) infoLines.add('OP: ${data.operatorName}');
-    infoLines.add(data.displayLocation);
+    // (text, isBarcode) supaya baris kode bisa ditekankan seperti layout lain.
+    final infoLines = <(String, bool)>[];
+    if (data.hasBarcode) infoLines.add((data.barcodeValue!, true));
+    if (data.hasOperator) infoLines.add(('OP: ${data.operatorName}', false));
+    infoLines.add((data.displayLocation, false));
 
-    final fontSize = data.fontSize;
-    final lineHeight = fontSize * 1.7; // ✅ konsisten
+    final fontSize = theme.fontSize;
+    final lineHeight = theme.lineHeight; // ✅ konsisten
+    final barcodeRowH = theme.barcodeLineHeight;
     final panelPadding = 12.0;
-    final panelHeight = infoLines.length * lineHeight + panelPadding * 2;
+    final panelHeight = infoLines.fold<double>(
+          0.0,
+          (sum, line) => sum + (line.$2 ? barcodeRowH : lineHeight),
+        ) +
+        panelPadding * 2;
     final panelWidth = metrics.textAvailableWidth + panelPadding * 2;
 
     double panelX, panelY;
@@ -224,7 +245,7 @@ class StampLayout extends WatermarkLayout {
         ..style = PaintingStyle.fill,
     );
 
-    final accentBarW = math.max(3.0, baseSize * 0.004);
+    final accentBarW = theme.accentBarWidth;
     canvas.drawRect(
       Rect.fromLTWH(
         panelX + 3,
@@ -237,20 +258,20 @@ class StampLayout extends WatermarkLayout {
 
     double textY2 = panelY + panelPadding;
     final textX2 = panelX + panelPadding + 8;
-    for (final line in infoLines) {
+    for (final (text, isBarcode) in infoLines) {
       TextHelper.paintText(
         canvas: canvas,
-        text: line,
+        text: text,
         x: textX2,
         y: textY2,
         maxWidth: panelWidth - panelPadding * 2 - 12,
         color: Colors.white,
-        fontSize: fontSize,
-        fontWeight: FontWeight.w600,
+        fontSize: isBarcode ? theme.barcodeFontSize : theme.bodyFontSize,
+        fontWeight: isBarcode ? FontWeight.w800 : FontWeight.w600,
         maxLines: 1,
         fontFamily: data.fontFamily,
       );
-      textY2 += lineHeight;
+      textY2 += isBarcode ? barcodeRowH : lineHeight;
     }
 
     // ─── LOGO ────────────────────────────────────────────────────
@@ -284,8 +305,7 @@ class StampLayout extends WatermarkLayout {
           logoY = padding;
       }
 
-      // ✅ cardPad diperbesar dari 0.10 → 0.25
-      final cardPad = drawW * 0.25;
+      final cardPad = theme.logoCardPadding(drawW);
       canvas.drawRRect(
         RRect.fromRectAndRadius(
           Rect.fromLTWH(
@@ -294,7 +314,7 @@ class StampLayout extends WatermarkLayout {
             drawW + cardPad * 2,
             drawH + cardPad * 2,
           ),
-          Radius.circular(cardPad * 0.8),
+          Radius.circular(theme.logoCardRadius(cardPad)),
         ),
         Paint()..color = Colors.black.withOpacity(0.35),
       );
@@ -320,10 +340,13 @@ class StampLayout extends WatermarkLayout {
     double previewWidth = 300,
     double previewHeight = 400,
   }) {
+    final baseSize = LayoutHelper.getBaseSize(previewWidth, previewHeight);
+    final theme = WatermarkTheme.of(style: style, data: previewData, baseSize: baseSize);
     final metrics = computeMetrics(
       photoWidth: previewWidth,
       photoHeight: previewHeight,
       data: previewData,
+      theme: theme,
     );
 
     final stampColor = previewData.isManual ? const Color(0xFFE67E22) : const Color(0xFF2E8B57);

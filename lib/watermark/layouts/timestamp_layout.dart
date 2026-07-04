@@ -12,6 +12,7 @@ import '../models/watermark_data.dart';
 import '../watermark_style.dart';
 import '../helpers/layout_helper.dart';
 import '../helpers/text_helper.dart';
+import '../theme/watermark_theme.dart';
 import '../widgets/logo_widget.dart';
 import 'base_layout.dart';
 import 'layout_metrics.dart';
@@ -23,7 +24,6 @@ class TimestampLayout extends WatermarkLayout {
   @override
   WatermarkStyle get style => WatermarkStyle.timestamp;
 
-  static const Color _accentColor = Color(0xFFFFC107);
   static const List<String> _hariIndo = [
     'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu',
   ];
@@ -38,14 +38,23 @@ class TimestampLayout extends WatermarkLayout {
     return code.padLeft(10, 'X').substring(0, 10);
   }
 
+  // Catatan desain: berbeda dari 4 layout lain (Polaroid/Minimal/Professional/
+  // Stamp) yang teksnya berbasis `data.fontSize` (setting yang bisa diubah
+  // pengguna), gaya "jam digital besar" di layout ini SENGAJA tetap
+  // proporsional terhadap resolusi foto (baseSize) — persis seperti ukuran
+  // logo & padding yang sudah dipakai bersama lewat WatermarkTheme. Elemen
+  // baseSize-relative TETAP diambil dari theme (baseSize, padding, logoSize,
+  // warna aksen); hanya rasio jam/tanggal/brand yang tetap unik milik layout
+  // ini karena itu bagian dari identitas visualnya, bukan info-table biasa.
   @override
   LayoutMetrics computeMetrics({
     required double photoWidth,
     required double photoHeight,
     required WatermarkData data,
+    required WatermarkTheme theme,
   }) {
-    final baseSize = LayoutHelper.getBaseSize(photoWidth, photoHeight);
-    final padding = LayoutHelper.padding(baseSize, ratio: 0.045);
+    final baseSize = theme.baseSize;
+    final padding = theme.padding;
 
     final timeFontSize = baseSize * 0.11;
     final addressFontSize = baseSize * 0.030;
@@ -67,7 +76,7 @@ class TimestampLayout extends WatermarkLayout {
       fontSize: timeFontSize,
       lineHeight: addressLineH,
       stripHeight: barHeight,
-      logoMaxSize: baseSize * 0.14,
+      logoMaxSize: theme.logoSize,
       textRowCount: metaLines + 3,
       canvasWidth: photoWidth,
       canvasHeight: photoHeight,
@@ -84,6 +93,7 @@ class TimestampLayout extends WatermarkLayout {
     required double photoHeight,
     required ui.Image? logoImage,
     required WatermarkData data,
+    required WatermarkTheme theme,
   }) {
     canvas.drawImageRect(
       srcImage,
@@ -164,7 +174,7 @@ class TimestampLayout extends WatermarkLayout {
     final dividerH = timeFontSize * 0.95;
     canvas.drawRect(
       Rect.fromLTWH(dividerX, rowTop + (timeTp.height - dividerH) / 2, baseSize * 0.006, dividerH),
-      Paint()..color = _accentColor,
+      Paint()..color = theme.color.accent,
     );
 
     final dateColX = dividerX + baseSize * 0.02;
@@ -220,7 +230,7 @@ class TimestampLayout extends WatermarkLayout {
         text: TextSpan(
           text: 'INPUT MANUAL',
           style: TextStyle(
-            color: _accentColor,
+            color: theme.color.accent,
             fontSize: metaFontSize * 0.95,
             fontWeight: FontWeight.w700,
             letterSpacing: 0.5,
@@ -261,7 +271,7 @@ class TimestampLayout extends WatermarkLayout {
       text: TextSpan(
         text: brandText,
         style: TextStyle(
-          color: _accentColor,
+          color: theme.color.accent,
           fontSize: brandFontSize,
           fontWeight: FontWeight.w800,
           fontFamily: data.fontFamily,
@@ -329,6 +339,8 @@ class TimestampLayout extends WatermarkLayout {
     double previewWidth = 300,
     double previewHeight = 400,
   }) {
+    final baseSize = LayoutHelper.getBaseSize(previewWidth, previewHeight);
+    final theme = WatermarkTheme.of(style: style, data: previewData, baseSize: baseSize);
     return ClipRRect(
       borderRadius: BorderRadius.circular(6),
       child: AspectRatio(
@@ -355,7 +367,7 @@ class TimestampLayout extends WatermarkLayout {
                 children: [
                   Text(
                     previewData.hasCompany ? previewData.companyName : 'TermulScan',
-                    style: const TextStyle(color: _accentColor, fontSize: 12, fontWeight: FontWeight.w800),
+                    style: TextStyle(color: theme.color.accent, fontSize: 12, fontWeight: FontWeight.w800),
                   ),
                   const Text(
                     'Foto Terverifikasi GPS',
@@ -405,7 +417,7 @@ class TimestampLayout extends WatermarkLayout {
                           style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w800, height: 1.0),
                         ),
                         const SizedBox(width: 6),
-                        Container(width: 2, height: 24, color: _accentColor),
+                        Container(width: 2, height: 24, color: theme.color.accent),
                         const SizedBox(width: 6),
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
