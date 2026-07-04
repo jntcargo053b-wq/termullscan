@@ -19,7 +19,7 @@ import '../watermark/watermark_settings.dart';
 import '../utils/image_compressor.dart';
 import '../utils/file_helper.dart';
 import 'watermark_settings_sheet.dart';
-import 'preview_screen.dart'; // ⬅️ import preview
+import 'preview_screen.dart';
 
 // ─── WIDGET: Camera Icon ──────────────────────────────────────
 class _CameraIconWidget extends StatelessWidget {
@@ -461,21 +461,57 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     return result ?? imagePath;
   }
 
+  // ─── ✅ PERBAIKAN: _saveToGallery dengan verifikasi & retry ──
   Future<bool> _saveToGallery(String filePath) async {
     try {
+      // ─── 1. Verifikasi keberadaan file ──────────────────────
       final file = File(filePath);
-      if (!await file.exists()) return false;
+      if (!await file.exists()) {
+        debugPrint('❌ File tidak ditemukan untuk ekspor: $filePath');
+        return false;
+      }
 
-      final String filename = file.path.split('/').last;
-      final result = await SaverGallery.saveFile(
-        file: filePath,
-        name: filename,
-        androidRelativePath: 'Pictures/TERMULScan',
-        androidExistNotSave: false,
-      );
-      return result.isSuccess;
-    } catch (e) {
-      debugPrint('❌ Error _saveToGallery: $e');
+      final fileSize = await file.length();
+      if (fileSize == 0) {
+        debugPrint('❌ File kosong: $filePath');
+        return false;
+      }
+
+      debugPrint('📤 Mengekspor foto: $filePath (${fileSize ~/ 1024}KB)');
+
+      // ─── 2. Retry ekspor (2 kali percobaan) ──────────────
+      const maxRetries = 2;
+      for (int attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          final filename = file.path.split('/').last;
+          final result = await SaverGallery.saveFile(
+            file: filePath,
+            name: filename,
+            androidRelativePath: 'Pictures/TERMULScan',
+            androidExistNotSave: false,
+          );
+          if (result.isSuccess) {
+            debugPrint('✅ Ekspor gallery berhasil: $filename');
+            return true;
+          }
+          debugPrint('⚠️ Percobaan ${attempt + 1} gagal, retry...');
+          if (attempt < maxRetries) {
+            await Future.delayed(const Duration(milliseconds: 300));
+            // Cek ulang keberadaan file
+            if (!await file.exists()) {
+              debugPrint('❌ File hilang saat retry: $filePath');
+              break;
+            }
+          }
+        } catch (e) {
+          debugPrint('⚠️ Error ekspor (attempt ${attempt + 1}): $e');
+          if (attempt == maxRetries) rethrow;
+          await Future.delayed(const Duration(milliseconds: 300));
+        }
+      }
+      return false;
+    } catch (e, stack) {
+      debugPrint('❌ Error _saveToGallery: $e\n$stack');
       return false;
     }
   }
@@ -685,7 +721,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         }
       }
 
-      // Simpan ke gallery
+      // ─── Simpan ke gallery (sudah pakai fungsi yang diperbaiki) ──
       await _saveToGallery(savedPath);
 
       // Notifikasi (snackbar) untuk batch mode
