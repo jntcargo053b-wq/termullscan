@@ -1,33 +1,12 @@
-// ============================================================
-// lib/watermark/theme/watermark_color.dart
-// ============================================================
-// Bagian dari WatermarkTheme. Setiap watermark style (Polaroid,
-// Minimal, Professional, Stamp) tetap punya identitas visual
-// berbeda — tapi sekarang diakses lewat SATU struktur field yang
-// sama (WatermarkColorScheme), bukan hex-code tersebar di tiap
-// file layout.
-// ============================================================
-
 import 'package:flutter/material.dart';
 import '../watermark_style.dart';
 
 class WatermarkColorScheme {
-  /// Warna dasar kartu/panel (mis. kertas Polaroid, panel gelap Stamp).
   final Color surface;
-
-  /// Warna teks utama/ditekankan (value barcode, judul stempel).
   final Color textPrimary;
-
-  /// Warna teks sekunder (value baris biasa: operator, waktu, lokasi).
   final Color textSecondary;
-
-  /// Warna teks label/caption kecil (mis. "WAKTU", "OPERATOR").
   final Color textMuted;
-
-  /// Warna aksen/highlight khas style ini (garis tepi, accent bar, badge).
   final Color accent;
-
-  /// Warna garis divider tipis.
   final Color divider;
 
   const WatermarkColorScheme({
@@ -73,9 +52,6 @@ class WatermarkColor {
   static const stamp = WatermarkColorScheme(
     surface: Color(0xFF000000),
     textPrimary: Colors.white,
-    // stampColor (hijau VERIFIED / oranye MANUAL) ditentukan dinamis di
-    // stamp_layout.dart karena bergantung pada data.isManual, jadi accent
-    // di sini hanya dipakai sebagai fallback/aksen sekunder.
     textSecondary: Colors.white,
     textMuted: Colors.white70,
     accent: Color(0xFF2E8B57),
@@ -91,6 +67,16 @@ class WatermarkColor {
     divider: Colors.white,
   );
 
+  // ─── TAMBAHKAN fullInfo ──────────────────────────────────────
+  static const fullInfo = WatermarkColorScheme(
+    surface: Color(0xFF000000),
+    textPrimary: Colors.white,
+    textSecondary: Colors.white,
+    textMuted: Colors.white70,
+    accent: Color(0xFFFFC107), // warna kuning/amber
+    divider: Colors.white,
+  );
+
   static WatermarkColorScheme forStyle(WatermarkStyle style) {
     switch (style) {
       case WatermarkStyle.polaroid:
@@ -103,6 +89,8 @@ class WatermarkColor {
         return stamp;
       case WatermarkStyle.timestamp:
         return timestamp;
+      case WatermarkStyle.fullInfo:
+        return fullInfo; // ← case baru
     }
   }
 }
