@@ -43,8 +43,8 @@ dependencies:
   camera: ^0.10.5+5
   video_player: ^2.8.5
   video_thumbnail: ^0.5.6
-  # ✅ Gunakan versi 6.0.2 (stabil) – jika masih error, coba 6.0.1
-  ffmpeg_kit_flutter: ^6.0.2
+  # ✅ Gunakan versi 5.0.0 yang stabil dan teruji
+  ffmpeg_kit_flutter: ^5.0.0
 
   # ─── BACKUP & RESTORE ────────────────────────────────────────────────
   archive: ^3.6.1
