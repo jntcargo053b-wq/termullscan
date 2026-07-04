@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/video_scan_screen.dart (FINAL – PREVIEW + PROGRESS + RETRY + GALLERY)
+// lib/screens/video_scan_screen.dart (FINAL – PREVIEW + PROGRESS + RETRY + GALLERY FIX)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -20,7 +20,7 @@ import '../services/task_queue.dart';
 import '../watermark/watermark_settings.dart';
 import '../theme/app_theme.dart';
 import '../utils/file_helper.dart';
-import 'preview_screen.dart'; // ✅ import preview
+import 'preview_screen.dart';
 
 class VideoScanScreen extends StatefulWidget {
   final String? barcode;
@@ -262,19 +262,14 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         // 5. Thumbnail
         thumbnailPath = await _generateThumbnail(savedPath);
 
-        // 6. Ekspor ke gallery dengan retry (3 kali)
+        // 6. Ekspor ke gallery dengan retry (3 kali) + verifikasi file
         setState(() => _statusText = 'Ekspor ke Gallery...');
-        for (int attempt = 1; attempt <= 3; attempt++) {
-          galleryOk = await _saveToGallery(savedPath);
-          if (galleryOk) break;
-          debugPrint('⚠️ Retry gallery export $attempt/3');
-          if (attempt < 3) await Future.delayed(const Duration(milliseconds: 500));
-        }
+        galleryOk = await _saveToGallery(savedPath);
 
         if (galleryOk) {
           debugPrint('✅ Video berhasil diekspor ke gallery');
         } else {
-          debugPrint('⚠️ Gagal ekspor ke gallery setelah 3 percobaan, file tetap tersimpan di internal');
+          debugPrint('⚠️ Gagal ekspor ke gallery setelah percobaan, file tetap tersimpan di internal');
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
@@ -358,8 +353,10 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     }
   }
 
+  // ─── ✅ PERBAIKAN: _saveToGallery dengan verifikasi & retry ──
   Future<bool> _saveToGallery(String filePath) async {
     try {
+      // ─── 1. Verifikasi keberadaan file ──────────────────────
       final file = File(filePath);
       if (!await file.exists()) {
         debugPrint('❌ File tidak ditemukan untuk ekspor: $filePath');
@@ -367,23 +364,44 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       }
 
       final fileSize = await file.length();
-      debugPrint('📤 Mengekspor video ke gallery: $filePath (${fileSize ~/ 1024}KB)');
-
-      final String filename = '${_entryFilenameBase(filePath)}_${DateTime.now().millisecondsSinceEpoch}.mp4';
-      final result = await SaverGallery.saveFile(
-        file: filePath,
-        name: filename,
-        androidRelativePath: 'Movies/TERMULScan',
-        androidExistNotSave: false,
-      );
-
-      if (result.isSuccess) {
-        debugPrint('✅ Ekspor gallery berhasil: $filename');
-        return true;
-      } else {
-        debugPrint('❌ Ekspor gallery gagal (result.isSuccess = false)');
+      if (fileSize == 0) {
+        debugPrint('❌ File kosong: $filePath');
         return false;
       }
+
+      debugPrint('📤 Mengekspor video: $filePath (${fileSize ~/ 1024}KB)');
+
+      // ─── 2. Retry ekspor (2 kali percobaan) ──────────────
+      const maxRetries = 2;
+      for (int attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          final filename = '${_entryFilenameBase(filePath)}_${DateTime.now().millisecondsSinceEpoch}.mp4';
+          final result = await SaverGallery.saveFile(
+            file: filePath,
+            name: filename,
+            androidRelativePath: 'Movies/TERMULScan',
+            androidExistNotSave: false,
+          );
+          if (result.isSuccess) {
+            debugPrint('✅ Ekspor gallery berhasil: $filename');
+            return true;
+          }
+          debugPrint('⚠️ Percobaan ${attempt + 1} gagal, retry...');
+          if (attempt < maxRetries) {
+            await Future.delayed(const Duration(milliseconds: 500));
+            // Cek ulang keberadaan file
+            if (!await file.exists()) {
+              debugPrint('❌ File hilang saat retry: $filePath');
+              break;
+            }
+          }
+        } catch (e) {
+          debugPrint('⚠️ Error ekspor (attempt ${attempt + 1}): $e');
+          if (attempt == maxRetries) rethrow;
+          await Future.delayed(const Duration(milliseconds: 500));
+        }
+      }
+      return false;
     } catch (e, stack) {
       debugPrint('❌ Error _saveToGallery: $e\n$stack');
       return false;
