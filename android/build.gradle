@@ -1,12 +1,10 @@
-// android/build.gradle (FINAL)
-// Tidak ada buildscript atau allprojects di sini.
-// Hanya default config untuk app.
-
 allprojects {
     repositories {
         google()
         mavenCentral()
-        maven { url "https://jitpack.io" }   // ← TAMBAHKAN INI
+        maven { url "https://jitpack.io" }
+        // ✅ WAJIB: repository untuk FFmpegKit native libraries
+        maven { url "https://artifactory.arthenica.com/artifactory/ffmpeg-kit-android" }
     }
 }
 
