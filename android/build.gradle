@@ -3,8 +3,10 @@ allprojects {
         google()
         mavenCentral()
         maven { url "https://jitpack.io" }
-        // Repository untuk FFmpegKit native libraries
+        // Repository untuk FFmpegKit versi 5.x
         maven { url "https://artifactory.arthenica.com/artifactory/ffmpeg-kit-android" }
+        // Cadangan
+        maven { url "https://oss.sonatype.org/content/repositories/snapshots" }
     }
 }
 
