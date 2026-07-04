@@ -17,7 +17,7 @@ class WatermarkSettings extends ChangeNotifier {
 
   // ========== KEYS ==========
   static const String _keyOperatorName = 'watermark_operator_name';
-  static const String _keyCompanyName = 'watermark_company_name'; // BARU
+  static const String _keyCompanyName = 'watermark_company_name';
   static const String _keyStyle = 'watermark_style';
   static const String _keyLogoPath = 'watermark_logo_path';
   static const String _keyHasLogo = 'watermark_has_logo';
@@ -25,10 +25,13 @@ class WatermarkSettings extends ChangeNotifier {
   static const String _keyFontSize = 'watermark_font_size';
   static const String _keyBgOpacity = 'watermark_bg_opacity';
   static const String _keyFontFamily = 'watermark_font_family';
+  static const String _keyShowGps = 'watermark_show_gps';       // baru
+  static const String _keyShowLocation = 'watermark_show_location'; // baru
+  static const String _keyVideoQuality = 'watermark_video_quality'; // baru
 
   // ========== PROPERTIES ==========
   String operatorName = '';
-  String companyName = ''; // BARU
+  String companyName = '';
   WatermarkStyle style = WatermarkStyle.professional;
   String? logoPath;
   bool hasLogo = false;
@@ -36,15 +39,33 @@ class WatermarkSettings extends ChangeNotifier {
   double fontSize = 14.0;
   double backgroundOpacity = 0.85;
   String fontFamily = 'Roboto';
+  bool showGps = true;
+  bool showLocation = true;
+  VideoQuality videoQuality = VideoQuality.high; // default
 
   bool _loaded = false;
 
+  // ─── Getter untuk bitrate ──────────────────────────────────
+  int get videoBitrateKbps {
+    switch (videoQuality) {
+      case VideoQuality.low:
+        return 2500;
+      case VideoQuality.medium:
+        return 3500;
+      case VideoQuality.high:
+        return 4000;
+    }
+  }
+
+  String get videoBitrateString => '${videoBitrateKbps}k';
+
+  // ─── Load ──────────────────────────────────────────────────
   Future<void> load() async {
     if (_loaded) return;
     try {
       final prefs = await SharedPreferences.getInstance();
       operatorName = prefs.getString(_keyOperatorName) ?? '';
-      companyName = prefs.getString(_keyCompanyName) ?? ''; // BARU
+      companyName = prefs.getString(_keyCompanyName) ?? '';
       final styleIndex = prefs.getInt(_keyStyle) ?? WatermarkStyle.professional.index;
       final values = WatermarkStyle.values;
       style = (styleIndex >= 0 && styleIndex < values.length)
@@ -60,6 +81,13 @@ class WatermarkSettings extends ChangeNotifier {
       fontSize = prefs.getDouble(_keyFontSize) ?? 14.0;
       backgroundOpacity = prefs.getDouble(_keyBgOpacity) ?? 0.85;
       fontFamily = prefs.getString(_keyFontFamily) ?? 'Roboto';
+      showGps = prefs.getBool(_keyShowGps) ?? true;
+      showLocation = prefs.getBool(_keyShowLocation) ?? true;
+      final qualityIndex = prefs.getInt(_keyVideoQuality) ?? VideoQuality.high.index;
+      final qValues = VideoQuality.values;
+      videoQuality = (qualityIndex >= 0 && qualityIndex < qValues.length)
+          ? qValues[qualityIndex]
+          : VideoQuality.high;
       _loaded = true;
       debugPrint('✅ Watermark settings loaded');
     } catch (e) {
@@ -68,11 +96,12 @@ class WatermarkSettings extends ChangeNotifier {
     }
   }
 
+  // ─── Save ──────────────────────────────────────────────────
   Future<void> save() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_keyOperatorName, operatorName);
-      await prefs.setString(_keyCompanyName, companyName); // BARU
+      await prefs.setString(_keyCompanyName, companyName);
       await prefs.setInt(_keyStyle, style.index);
       if (logoPath != null) {
         await prefs.setString(_keyLogoPath, logoPath!);
@@ -84,6 +113,9 @@ class WatermarkSettings extends ChangeNotifier {
       await prefs.setDouble(_keyFontSize, fontSize);
       await prefs.setDouble(_keyBgOpacity, backgroundOpacity);
       await prefs.setString(_keyFontFamily, fontFamily);
+      await prefs.setBool(_keyShowGps, showGps);
+      await prefs.setBool(_keyShowLocation, showLocation);
+      await prefs.setInt(_keyVideoQuality, videoQuality.index);
       debugPrint('✅ Watermark settings saved');
     } catch (e) {
       debugPrint('⚠️ Error saving watermark settings: $e');
@@ -97,7 +129,7 @@ class WatermarkSettings extends ChangeNotifier {
     await save();
   }
 
-  Future<void> setCompanyName(String name) async {  // BARU
+  Future<void> setCompanyName(String name) async {
     companyName = name;
     notifyListeners();
     await save();
@@ -143,6 +175,25 @@ class WatermarkSettings extends ChangeNotifier {
   Future<void> clearLogo() async {
     logoPath = null;
     hasLogo = false;
+    notifyListeners();
+    await save();
+  }
+
+  // ─── Setter untuk fullInfo ────────────────────────────────
+  Future<void> setShowGps(bool value) async {
+    showGps = value;
+    notifyListeners();
+    await save();
+  }
+
+  Future<void> setShowLocation(bool value) async {
+    showLocation = value;
+    notifyListeners();
+    await save();
+  }
+
+  Future<void> setVideoQuality(VideoQuality quality) async {
+    videoQuality = quality;
     notifyListeners();
     await save();
   }
