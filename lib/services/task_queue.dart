@@ -6,18 +6,18 @@ import 'package:uuid/uuid.dart';
 enum TaskPriority { high, normal, low }
 enum TaskStatus { pending, running, completed, failed, cancelled }
 
-class Task<T> {
+class Task {
   final String id;
   final String label;
   final TaskPriority priority;
   final int maxRetries;
   int retryCount = 0;
-  final Future<T> Function() work;
-  final void Function(T result)? onSuccess;
+  final Future<dynamic> Function() work;
+  final void Function(dynamic result)? onSuccess;
   final void Function(Object error)? onError;
   TaskStatus status = TaskStatus.pending;
   Object? error;
-  T? result;
+  dynamic result;
 
   Task({
     required this.id,
@@ -72,13 +72,17 @@ class TaskQueue {
       return '';
     }
     final id = const Uuid().v4();
-    final task = Task<T>(
+    final task = Task(
       id: id,
       label: label,
       priority: priority,
       maxRetries: maxRetries,
-      work: work,
-      onSuccess: onSuccess,
+      // Dibungkus supaya Task tidak perlu generik <T> sama sekali —
+      // menghindari crash "type '(T) => void' is not a subtype of
+      // type '((dynamic) => void)?'" yang terjadi saat Task<T> disimpan
+      // di dalam Queue<Task> (tipe generik hilang/di-erase jadi dynamic).
+      work: () async => await work(),
+      onSuccess: onSuccess == null ? null : (dynamic result) => onSuccess(result as T),
       onError: onError,
     );
     _queue.add(task);
