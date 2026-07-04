@@ -23,7 +23,6 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
     _settings = WatermarkSettings();
   }
 
-  // ─── Logo picker ──────────────────────────────────────────
   Future<void> _pickLogo() async {
     final XFile? file = await _picker.pickImage(
       source: ImageSource.gallery,
@@ -40,7 +39,6 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
     await _settings.clearLogo();
   }
 
-  // ─── Build ──────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return Container(
