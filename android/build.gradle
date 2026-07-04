@@ -2,9 +2,6 @@ rootProject.buildDir = "../build"
 subprojects {
     project.buildDir = "${rootProject.buildDir}/${project.name}"
 }
-subprojects {
-    project.evaluationDependsOn(":app")
-}
 
 // Fix untuk plugin lama (mis. ffmpeg_kit_flutter_full_gpl) yang belum
 // mendeklarasikan namespace, wajib ada sejak AGP 8.x
