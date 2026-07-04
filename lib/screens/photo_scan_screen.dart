@@ -681,76 +681,121 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
   // ─── Core processing logic ──────────────────────────────────
 
+  /// Proses foto dengan verifikasi file di setiap langkah untuk menghindari error "errno = 2".
   Future<String> _processPhoto(XFile xfile, int photoIndex) async {
     String? watermarkedPath;
     String compressedPath = xfile.path;
+    bool compressedIsTemp = false;
 
     try {
-      final fileSize = await File(xfile.path).length();
-      if (fileSize > 20 * 1024 * 1024) {
-        throw Exception('Ukuran foto terlalu besar (>20MB)');
+      // ─── 1. Verifikasi file input ──────────────────────────
+      final inputFile = File(xfile.path);
+      if (!await inputFile.exists()) {
+        throw Exception('File input tidak ditemukan: ${xfile.path}');
       }
+      final inputSize = await inputFile.length();
+      if (inputSize == 0) {
+        throw Exception('File input kosong: ${xfile.path}');
+      }
+      debugPrint('📷 Input file OK: ${xfile.path} (${inputSize ~/ 1024}KB)');
 
-      // Kompresi di isolate
+      // ─── 2. Kompresi ──────────────────────────────────────
       compressedPath = await ImageCompressor.compressIfNeeded(xfile.path);
+      compressedIsTemp = compressedPath != xfile.path &&
+          await FileHelper.isTemporaryFile(compressedPath);
 
+      final compressedFile = File(compressedPath);
+      if (!await compressedFile.exists()) {
+        throw Exception('File hasil kompresi tidak ditemukan: $compressedPath');
+      }
+      final compressedSize = await compressedFile.length();
+      if (compressedSize == 0) {
+        throw Exception('File hasil kompresi kosong: $compressedPath');
+      }
+      debugPrint('✅ Kompresi OK: $compressedPath (${compressedSize ~/ 1024}KB)');
+
+      // ─── 3. Watermark ──────────────────────────────────────
       final timestamp = DateTime.now();
-
       watermarkedPath = await _applyWatermark(compressedPath, timestamp, photoIndex);
 
-      if (!await File(watermarkedPath).exists()) {
-        throw Exception('File watermark tidak ditemukan');
+      if (watermarkedPath == null) {
+        throw Exception('Watermark gagal menghasilkan file');
       }
+      final watermarkedFile = File(watermarkedPath);
+      if (!await watermarkedFile.exists()) {
+        throw Exception('File watermark tidak ditemukan: $watermarkedPath');
+      }
+      final watermarkSize = await watermarkedFile.length();
+      if (watermarkSize == 0) {
+        throw Exception('File watermark kosong: $watermarkedPath');
+      }
+      debugPrint('✅ Watermark OK: $watermarkedPath (${watermarkSize ~/ 1024}KB)');
 
+      // ─── 4. Simpan ke internal ────────────────────────────
       final name = _resolveFileName(photoIndex);
       final savedPath = await _storage.savePhoto(watermarkedPath, name: name);
-      if (savedPath.isEmpty) throw Exception('Gagal menyimpan file foto');
+      if (savedPath.isEmpty) {
+        throw Exception('Gagal menyimpan file foto internal');
+      }
+      final savedFile = File(savedPath);
+      if (!await savedFile.exists()) {
+        throw Exception('File internal tidak ditemukan setelah save: $savedPath');
+      }
+      debugPrint('✅ Internal save OK: $savedPath');
 
-      // Hapus watermark temp
+      // ─── 5. Hapus watermark temp (hanya jika berbeda dan temporary) ──
       if (watermarkedPath != savedPath &&
-          await FileHelper.isTemporaryFile(watermarkedPath)) {
+          await FileHelper.isTemporaryFile(watermarkedPath) &&
+          await File(watermarkedPath).exists()) {
         try { await File(watermarkedPath).delete(); } catch (_) {}
       }
 
-      // Update database jika ada entryId
+      // ─── 6. Update database jika ada entryId ──────────────
       if (widget.entryId != null) {
         final barcodeEntry = await _storage.getEntry(widget.entryId!);
         if (barcodeEntry != null) {
-          final updated = barcodeEntry.copyWith(photoPaths: List.from(_photoPaths));
+          final updated = barcodeEntry.copyWith(photoPaths: List.from(_photoPaths)..add(savedPath));
           await _storage.update(updated);
         }
       }
 
-      // ─── Simpan ke gallery (sudah pakai fungsi yang diperbaiki) ──
-      await _saveToGallery(savedPath);
+      // ─── 7. Simpan ke gallery ──────────────────────────────
+      final galleryOk = await _saveToGallery(savedPath);
+      if (!galleryOk) {
+        debugPrint('⚠️ Gagal ekspor ke gallery, file tetap tersimpan di internal');
+      }
 
-      // Notifikasi (snackbar) untuk batch mode
-      if (widget.batchMode) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('📸 Foto $photoIndex berhasil (${widget.barcode ?? 'tanpa barcode'})'),
-              duration: const Duration(seconds: 1),
-              backgroundColor: Colors.green.shade700,
-            ),
-          );
-        }
+      // ─── 8. Notifikasi batch ──────────────────────────────
+      if (widget.batchMode && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('📸 Foto $photoIndex berhasil (${widget.barcode ?? 'tanpa barcode'})'),
+            duration: const Duration(seconds: 1),
+            backgroundColor: Colors.green.shade700,
+          ),
+        );
       }
 
       return savedPath;
+
     } catch (e, stack) {
-      debugPrint('Error processing photo: $e\n$stack');
-      if (mounted) {
-        _showError('Gagal memproses foto: ${e.toString().split(':').last}');
-      }
+      debugPrint('❌ Error processing photo: $e\n$stack');
+      // Bersihkan file sisa jika ada
       if (watermarkedPath != null && watermarkedPath != compressedPath) {
         try { await File(watermarkedPath).delete(); } catch (_) {}
       }
-      rethrow;
-    } finally {
-      if (compressedPath != xfile.path && await FileHelper.isTemporaryFile(compressedPath)) {
+      // Hanya hapus compressed jika temporary dan berbeda dari input
+      if (compressedIsTemp && compressedPath != xfile.path) {
         try { await File(compressedPath).delete(); } catch (_) {}
       }
+      rethrow;
+    } finally {
+      // ─── Hapus file temporary yang sudah tidak diperlukan ──
+      // Hapus compressed temp hanya jika berbeda dari input dan temporary
+      if (compressedIsTemp && compressedPath != xfile.path) {
+        try { await File(compressedPath).delete(); } catch (_) {}
+      }
+      // Hapus file input asli dari kamera/gallery (jika temporary)
       if (await FileHelper.isTemporaryFile(xfile.path)) {
         try { await File(xfile.path).delete(); } catch (_) {}
       }
