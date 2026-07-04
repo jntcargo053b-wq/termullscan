@@ -6,6 +6,27 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
+// Fix untuk plugin lama (mis. ffmpeg_kit_flutter_full_gpl) yang belum
+// mendeklarasikan namespace, wajib ada sejak AGP 8.x
+subprojects {
+    afterEvaluate { project ->
+        if (project.plugins.hasPlugin("com.android.library") ||
+            project.plugins.hasPlugin("com.android.application")) {
+            def androidExt = project.extensions.findByName("android")
+            if (androidExt != null && androidExt.namespace == null) {
+                def manifestFile = project.file("src/main/AndroidManifest.xml")
+                if (manifestFile.exists()) {
+                    def manifestXml = new XmlSlurper().parse(manifestFile)
+                    def packageName = manifestXml.@package.text()
+                    if (packageName) {
+                        androidExt.namespace = packageName
+                    }
+                }
+            }
+        }
+    }
+}
+
 tasks.register("clean", Delete) {
     delete rootProject.buildDir
 }
