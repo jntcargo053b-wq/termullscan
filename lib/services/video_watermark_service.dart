@@ -96,6 +96,40 @@ Future<int> _probeVideoDuration(String inputPath) async {
   }
 }
 
+/// Mengambil lebar & tinggi asli video (sebelum scaling) via ffprobe.
+/// Dipakai untuk menghitung faktor skala watermark yang proporsional
+/// terhadap resolusi output, dan untuk mendeteksi orientasi
+/// (portrait/landscape) sehingga video tidak dipaksa jadi landscape.
+Future<_XY2> _probeVideoDimensions(String inputPath) async {
+  try {
+    final session = await FFmpegKit.executeWithArguments([
+      '-i', inputPath,
+      '-select_streams', 'v:0',
+      '-show_entries', 'stream=width,height',
+      '-v', 'quiet',
+      '-of', 'csv=s=x:p=0',
+    ]);
+    final output = await session.getOutput();
+    if (output != null && output.trim().isNotEmpty) {
+      final parts = output.trim().split('x');
+      if (parts.length == 2) {
+        final w = int.tryParse(parts[0].trim());
+        final h = int.tryParse(parts[1].trim());
+        if (w != null && h != null && w > 0 && h > 0) {
+          return _XY2(w, h);
+        }
+      }
+    }
+  } catch (_) {}
+  return _XY2(0, 0);
+}
+
+class _XY2 {
+  final int width;
+  final int height;
+  _XY2(this.width, this.height);
+}
+
 // ─────────────────────────────────────────────────────────────
 //  1.  KELAS PEMBANTU TEMPLATE FILTER
 // ─────────────────────────────────────────────────────────────
@@ -768,7 +802,6 @@ class VideoWatermarkService {
     required String outputPath,
     required ScanEntry entry,
     required WatermarkSettings settings,
-    bool includeAudio = false,
     void Function(double progress)? onProgress,
   }) async {
     lastError = null;
@@ -778,9 +811,40 @@ class VideoWatermarkService {
       final durationSeconds = await _probeVideoDuration(inputPath);
       debugPrint('⏱️ Durasi video: ${durationSeconds}s');
 
-      // Faktor skala tetap untuk resolusi output 720p
-      const double scale = 720.0 / 1920.0; // ~0.375
-      debugPrint('📐 Skala watermark (fixed 720p): $scale');
+      // ✅ FIX: hitung dimensi output SETELAH di-cap (maks sisi terpanjang
+      // 1280px, orientasi asli dipertahankan — tidak lagi dipaksa 1280x720
+      // landscape dengan padding hitam untuk video portrait).
+      final srcDim = await _probeVideoDimensions(inputPath);
+      int outW = srcDim.width;
+      int outH = srcDim.height;
+      if (outW <= 0 || outH <= 0) {
+        // Fallback jika ffprobe gagal: asumsikan portrait umum
+        outW = 720;
+        outH = 1280;
+      } else {
+        const maxSide = 1280;
+        if (outW > maxSide || outH > maxSide) {
+          if (outW >= outH) {
+            outH = (outH * maxSide / outW).round();
+            outW = maxSide;
+          } else {
+            outW = (outW * maxSide / outH).round();
+            outH = maxSide;
+          }
+        }
+      }
+      // libx264 butuh dimensi genap
+      outW = (outW ~/ 2) * 2;
+      outH = (outH ~/ 2) * 2;
+
+      // ✅ FIX: skala watermark dihitung dari sisi TERPENDEK output
+      // dibanding referensi 720 — bukan faktor tetap 0.375 yang membuat
+      // teks jadi ~5px (praktis tak terlihat). fontSize di settings sudah
+      // nilai absolut (sama seperti dipakai apa adanya di watermark foto),
+      // jadi pada output "normal" (sisi pendek ≈720) skala = 1.0.
+      final double scale =
+          (math.min(outW, outH) / 720.0).clamp(0.6, 1.8);
+      debugPrint('📐 Output: ${outW}x$outH | Skala watermark: $scale');
 
       // 1. Siapkan filter watermark (drawtext, background, dll.)
       final List<String> watermarkFilters;
@@ -812,10 +876,10 @@ class VideoWatermarkService {
         logoXY = precomputed.logoXY;
       }
 
-      // 2. Filter scaling ke 720p (pertahankan aspek rasio, padding hitam jika perlu)
-      const String scaleFilter =
-          'scale=1280:720:force_original_aspect_ratio=decrease,'
-          'pad=1280:720:(ow-iw)/2:(oh-ih)/2';
+      // 2. Filter scaling ke resolusi target — mempertahankan orientasi asli
+      // (portrait tetap portrait, landscape tetap landscape), TANPA padding
+      // hitam. Menggunakan dimensi persis yang sudah dihitung di atas.
+      final String scaleFilter = 'scale=$outW:$outH';
 
       // 3. Gabungkan semua filter (scale + watermark)
       final String videoFilterChain =
@@ -833,7 +897,6 @@ class VideoWatermarkService {
         filterArgs = [
           '-filter_complex', buffer.toString(),
           '-map', '[outv]',
-          '-map', '0:a?', // audio hanya jika ada dan kita inginkan
         ];
       } else {
         filterArgs = [
@@ -860,15 +923,8 @@ class VideoWatermarkService {
         outputPath,
       ];
 
-      // 7. Audio (opsional)
-      if (!includeAudio) {
-        arguments.insertAll(arguments.length - 1, ['-an']);
-      } else {
-        arguments.insertAll(arguments.length - 1, [
-          '-c:a', 'aac',
-          '-b:a', '128k',
-        ]);
-      }
+      // 7. Audio selalu dihilangkan — TermulScan tidak merekam/menyimpan suara.
+      arguments.insertAll(arguments.length - 1, ['-an']);
 
       // ─── Aktifkan callback progress ──────────────────────
       if (onProgress != null && durationSeconds > 0) {

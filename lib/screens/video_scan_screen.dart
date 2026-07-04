@@ -302,7 +302,16 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         thumbnailPath = await _generateThumbnail(savedPath);
         if (await file.exists()) await file.delete();
 
-        _safeSetState(() => _statusText = 'Video tersimpan (tanpa watermark)');
+        // ✅ FIX: sebelumnya ekspor ke gallery HANYA terjadi jika watermark
+        // berhasil. Kalau watermark gagal, video mentah tersimpan di
+        // internal tapi tidak pernah sampai ke Gallery. Sekarang tetap
+        // dicoba diekspor supaya user selalu punya salinan di Gallery.
+        _safeSetState(() => _statusText = 'Ekspor ke Gallery...');
+        galleryOk = await _saveToGallery(savedPath);
+
+        _safeSetState(() => _statusText = galleryOk
+            ? 'Video tersimpan (tanpa watermark) & Gallery'
+            : 'Video tersimpan (tanpa watermark), gagal ekspor ke Gallery');
       }
 
       // 9. Simpan entry database (termasuk status gallery)
