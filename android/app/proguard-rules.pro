@@ -12,6 +12,12 @@
 -keep class com.google.android.play.core.** { *; }
 
 # ============================================================
+# FFmpeg Kit Flutter
+# ============================================================
+-keep class com.arthenica.ffmpegkit.** { *; }
+-dontwarn com.arthenica.ffmpegkit.**
+
+# ============================================================
 # Flutter Engine
 # ============================================================
 -keep class io.flutter.app.** { *; }
@@ -59,6 +65,8 @@
 -keep class dev.fluttercommunity.plus.share.** { *; }
 -keep class com.aboutyou.dart_packages.mobile_scanner.** { *; }
 -keep class com.example.saver_gallery.** { *; }
+-keep class com.github.bumptech.glide.** { *; }
+-keep class com.bumptech.glide.** { *; }
 
 # ============================================================
 # App Package
@@ -74,6 +82,7 @@
 }
 
 # ============================================================
-# Ignore warnings (last resort)
+# Suppress warnings
 # ============================================================
+-dontwarn java.lang.invoke.StringConcatFactory
 -ignorewarnings
