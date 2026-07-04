@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/video_scan_screen.dart (FINAL – PROGRESS + RETRY + GALLERY)
+// lib/screens/video_scan_screen.dart (FINAL – PREVIEW + PROGRESS + RETRY + GALLERY)
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -20,6 +20,7 @@ import '../services/task_queue.dart';
 import '../watermark/watermark_settings.dart';
 import '../theme/app_theme.dart';
 import '../utils/file_helper.dart';
+import 'preview_screen.dart'; // ✅ import preview
 
 class VideoScanScreen extends StatefulWidget {
   final String? barcode;
@@ -41,9 +42,10 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
   bool _isSaving = false;
   bool _isProcessing = false;
   String _statusText = '';
-  double _progress = 0.0; // ← progress watermark
+  double _progress = 0.0;
 
   static const int _maxVideoSizeBytes = 50 * 1024 * 1024;
+  static const int _minVideoDurationSeconds = 3;
 
   @override
   void initState() {
@@ -89,6 +91,22 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     return false;
   }
 
+  // ─── Preview helper ─────────────────────────────────────────
+
+  Future<String?> _showPreview(XFile file, MediaType type) async {
+    return Navigator.push<String>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PreviewScreen(
+          file: file,
+          mediaType: type,
+          onSave: () => Navigator.pop(context, 'save'),
+          onRetake: () => Navigator.pop(context, 'retake'),
+        ),
+      ),
+    );
+  }
+
   // ─── Pick & Record ──────────────────────────────────────────
 
   Future<void> _pickAndRecord() async {
@@ -115,34 +133,43 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         return;
       }
 
-      // Tambahkan ke TaskQueue
-      _taskQueue.add(
-        label: 'Video ${widget.barcode ?? ''}',
-        priority: TaskPriority.high,
-        maxRetries: 2,
-        work: () => _processVideo(videoFile),
-        onSuccess: (entry) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('✅ Video tersimpan: ${(entry as ScanEntry).value}'),
-                backgroundColor: Colors.green,
-              ),
-            );
-            Navigator.pop(context, {'entry': entry});
-          }
-        },
-        onError: (error) {
-          if (mounted) {
-            _showError('Gagal memproses video: $error');
-          }
-        },
-      );
-
-      setState(() {
-        _isSaving = false;
-        _statusText = 'Video direkam, memproses di background...';
-      });
+      // ─── Tampilkan Preview ────────────────────────────────
+      final previewResult = await _showPreview(videoFile, MediaType.video);
+      if (previewResult == 'save') {
+        _taskQueue.add(
+          label: 'Video ${widget.barcode ?? ''}',
+          priority: TaskPriority.high,
+          maxRetries: 2,
+          work: () => _processVideo(videoFile),
+          onSuccess: (entry) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('✅ Video tersimpan: ${(entry as ScanEntry).value}'),
+                  backgroundColor: Colors.green,
+                ),
+              );
+              Navigator.pop(context, {'entry': entry});
+            }
+          },
+          onError: (error) {
+            if (mounted) {
+              _showError('Gagal memproses video: $error');
+            }
+          },
+        );
+        setState(() {
+          _isSaving = false;
+          _statusText = 'Video direkam, memproses di background...';
+        });
+      } else {
+        // Retake → hapus file
+        try { await File(videoFile.path).delete(); } catch (_) {}
+        setState(() {
+          _isSaving = false;
+          _statusText = 'Dibatalkan';
+        });
+      }
     } catch (e) {
       debugPrint('❌ Gagal merekam video: $e');
       if (mounted) {
@@ -182,6 +209,14 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         durationSeconds = vc.value.duration.inSeconds;
         await vc.dispose();
       } catch (_) {}
+
+      // 1b. Tolak video yang terlalu pendek
+      if (durationSeconds > 0 && durationSeconds < _minVideoDurationSeconds) {
+        await file.delete();
+        throw Exception(
+          'Video terlalu pendek (${durationSeconds}s). Minimal $_minVideoDurationSeconds detik.',
+        );
+      }
 
       // 2. Output watermark di cache
       final tempDir = await getTemporaryDirectory();
@@ -416,7 +451,6 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
                   style: Theme.of(context).textTheme.bodyMedium, textAlign: TextAlign.center),
               const Gap(48),
               if (isProcessing) ...[
-                // Progress bar dengan persentase
                 LinearProgressIndicator(value: _progress.clamp(0.0, 1.0)),
                 const Gap(8),
                 Text(
