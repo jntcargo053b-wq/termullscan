@@ -2,8 +2,9 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
-import 'package:ffmpeg_kit_flutter_new_video/ffmpeg_kit.dart';
-import 'package:ffmpeg_kit_flutter_new_video/ffmpeg_kit_config.dart';
+import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit_config.dart';
+import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
@@ -78,7 +79,11 @@ String _formatTimestamp(DateTime dt) {
 
 Future<int> _probeVideoDuration(String inputPath) async {
   try {
-    final session = await FFmpegKit.executeWithArguments([
+    // ✅ FIX: sebelumnya memakai FFmpegKit (binary ffmpeg) untuk menjalankan
+    // opsi khusus ffprobe (-show_entries, -of csv=...). Binary ffmpeg TIDAK
+    // mengenali opsi tersebut sehingga command selalu gagal (return code
+    // non-zero) dan durasi selalu 0. Harus pakai FFprobeKit.
+    final session = await FFprobeKit.executeWithArguments([
       '-i', inputPath,
       '-show_entries', 'format=duration',
       '-v', 'quiet',
@@ -102,7 +107,9 @@ Future<int> _probeVideoDuration(String inputPath) async {
 /// (portrait/landscape) sehingga video tidak dipaksa jadi landscape.
 Future<_XY2> _probeVideoDimensions(String inputPath) async {
   try {
-    final session = await FFmpegKit.executeWithArguments([
+    // ✅ FIX: sama seperti _probeVideoDuration — harus pakai FFprobeKit,
+    // bukan FFmpegKit, supaya opsi -show_entries/-of benar-benar dipahami.
+    final session = await FFprobeKit.executeWithArguments([
       '-i', inputPath,
       '-select_streams', 'v:0',
       '-show_entries', 'stream=width,height',
@@ -334,8 +341,15 @@ class _WatermarkCache {
         blockHeight: blockHeight,
       );
       final placeholder = '{{line$i}}';
+      // ✅ FIX: sebelumnya hanya placeholder mentah yang dipakai di sini,
+      // sehingga label "Barcode:", "Operator:", dll dari line.text tidak
+      // pernah tampil. Sekarang teks lengkap (label + placeholder) dipakai,
+      // dengan escaping supaya karakter ':' pada label tidak merusak syntax
+      // filter FFmpeg. Placeholder {{lineN}} tetap utuh karena escaper tidak
+      // menyentuh kurung kurawal, sehingga render() masih bisa menemukannya.
+      final escapedLineText = _escapeFFmpegText(line.text);
       final filter =
-          "drawtext=text='$placeholder':"
+          "drawtext=text='$escapedLineText':"
           "fontfile='$escapedFontPath':"
           "fontcolor=$color:"
           "fontsize=$fontSize:"
@@ -985,7 +999,8 @@ class VideoWatermarkService {
     final l = logs.toLowerCase();
     if (l.contains('no such filter') && l.contains('drawtext')) {
       return 'Filter drawtext TIDAK tersedia. Pastikan pubspec.yaml memakai '
-          'ffmpeg_kit_flutter_new_video atau varian yang menyertakan freetype.';
+          'ffmpeg_kit_flutter_new (varian Full-GPL dengan freetype+libass), '
+          'bukan varian video/min/full (LGPL) yang tidak menyertakannya.';
     }
     if (l.contains('cannot find a valid font') ||
         l.contains('could not load font') ||
