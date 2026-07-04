@@ -43,8 +43,8 @@ dependencies:
   camera: ^0.10.5+5
   video_player: ^2.8.5
   video_thumbnail: ^0.5.6
-  # ✅ Versi 5.0.0 stabil – kompatibel dengan semua perbaikan
-  ffmpeg_kit_flutter: 5.0.0
+  # ✅ Versi terbaru yang tersedia di pub.dev (6.0.3)
+  ffmpeg_kit_flutter: ^6.0.3
 
   # ─── BACKUP & RESTORE ────────────────────────────────────────────────
   archive: ^3.6.1
