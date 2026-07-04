@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:ffmpeg_kit_flutter/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter/ffmpeg_kit_config.dart';
 import 'package:ffmpeg_kit_flutter/ffprobe_kit.dart';
+import 'package:ffmpeg_kit_flutter/return_code.dart'; // ✅ tambahan untuk ReturnCode
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
@@ -74,7 +75,7 @@ String _formatTimestamp(DateTime dt) {
 }
 
 // ─────────────────────────────────────────────────────────────
-//  0b. DURASI & DIMENSI VIDEO (via FFprobe)
+//  0b. DURASI & DIMENSI VIDEO (via FFprobe) – DIPERBAIKI
 // ─────────────────────────────────────────────────────────────
 
 Future<int> _probeVideoDuration(String inputPath) async {
@@ -101,7 +102,9 @@ Future<_XY2> _probeVideoDimensions(String inputPath) async {
     if (mediaInfo != null) {
       final streams = mediaInfo.getStreams();
       for (final stream in streams) {
-        if (stream.getCodecType() == 'video') {
+        // ✅ perbaikan: gunakan getCodecName() bukan getCodecType()
+        final codecName = stream.getCodecName() ?? '';
+        if (codecName.contains('video')) {
           final w = stream.getWidth();
           final h = stream.getHeight();
           if (w != null && h != null && w > 0 && h > 0) {
@@ -239,6 +242,7 @@ class _WatermarkCache {
   final Map<double, _PrecomputedTimestamp> _timestampCache = {};
   final Map<double, _PrecomputedFullInfo> _fullInfoCache = {};
 
+  // ✅ Fallback font
   String get _fontSpec {
     if (_cachedFontPath != null) {
       final file = File(_cachedFontPath!);
@@ -297,6 +301,8 @@ class _WatermarkCache {
     }
     return null;
   }
+
+  // ─── Prekomputasi gaya umum ──────────────────────────────
 
   _PrecomputedStyle _precomputeGeneral(
     WatermarkSettings settings,
@@ -358,6 +364,8 @@ class _WatermarkCache {
       staticFilters: staticParts,
     );
   }
+
+  // ─── Prekomputasi timestamp ──────────────────────────────
 
   _PrecomputedTimestamp _precomputeTimestamp(WatermarkSettings settings, double scale) {
     final padding = (22 * scale).round();
@@ -491,6 +499,8 @@ class _WatermarkCache {
     );
   }
 
+  // ─── PREKOMPUTASI FULL INFO ─────────────────────────────
+
   _PrecomputedFullInfo _precomputeFullInfo(WatermarkSettings settings, double scale) {
     final padding = (20 * scale).round();
     const accentColor = 'orange';
@@ -620,6 +630,8 @@ class _WatermarkCache {
     );
   }
 
+  // ─── Data dinamis ─────────────────────────────────────────
+
   List<String> getDynamicTexts(ScanEntry entry, WatermarkSettings settings) {
     final lines = <String>[];
     if (entry.value.isNotEmpty) lines.add(entry.value);
@@ -679,6 +691,8 @@ class _WatermarkCache {
     ];
   }
 
+  // ─── Akses cache ──────────────────────────────────────────
+
   _PrecomputedStyle getStyle(WatermarkStyle style, double scale) {
     if (!_initialized) throw StateError('Cache belum diinisialisasi');
     if (style == WatermarkStyle.timestamp) {
@@ -697,6 +711,8 @@ class _WatermarkCache {
     if (!_initialized) throw StateError('Cache belum diinisialisasi');
     return _fullInfoCache.putIfAbsent(scale, () => _precomputeFullInfo(_settings!, scale));
   }
+
+  // ─── Font helper ──────────────────────────────────────────
 
   static Future<String> _getFontPath(String fontFamily) async {
     final assetPath = _assetFontPath(fontFamily);
@@ -745,7 +761,7 @@ class _WatermarkCache {
 }
 
 // ─────────────────────────────────────────────────────────────
-//  3.  VIDEO WATERMARK SERVICE (PUBLIC API)
+//  3.  VIDEO WATERMARK SERVICE (PUBLIC API) – DIPERBAIKI
 // ─────────────────────────────────────────────────────────────
 
 class VideoWatermarkService {
@@ -758,7 +774,8 @@ class VideoWatermarkService {
       debugPrint('🔥 Memanaskan FFmpeg...');
       final session = await FFmpegKit.execute('-version');
       final returnCode = await session.getReturnCode();
-      if (returnCode?.isValueSuccess() == true) {
+      // ✅ perbaikan: gunakan ReturnCode.isSuccess()
+      if (ReturnCode.isSuccess(returnCode)) {
         debugPrint('✅ FFmpeg warm-up berhasil.');
       } else {
         debugPrint('⚠️ FFmpeg warm-up gagal (rc=${returnCode?.getValue()})');
@@ -909,7 +926,8 @@ class VideoWatermarkService {
 
       FFmpegKitConfig.enableLogCallback(null);
 
-      if (!returnCode.isValueSuccess()) {
+      // ✅ perbaikan: gunakan ReturnCode.isSuccess() static
+      if (!ReturnCode.isSuccess(returnCode)) {
         final output = await session.getOutput();
         final logs = await session.getAllLogsAsString();
         throw Exception('FFmpeg gagal (rc=${returnCode?.getValue()}): $output\n$logs');
