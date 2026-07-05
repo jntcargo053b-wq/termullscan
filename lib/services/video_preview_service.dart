@@ -3,16 +3,31 @@ import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 
+// Asumsi ada class VideoTask (bisa Anda sesuaikan)
+// class VideoTask { String barcode; String? locationName; double? latitude; double? longitude; int maxDurationSeconds; }
+
 class VideoPreviewService {
-  /// Kompres video ke 720p, 2-3 Mbps
+  /// Kompres video ke 720p (tinggi) dengan mempertahankan aspek rasio,
+  /// bitrate ~2.5 Mbps, dan memaksa SAR=1 agar tampilan konsisten.
   static Future<String?> compressVideo(String inputPath, {int bitrateKbps = 2500}) async {
     final outputPath = inputPath.replaceAll('.mp4', '_compressed.mp4');
+
+    // Filter utama: scale ke tinggi 720, lebar otomatis (even), pertahankan rasio,
+    // ditambah setsar=1 untuk menghindari distorsi pada pemutar tertentu.
+    // Jika ingin membakar timestamp/GPS, aktifkan baris drawtext (sesuaikan data).
+    final String videoFilter = 
+        'scale=-2:720:force_original_aspect_ratio=decrease,setsar=1'
+        // Contoh tambahan (burn timestamp dan GPS) – aktifkan jika perlu:
+        // + ',drawtext=text=\'%{localtime\\: %Y-%m-%d %H\\\\:%M\\\\:%S}\':x=10:y=10:fontsize=24:fontcolor=white:box=1:boxcolor=black@0.5'
+        // + ',drawtext=text=\'LAT: ${task.latitude} LON: ${task.longitude}\':x=10:y=40:fontsize=18:fontcolor=white:box=1:boxcolor=black@0.5'
+        ;
+
     final arguments = [
       '-i', inputPath,
       '-c:v', 'libx264',
       '-preset', 'medium',
       '-crf', '23',
-      '-vf', 'scale=1280:720',
+      '-vf', videoFilter,
       '-b:v', '${bitrateKbps}k',
       '-maxrate', '${bitrateKbps * 1.5}k',
       '-bufsize', '${bitrateKbps * 2}k',
@@ -22,6 +37,7 @@ class VideoPreviewService {
       '-y',
       outputPath,
     ];
+
     final session = await FFmpegKit.executeWithArguments(arguments);
     final rc = await session.getReturnCode();
     if (rc?.isValueSuccess() == true) {
@@ -31,7 +47,7 @@ class VideoPreviewService {
     return null;
   }
 
-  /// Tampilkan preview video di dialog
+  /// Tampilkan preview video di dialog (tidak berubah)
   static Future<bool> showPreviewDialog(
     BuildContext context,
     String videoPath,
