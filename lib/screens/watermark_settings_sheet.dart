@@ -7,7 +7,13 @@ import '../watermark/watermark_style.dart';
 import '../theme/app_theme.dart';
 
 class WatermarkSettingsSheet extends StatefulWidget {
-  const WatermarkSettingsSheet({super.key});
+  /// Jika true, dropdown gaya hanya menampilkan gaya yang benar-benar
+  /// didukung penuh oleh pipeline VIDEO (lihat [WatermarkStyleCapability]).
+  /// Dipakai saat sheet dibuka dari layar rekam video, agar pengguna tidak
+  /// memilih gaya foto yang hasilnya akan berbeda/rusak di video.
+  final bool videoMode;
+
+  const WatermarkSettingsSheet({super.key, this.videoMode = false});
 
   @override
   State<WatermarkSettingsSheet> createState() => _WatermarkSettingsSheetState();
@@ -21,6 +27,14 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
   void initState() {
     super.initState();
     _settings = WatermarkSettings();
+    // Jika dibuka dalam mode video dan gaya yang tersimpan saat ini tidak
+    // video-safe, alihkan otomatis ke 'timestamp' supaya hasil video tidak
+    // mengejutkan pengguna.
+    if (widget.videoMode && !_settings.style.supportsVideo) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _settings.setStyle(WatermarkStyle.timestamp);
+      });
+    }
   }
 
   Future<void> _pickLogo() async {
@@ -102,7 +116,12 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                   const Spacer(),
                   DropdownButton<WatermarkStyle>(
                     value: _settings.style,
-                    items: WatermarkStyle.values.map((style) {
+                    items: WatermarkStyle.values
+                        // Di mode video, sembunyikan gaya yang tidak
+                        // didukung penuh oleh pipeline FFmpeg agar
+                        // pengguna tidak salah pilih.
+                        .where((style) => !widget.videoMode || style.supportsVideo)
+                        .map((style) {
                       String label;
                       switch (style) {
                         case WatermarkStyle.minimal:
@@ -124,6 +143,9 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                           label = 'Full Info (Lengkap)';
                           break;
                       }
+                      if (!widget.videoMode && !style.supportsVideo) {
+                        label += ' (Foto saja)';
+                      }
                       return DropdownMenuItem(
                         value: style,
                         child: Text(label),
@@ -140,6 +162,41 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                   ),
                 ],
               ),
+              if (widget.videoMode) ...[
+                const Gap(6),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: const [
+                    Icon(Icons.info_outline, color: Colors.grey, size: 14),
+                    Gap(6),
+                    Expanded(
+                      child: Text(
+                        'Untuk video, hanya gaya Timestamp & Full Info yang tersedia karena '
+                        'gaya lain (Minimal/Professional/Polaroid/Stamp) memakai efek '
+                        '(rotasi teks, bingkai, badge) yang tidak bisa direplikasi mesin '
+                        'watermark video.',
+                        style: TextStyle(color: Colors.grey, fontSize: 11),
+                      ),
+                    ),
+                  ],
+                ),
+              ] else if (!_settings.style.supportsVideo) ...[
+                const Gap(6),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: const [
+                    Icon(Icons.info_outline, color: Colors.grey, size: 14),
+                    Gap(6),
+                    Expanded(
+                      child: Text(
+                        'Gaya ini hanya tampil penuh di foto. Jika dipakai untuk video, '
+                        'tampilannya akan disederhanakan otomatis.',
+                        style: TextStyle(color: Colors.grey, fontSize: 11),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               const Gap(16),
 
               // ─── Position Dropdown ──────────────────────
