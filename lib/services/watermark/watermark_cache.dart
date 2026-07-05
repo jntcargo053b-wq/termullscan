@@ -59,6 +59,7 @@ class PrecomputedTimestamp {
   List<String> buildFilters(List<String> dynamicData) {
     final result = <String>[];
     result.addAll(staticFilters);
+    // Semua placeholder ada di dynamicFilters
     for (var i = 0; i < dynamicData.length && i < dynamicFilters.length; i++) {
       if (dynamicData[i].isEmpty) continue;
       result.add(dynamicFilters[i].render(dynamicData[i]));
@@ -364,7 +365,8 @@ class WatermarkCache {
   }
 
   // ─── Precompute Timestamp ──────────────────────────────
-
+  // Semua placeholder dynamic: meta0, meta1, time, date, day, addr0, addr1, code
+  // Urutan ini HARUS sama dengan yang dikembalikan oleh getTimestampDynamicData()
   PrecomputedTimestamp _precomputeTimestamp(WatermarkSettings settings, double scale, {int? maxHeight}) {
     final padding = (22 * scale).round();
     const accentColor = 'yellow';
@@ -394,10 +396,7 @@ class WatermarkCache {
     final metaBlockH = maxMetaLines * (metaFontSize + gap8);
     final timeRowH = math.max(timeFontSize, dateFontSize + gap4 + dayFontSize) + gap10;
     final addressBlockH = maxAddressLines * (addressFontSize + gap8);
-    // --- PERBAIKAN: jadikan double secara eksplisit ---
     final double barHeight = (padding * 2 + metaBlockH + timeRowH + addressBlockH).toDouble();
-
-    // Sekarang math.min akan mengembalikan double
     final double effectiveBarHeight = maxHeight != null 
         ? math.min(barHeight, maxHeight * 0.28) 
         : barHeight;
@@ -405,11 +404,13 @@ class WatermarkCache {
     final fontSpec = _fontSpec;
     final staticParts = <String>[];
 
+    // Background bar
     staticParts.add(
       "drawbox=x=0:y=ih-$effectiveBarHeight:w=iw:h=$effectiveBarHeight:"
       "color=black@${settings.backgroundOpacity.clamp(0.4, 1.0)}:t=fill",
     );
 
+    // Brand name & tagline (statis, tidak pakai placeholder)
     final brandText = settings.companyName.isNotEmpty ? settings.companyName : 'TermulScan';
     staticParts.add(
       "drawtext=text='${escapeFFmpegText(brandText)}':"
@@ -424,27 +425,33 @@ class WatermarkCache {
       "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1",
     );
 
-    staticParts.add(
-      "drawtext=text='{{code}}  •  TERMULSCAN VERIFIED':"
-      "$fontSpec:fontcolor=white@0.75:fontsize=$codeFontSize:"
-      "x=w-text_w-$padding:y=ih-$effectiveBarHeight-${codeFontSize + gap10}:"
-      "shadowcolor=black@0.7:shadowx=$shadow1:shadowy=$shadow1",
-    );
-
+    // ─── Dynamic filters (semua placeholder) ────────────────
     final dynamicTemplates = <FilterTemplate>[];
 
-    for (var i = 0; i < maxMetaLines; i++) {
-      final placeholder = '{{meta$i}}';
-      final yPos = padding + i * (metaFontSize + gap8);
-      final filter =
-          "drawtext=text='$placeholder':"
-          "$fontSpec:fontcolor=white@0.9:fontsize=$metaFontSize:"
-          "x=$padding:y=ih-$effectiveBarHeight+$yPos:"
-          "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1";
-      dynamicTemplates.add(FilterTemplate(placeholder, filter));
-    }
+    // 1. meta0
+    dynamicTemplates.add(
+      FilterTemplate(
+        '{{meta0}}',
+        "drawtext=text='{{meta0}}':"
+        "$fontSpec:fontcolor=white@0.9:fontsize=$metaFontSize:"
+        "x=$padding:y=ih-$effectiveBarHeight+${padding + 0 * (metaFontSize + gap8)}:"
+        "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1",
+      ),
+    );
+    // 2. meta1
+    dynamicTemplates.add(
+      FilterTemplate(
+        '{{meta1}}',
+        "drawtext=text='{{meta1}}':"
+        "$fontSpec:fontcolor=white@0.9:fontsize=$metaFontSize:"
+        "x=$padding:y=ih-$effectiveBarHeight+${padding + 1 * (metaFontSize + gap8)}:"
+        "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1",
+      ),
+    );
 
     final timeRowTop = (maxMetaLines > 0) ? padding + maxMetaLines * (metaFontSize + gap8) : padding;
+
+    // 3. time
     dynamicTemplates.add(
       FilterTemplate(
         '{{time}}',
@@ -455,6 +462,7 @@ class WatermarkCache {
       ),
     );
 
+    // Divider (statis)
     final dividerX = padding + (timeFontSize * 2.6).round();
     staticParts.add(
       "drawbox=x=$dividerX:y=ih-$effectiveBarHeight+$timeRowTop:w=$barWidth:h=$timeFontSize:"
@@ -462,6 +470,8 @@ class WatermarkCache {
     );
 
     final dateColX = dividerX + gap16;
+
+    // 4. date
     dynamicTemplates.add(
       FilterTemplate(
         '{{date}}',
@@ -471,6 +481,7 @@ class WatermarkCache {
         "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1",
       ),
     );
+    // 5. day
     dynamicTemplates.add(
       FilterTemplate(
         '{{day}}',
@@ -482,16 +493,38 @@ class WatermarkCache {
     );
 
     final addressStartY = timeRowTop + timeRowH;
-    for (var i = 0; i < maxAddressLines; i++) {
-      final placeholder = '{{addr$i}}';
-      final yPos = addressStartY + i * (addressFontSize + gap8);
-      final filter =
-          "drawtext=text='$placeholder':"
-          "$fontSpec:fontcolor=white:fontsize=$addressFontSize:"
-          "x=$padding:y=ih-$effectiveBarHeight+$yPos:"
-          "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1";
-      dynamicTemplates.add(FilterTemplate(placeholder, filter));
-    }
+
+    // 6. addr0
+    dynamicTemplates.add(
+      FilterTemplate(
+        '{{addr0}}',
+        "drawtext=text='{{addr0}}':"
+        "$fontSpec:fontcolor=white:fontsize=$addressFontSize:"
+        "x=$padding:y=ih-$effectiveBarHeight+$addressStartY:"
+        "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1",
+      ),
+    );
+    // 7. addr1
+    dynamicTemplates.add(
+      FilterTemplate(
+        '{{addr1}}',
+        "drawtext=text='{{addr1}}':"
+        "$fontSpec:fontcolor=white:fontsize=$addressFontSize:"
+        "x=$padding:y=ih-$effectiveBarHeight+$addressStartY + ${addressFontSize + gap8}:"
+        "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1",
+      ),
+    );
+
+    // 8. code (sekarang dynamic, bukan statis)
+    dynamicTemplates.add(
+      FilterTemplate(
+        '{{code}}',
+        "drawtext=text='{{code}}  •  TERMULSCAN VERIFIED':"
+        "$fontSpec:fontcolor=white@0.75:fontsize=$codeFontSize:"
+        "x=w-text_w-$padding:y=ih-$effectiveBarHeight-${codeFontSize + gap10}:"
+        "shadowcolor=black@0.7:shadowx=$shadow1:shadowy=$shadow1",
+      ),
+    );
 
     final logoXY = XY('W-w-$logoGap', 'H-h-$logoGap');
 
@@ -538,10 +571,7 @@ class WatermarkCache {
     final row6 = codeSize + gap10;
 
     final totalRows = (row1 + row2 + row3 + row4 + row5 + row6).toInt();
-    // --- PERBAIKAN: jadikan double secara eksplisit ---
     final double barHeight = (padding * 2 + totalRows).toDouble();
-
-    // Sekarang math.min akan mengembalikan double
     final double effectiveBarHeight = maxHeight != null 
         ? math.min(barHeight, maxHeight * 0.28) 
         : barHeight;
@@ -657,6 +687,8 @@ class WatermarkCache {
     return lines;
   }
 
+  // Urutan HARUS: meta0, meta1, time, date, day, addr0, addr1, code
+  // Cocok dengan dynamicTemplates di _precomputeTimestamp
   List<String> getTimestampDynamicData(ScanEntry entry, WatermarkSettings settings, {int? maxLineLen}) {
     final metaLines = <String>[];
     if (entry.value.isNotEmpty) metaLines.add('📦 ${entry.value}');
@@ -671,14 +703,14 @@ class WatermarkCache {
     final addressLines = wrapAddress(addressText, maxLineLen: maxLen);
 
     return [
-      hhmmFF(entry.timestamp),
-      ddmmyyyyFF(entry.timestamp),
-      dayNameFF(entry.timestamp),
-      addressLines.isNotEmpty ? addressLines[0] : '',
-      addressLines.length > 1 ? addressLines[1] : '',
-      metaLines.isNotEmpty ? metaLines[0] : '',
-      metaLines.length > 1 ? metaLines[1] : '',
-      generateVerificationCode(entry, settings),
+      metaLines.isNotEmpty ? metaLines[0] : '',           // meta0
+      metaLines.length > 1 ? metaLines[1] : '',           // meta1
+      hhmmFF(entry.timestamp),                            // time
+      ddmmyyyyFF(entry.timestamp),                        // date
+      dayNameFF(entry.timestamp),                         // day
+      addressLines.isNotEmpty ? addressLines[0] : '',     // addr0
+      addressLines.length > 1 ? addressLines[1] : '',     // addr1
+      generateVerificationCode(entry, settings),          // code
     ];
   }
 
