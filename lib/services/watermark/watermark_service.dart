@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit_config.dart';
+import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart'; // ← TAMBAHKAN INI
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import '../../models/scan_entry.dart';
 import '../../watermark/watermark_settings.dart';
