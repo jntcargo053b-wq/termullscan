@@ -23,7 +23,7 @@ class FilterTemplate {
 
 class PrecomputedStyle {
   final List<FilterTemplate> filterTemplates;
-  final _XY logoXY;
+  final XY logoXY;
   final double blockHeight;
   final double blockLineHeight;
   final List<String> staticFilters;
@@ -48,7 +48,7 @@ class PrecomputedStyle {
 class PrecomputedTimestamp {
   final List<FilterTemplate> dynamicFilters;
   final List<String> staticFilters;
-  final _XY logoXY;
+  final XY logoXY;
   final double barHeight;
   PrecomputedTimestamp({
     required this.dynamicFilters,
@@ -70,7 +70,7 @@ class PrecomputedTimestamp {
 class PrecomputedFullInfo {
   final List<FilterTemplate> dynamicFilters;
   final List<String> staticFilters;
-  final _XY logoXY;
+  final XY logoXY;
   final double barHeight;
   PrecomputedFullInfo({
     required this.dynamicFilters,
@@ -110,17 +110,17 @@ class PrecomputedFullInfo {
 
 // ─── HELPER CLASSES ──────────────────────────────────────
 
+class XY {
+  final String x;
+  final String y;
+  XY(this.x, this.y);
+}
+
 class _TextLine {
   final String text;
   final double sizeOffset;
   final bool isTitle;
   _TextLine({required this.text, required this.sizeOffset, this.isTitle = false});
-}
-
-class _XY {
-  final String x;
-  final String y;
-  _XY(this.x, this.y);
 }
 
 class _StyleLayout {
@@ -212,11 +212,11 @@ class _StyleLayout {
     return isTitle ? 'orange' : 'white';
   }
 
-  _XY logoXY() {
+  XY logoXY() {
     final edgeGap = (20 * scale).round();
     final x = _isRight ? 'W-w-$edgeGap' : '$edgeGap';
     final y = _isBottom ? 'H-h-$edgeGap' : '$edgeGap';
-    return _XY(x, y);
+    return XY(x, y);
   }
 }
 
@@ -396,9 +396,9 @@ class WatermarkCache {
     final addressBlockH = maxAddressLines * (addressFontSize + gap8);
     final barHeight = padding * 2 + metaBlockH + timeRowH + addressBlockH;
 
-    // Perbaikan: konversi eksplisit ke double
+    // Perbaikan tipe data
     final double effectiveBarHeight = maxHeight != null 
-        ? math.min(barHeight, maxHeight * 0.28).toDouble() 
+        ? math.min(barHeight, maxHeight * 0.28) 
         : barHeight;
 
     final fontSpec = _fontSpec;
@@ -492,7 +492,7 @@ class WatermarkCache {
       dynamicTemplates.add(FilterTemplate(placeholder, filter));
     }
 
-    final logoXY = _XY('W-w-$logoGap', 'H-h-$logoGap');
+    final logoXY = XY('W-w-$logoGap', 'H-h-$logoGap');
 
     return PrecomputedTimestamp(
       dynamicFilters: dynamicTemplates,
@@ -539,9 +539,9 @@ class WatermarkCache {
     final totalRows = (row1 + row2 + row3 + row4 + row5 + row6).toInt();
     final barHeight = padding * 2 + totalRows;
 
-    // Perbaikan: konversi eksplisit ke double
+    // Perbaikan tipe data
     final double effectiveBarHeight = maxHeight != null 
-        ? math.min(barHeight, maxHeight * 0.28).toDouble() 
+        ? math.min(barHeight, maxHeight * 0.28) 
         : barHeight;
 
     final fontSpec = _fontSpec;
@@ -628,7 +628,7 @@ class WatermarkCache {
       "shadowcolor=black@0.6:shadowx=$shadow1:shadowy=$shadow1",
     );
 
-    final logoXY = _XY('W-w-$logoGap', 'H-h-$logoGap');
+    final logoXY = XY('W-w-$logoGap', 'H-h-$logoGap');
 
     return PrecomputedFullInfo(
       dynamicFilters: dynamicTemplates,
