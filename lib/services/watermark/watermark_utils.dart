@@ -6,10 +6,33 @@ import '../../watermark/watermark_settings.dart';
 // ─── ESCAPE ───────────────────────────────────────────────
 
 String escapeFFmpegText(String text) {
-  return text.replaceAll("'", r"'\''").replaceAll(':', r'\:');
+  if (text.isEmpty) return '';
+  // Escape karakter khusus: ', \, :, ;, (, ), [, ], {, }, $, @, =, %, &, !, ~, *
+  // Referensi: https://ffmpeg.org/ffmpeg-utils.html#Quoting-and-escaping
+  var result = text
+      .replaceAll('\\', '\\\\')   // backslash harus di-escape dulu
+      .replaceAll("'", r"'\''")   // single quote di-escape dengan pola khusus
+      .replaceAll(':', r'\:')
+      .replaceAll(';', r'\;')
+      .replaceAll('(', r'\(')
+      .replaceAll(')', r'\)')
+      .replaceAll('[', r'\[')
+      .replaceAll(']', r'\]')
+      .replaceAll('{', r'\{')
+      .replaceAll('}', r'\}')
+      .replaceAll('\$', r'\$')
+      .replaceAll('@', r'\@')
+      .replaceAll('=', r'\=')
+      .replaceAll('%', r'\%')
+      .replaceAll('&', r'\&')
+      .replaceAll('!', r'\!')
+      .replaceAll('~', r'\~')
+      .replaceAll('*', r'\*');
+  return result;
 }
 
 String escapeFFmpegPath(String path) {
+  // Path tidak perlu escape sebanyak teks, cukup single quote dan backslash
   return path.replaceAll("'", r"'\''").replaceAll(':', r'\:');
 }
 
