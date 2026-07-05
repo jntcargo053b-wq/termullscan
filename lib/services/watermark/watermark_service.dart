@@ -94,7 +94,7 @@ class VideoWatermarkService {
 
       // ─── Dapatkan precomputed style ──────────────────────────
       List<String> watermarkFilters;
-      _XY logoXY;
+      XY logoXY;
 
       if (settings.style == WatermarkStyle.fullInfo) {
         final precomputed = _cache.getFullInfo(scale, maxHeight: outH);
