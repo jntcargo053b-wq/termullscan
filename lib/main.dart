@@ -8,7 +8,7 @@ import 'theme/app_theme.dart';
 import 'screens/home_screen.dart';
 import 'watermark/watermark_settings.dart';
 import 'services/storage_service.dart';
-import 'services/video_watermark_service.dart';
+import 'services/watermark/watermark_service.dart';
 import 'models/scan_entry.dart';
 
 void main() async {
