@@ -47,6 +47,7 @@ class VideoWatermarkService {
     required String outputPath,
     required ScanEntry entry,
     required WatermarkSettings settings,
+    bool keepAudio = false, // default: audio dimatikan untuk hemat ukuran
     void Function(double progress)? onProgress,
   }) async {
     lastError = null;
@@ -56,7 +57,7 @@ class VideoWatermarkService {
       final durationSeconds = await probeVideoDuration(inputPath);
       debugPrint('⏱️ Durasi video: ${durationSeconds}s');
 
-      // ─── 1. Dapatkan dimensi dan rotasi ──────────────────────────
+      // ─── 1. Baca dimensi asli & rotasi ───────────────────────
       final srcDim = await probeVideoDimensions(inputPath);
       int outW = srcDim.width;
       int outH = srcDim.height;
@@ -65,18 +66,18 @@ class VideoWatermarkService {
         outH = 1280;
       }
 
-      // Deteksi rotasi dari metadata
-      int rotation = await _getVideoRotation(inputPath);
+      final int rotation = await _getVideoRotation(inputPath);
       debugPrint('🔄 Rotasi video: $rotation°');
 
-      // Jika rotasi 90 atau 270, tukar lebar/tinggi agar sesuai
+      // Jika rotasi 90/270, tukar lebar/tinggi agar sesuai
       if (rotation == 90 || rotation == 270) {
         final temp = outW;
         outW = outH;
         outH = temp;
+        debugPrint('↕️ Dimensi ditukar karena rotasi → ${outW}x$outH');
       }
 
-      // ─── 2. Batasi resolusi jika diperlukan ──────────────────────
+      // ─── 2. Batasi resolusi jika diperlukan ──────────────────
       int? maxSide;
       switch (settings.videoResolution) {
         case VideoResolution.original:
@@ -104,23 +105,35 @@ class VideoWatermarkService {
       final double scale = (math.min(outW, outH) / 720.0).clamp(0.6, 1.8);
       debugPrint('📐 Output: ${outW}x$outH | Skala watermark: $scale');
 
-      // ─── 3. Bangun filter scaling dengan handling rotasi ────────
-      // Jika ada rotasi, tambahkan transpose terlebih dahulu
+      // ─── 3. Bangun filter scaling dengan handling rotasi ────
       String scaleFilter = '';
+
+      // a) Tangani rotasi dengan transpose
       if (rotation == 90) {
-        scaleFilter = 'transpose=1,'; // 90° clockwise
+        scaleFilter += 'transpose=1,'; // 90° clockwise
       } else if (rotation == 270) {
-        scaleFilter = 'transpose=2,'; // 90° counter-clockwise
+        scaleFilter += 'transpose=2,'; // 90° counter-clockwise
       } else if (rotation == 180) {
-        scaleFilter = 'transpose=2,transpose=2,'; // 180° (hflip+vflip)
+        scaleFilter += 'transpose=2,transpose=2,'; // 180°
       }
-      // Tambahkan scale (jika resolusi berubah) atau biarkan iw:ih
-      if (outW != srcDim.width || outH != srcDim.height) {
-        scaleFilter += 'scale=$outW:$outH,';
+
+      // b) Scale (hanya jika resolusi diubah, atau jika bukan original)
+      final bool needScale = (settings.videoResolution != VideoResolution.original) &&
+          (outW != srcDim.width || outH != srcDim.height);
+
+      if (needScale) {
+        // Gunakan force_original_aspect_ratio=decrease + pad agar tidak melebar
+        scaleFilter += 'scale=$outW:$outH:force_original_aspect_ratio=decrease,';
+        scaleFilter += 'pad=$outW:$outH:(ow-iw)/2:(oh-ih)/2,';
       } else {
+        // Mode original: tidak di-scale, tetap iw:ih
         scaleFilter += 'scale=iw:ih,';
       }
+
+      // c) Setsar & pixel format
       scaleFilter += 'setsar=1,format=yuv420p';
+
+      debugPrint('🔧 Scale filter: $scaleFilter');
 
       // ─── 4. Dapatkan watermark filters ──────────────────────────
       List<String> watermarkFilters;
@@ -199,10 +212,16 @@ class VideoWatermarkService {
         outputPath,
       ];
 
-      // Matikan audio
-      arguments.insertAll(arguments.length - 1, ['-an']);
+      // ─── 7. Audio ──────────────────────────────────────────────
+      if (keepAudio) {
+        // Pertahankan audio asli (copy stream, tanpa re-encode)
+        arguments.insertAll(arguments.length - 1, ['-map', '0:a?', '-c:a', 'copy']);
+      } else {
+        // Buang audio (sesuai default)
+        arguments.insertAll(arguments.length - 1, ['-an']);
+      }
 
-      // ─── 7. Progress callback ──────────────────────────────────
+      // ─── 8. Progress callback ──────────────────────────────────
       if (onProgress != null && durationSeconds > 0) {
         FFmpegKitConfig.enableLogCallback((log) {
           final message = log.getMessage();
@@ -229,6 +248,8 @@ class VideoWatermarkService {
       if (!ReturnCode.isSuccess(returnCode)) {
         final output = await session.getOutput();
         final logs = await session.getAllLogsAsString();
+        // Tampilkan log untuk debug jika timestamp hilang
+        debugPrint('❌ FFmpeg error log:\n$logs');
         throw Exception('FFmpeg gagal (rc=${returnCode?.getValue()}): $output\n$logs');
       }
 
