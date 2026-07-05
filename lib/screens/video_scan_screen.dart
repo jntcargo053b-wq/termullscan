@@ -14,7 +14,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
-import '../services/video_watermark_service.dart';
+import '../services/watermark/watermark_service.dart';
 import '../services/permission_service.dart';
 import '../services/task_queue.dart';
 import '../watermark/watermark_settings.dart';
