@@ -391,7 +391,93 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
               ),
               const Gap(24),
 
-              // ─── Tombol Tutup ─────────────────────────────
+              // ─── Resolusi Output (hanya untuk video) ────
+              Row(
+                children: [
+                  const Text(
+                    'Resolusi Output',
+                    style: TextStyle(color: Colors.white, fontSize: 14),
+                  ),
+                  const Spacer(),
+                  DropdownButton<VideoResolution>(
+                    value: _settings.videoResolution,
+                    items: VideoResolution.values.map((res) {
+                      String label;
+                      switch (res) {
+                        case VideoResolution.original:
+                          label = 'Asli (Original)';
+                          break;
+                        case VideoResolution.res1080p:
+                          label = '1080p';
+                          break;
+                        case VideoResolution.res720p:
+                          label = '720p';
+                          break;
+                      }
+                      return DropdownMenuItem(
+                        value: res,
+                        child: Text(label),
+                      );
+                    }).toList(),
+                    onChanged: (val) {
+                      if (val != null) _settings.setVideoResolution(val);
+                    },
+                    underline: Container(),
+                    icon: const Icon(Icons.arrow_drop_down,
+                        color: AppTheme.accentOrange),
+                    dropdownColor: Colors.grey[900],
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                  ),
+                ],
+              ),
+              const Gap(8),
+              const Text(
+                'Asli = kualitas terbaik, ukuran file lebih besar & proses lebih lama.',
+                style: TextStyle(color: Colors.grey, fontSize: 11),
+              ),
+
+              // ─── Mode Proses (hanya untuk video) ────────
+              Row(
+                children: [
+                  const Text(
+                    'Mode Proses',
+                    style: TextStyle(color: Colors.white, fontSize: 14),
+                  ),
+                  const Spacer(),
+                  DropdownButton<ProcessingMode>(
+                    value: _settings.processingMode,
+                    items: ProcessingMode.values.map((mode) {
+                      String label;
+                      switch (mode) {
+                        case ProcessingMode.fast:
+                          label = 'Cepat';
+                          break;
+                        case ProcessingMode.professional:
+                          label = 'Profesional';
+                          break;
+                      }
+                      return DropdownMenuItem(
+                        value: mode,
+                        child: Text(label),
+                      );
+                    }).toList(),
+                    onChanged: (val) {
+                      if (val != null) _settings.setProcessingMode(val);
+                    },
+                    underline: Container(),
+                    icon: const Icon(Icons.arrow_drop_down,
+                        color: AppTheme.accentOrange),
+                    dropdownColor: Colors.grey[900],
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                  ),
+                ],
+              ),
+              const Gap(8),
+              const Text(
+                'Cepat = proses lebih singkat. Profesional = kompresi & kualitas lebih baik, tapi lebih lama.',
+                style: TextStyle(color: Colors.grey, fontSize: 11),
+              ),
+              const Gap(24),
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
