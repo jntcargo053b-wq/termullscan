@@ -396,9 +396,9 @@ class WatermarkCache {
     final addressBlockH = maxAddressLines * (addressFontSize + gap8);
     final barHeight = padding * 2 + metaBlockH + timeRowH + addressBlockH;
 
-    // PERBAIKAN: tambahkan .toDouble()
+    // PERBAIKAN: gunakan barHeight.toDouble() agar math.min menerima dua double
     final double effectiveBarHeight = maxHeight != null 
-        ? math.min(barHeight, maxHeight * 0.28).toDouble() 
+        ? math.min(barHeight.toDouble(), maxHeight * 0.28) 
         : barHeight;
 
     final fontSpec = _fontSpec;
@@ -539,9 +539,9 @@ class WatermarkCache {
     final totalRows = (row1 + row2 + row3 + row4 + row5 + row6).toInt();
     final barHeight = padding * 2 + totalRows;
 
-    // PERBAIKAN: tambahkan .toDouble()
+    // PERBAIKAN: gunakan barHeight.toDouble() agar math.min menerima dua double
     final double effectiveBarHeight = maxHeight != null 
-        ? math.min(barHeight, maxHeight * 0.28).toDouble() 
+        ? math.min(barHeight.toDouble(), maxHeight * 0.28) 
         : barHeight;
 
     final fontSpec = _fontSpec;
