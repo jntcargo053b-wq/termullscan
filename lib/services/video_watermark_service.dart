@@ -25,7 +25,7 @@ String _escapeFFmpegPath(String path) {
   return path.replaceAll("'", r"'\''").replaceAll(':', r'\:');
 }
 
-List<String> _wrapAddress(String text, {int maxLineLen = 42}) {
+List<String> _wrapAddress(String text, {required int maxLineLen}) {
   if (text.length <= maxLineLen) return [text];
   final words = text.split(' ');
   final line1 = StringBuffer();
@@ -102,7 +102,6 @@ Future<_XY2> _probeVideoDimensions(String inputPath) async {
     if (mediaInfo != null) {
       final streams = mediaInfo.getStreams();
       for (final stream in streams) {
-        // Versi 5.0.0 tidak memiliki getCodecType(), jadi cukup cek width/height > 0
         final w = stream.getWidth();
         final h = stream.getHeight();
         if (w != null && h != null && w > 0 && h > 0) {
@@ -252,11 +251,6 @@ class _WatermarkCache {
   }
 
   Future<void> initialize(WatermarkSettings settings) async {
-    // PENTING: WatermarkSettings adalah singleton, jadi `settings` yang
-    // dikirim selalu instance yang sama. Bandingkan `revision`-nya
-    // (naik setiap kali ada perubahan lewat setter), bukan identitas
-    // objeknya — kalau tidak, cache (termasuk logo) akan terkunci di
-    // kondisi lama walau user baru saja mengubah settings.
     if (_initialized && _settings == settings && _lastRevision == settings.revision) {
       return;
     }
@@ -373,7 +367,7 @@ class _WatermarkCache {
 
   // ─── Prekomputasi timestamp ──────────────────────────────
 
-  _PrecomputedTimestamp _precomputeTimestamp(WatermarkSettings settings, double scale) {
+  _PrecomputedTimestamp _precomputeTimestamp(WatermarkSettings settings, double scale, {int? maxHeight}) {
     final padding = (22 * scale).round();
     const accentColor = 'yellow';
 
@@ -404,11 +398,14 @@ class _WatermarkCache {
     final addressBlockH = maxAddressLines * (addressFontSize + gap8);
     final barHeight = padding * 2 + metaBlockH + timeRowH + addressBlockH;
 
+    // Batasi maksimum 28% dari tinggi video
+    final effectiveBarHeight = maxHeight != null ? math.min(barHeight, maxHeight * 0.28) : barHeight;
+
     final fontSpec = _fontSpec;
     final staticParts = <String>[];
 
     staticParts.add(
-      "drawbox=x=0:y=ih-$barHeight:w=iw:h=$barHeight:"
+      "drawbox=x=0:y=ih-$effectiveBarHeight:w=iw:h=$effectiveBarHeight:"
       "color=black@${settings.backgroundOpacity.clamp(0.4, 1.0)}:t=fill",
     );
 
@@ -429,7 +426,7 @@ class _WatermarkCache {
     staticParts.add(
       "drawtext=text='{{code}}  •  TERMULSCAN VERIFIED':"
       "$fontSpec:fontcolor=white@0.75:fontsize=$codeFontSize:"
-      "x=w-text_w-$padding:y=ih-$barHeight-${codeFontSize + gap10}:"
+      "x=w-text_w-$padding:y=ih-$effectiveBarHeight-${codeFontSize + gap10}:"
       "shadowcolor=black@0.7:shadowx=$shadow1:shadowy=$shadow1",
     );
 
@@ -441,7 +438,7 @@ class _WatermarkCache {
       final filter =
           "drawtext=text='$placeholder':"
           "$fontSpec:fontcolor=white@0.9:fontsize=$metaFontSize:"
-          "x=$padding:y=ih-$barHeight+$yPos:"
+          "x=$padding:y=ih-$effectiveBarHeight+$yPos:"
           "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1";
       dynamicTemplates.add(_FilterTemplate(placeholder, filter));
     }
@@ -452,14 +449,14 @@ class _WatermarkCache {
         '{{time}}',
         "drawtext=text='{{time}}':"
         "$fontSpec:fontcolor=white:fontsize=$timeFontSize:"
-        "x=$padding:y=ih-$barHeight+$timeRowTop:"
+        "x=$padding:y=ih-$effectiveBarHeight+$timeRowTop:"
         "shadowcolor=black@0.85:shadowx=$shadow2:shadowy=$shadow2",
       ),
     );
 
     final dividerX = padding + (timeFontSize * 2.6).round();
     staticParts.add(
-      "drawbox=x=$dividerX:y=ih-$barHeight+$timeRowTop:w=$barWidth:h=$timeFontSize:"
+      "drawbox=x=$dividerX:y=ih-$effectiveBarHeight+$timeRowTop:w=$barWidth:h=$timeFontSize:"
       "color=$accentColor@0.95:t=fill",
     );
 
@@ -469,7 +466,7 @@ class _WatermarkCache {
         '{{date}}',
         "drawtext=text='{{date}}':"
         "$fontSpec:fontcolor=white:fontsize=$dateFontSize:"
-        "x=$dateColX:y=ih-$barHeight+$timeRowTop:"
+        "x=$dateColX:y=ih-$effectiveBarHeight+$timeRowTop:"
         "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1",
       ),
     );
@@ -478,7 +475,7 @@ class _WatermarkCache {
         '{{day}}',
         "drawtext=text='{{day}}':"
         "$fontSpec:fontcolor=white@0.8:fontsize=$dayFontSize:"
-        "x=$dateColX:y=ih-$barHeight+$timeRowTop+${dateFontSize + gap4}:"
+        "x=$dateColX:y=ih-$effectiveBarHeight+$timeRowTop+${dateFontSize + gap4}:"
         "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1",
       ),
     );
@@ -490,7 +487,7 @@ class _WatermarkCache {
       final filter =
           "drawtext=text='$placeholder':"
           "$fontSpec:fontcolor=white:fontsize=$addressFontSize:"
-          "x=$padding:y=ih-$barHeight+$yPos:"
+          "x=$padding:y=ih-$effectiveBarHeight+$yPos:"
           "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1";
       dynamicTemplates.add(_FilterTemplate(placeholder, filter));
     }
@@ -501,13 +498,13 @@ class _WatermarkCache {
       dynamicFilters: dynamicTemplates,
       staticFilters: staticParts,
       logoXY: logoXY,
-      barHeight: barHeight.toDouble(),
+      barHeight: effectiveBarHeight,
     );
   }
 
   // ─── PREKOMPUTASI FULL INFO ─────────────────────────────
 
-  _PrecomputedFullInfo _precomputeFullInfo(WatermarkSettings settings, double scale) {
+  _PrecomputedFullInfo _precomputeFullInfo(WatermarkSettings settings, double scale, {int? maxHeight}) {
     final padding = (20 * scale).round();
     const accentColor = 'orange';
 
@@ -542,16 +539,19 @@ class _WatermarkCache {
     final totalRows = (row1 + row2 + row3 + row4 + row5 + row6).toInt();
     final barHeight = padding * 2 + totalRows;
 
+    // Batasi maksimum 28% dari tinggi video
+    final effectiveBarHeight = maxHeight != null ? math.min(barHeight, maxHeight * 0.28) : barHeight;
+
     final fontSpec = _fontSpec;
     final staticParts = <String>[];
 
     staticParts.add(
-      "drawbox=x=0:y=ih-$barHeight:w=iw:h=$barHeight:"
+      "drawbox=x=0:y=ih-$effectiveBarHeight:w=iw:h=$effectiveBarHeight:"
       "color=black@${settings.backgroundOpacity.clamp(0.4, 1.0)}:t=fill",
     );
 
     staticParts.add(
-      "drawbox=x=$padding:y=ih-$barHeight:w=iw-${padding*2}:h=1:color=white@0.15:t=fill",
+      "drawbox=x=$padding:y=ih-$effectiveBarHeight:w=iw-${padding*2}:h=1:color=white@0.15:t=fill",
     );
 
     final dynamicTemplates = <_FilterTemplate>[];
@@ -563,7 +563,7 @@ class _WatermarkCache {
         '{{barcode}}',
         "drawtext=text='{{barcode}}':"
         "$fontSpec:fontcolor=white:fontsize=$barcodeSize:"
-        "x=$padding:y=ih-$barHeight+$cursorY:"
+        "x=$padding:y=ih-$effectiveBarHeight+$cursorY:"
         "shadowcolor=black@0.85:shadowx=$shadow2:shadowy=$shadow2",
       ),
     );
@@ -575,7 +575,7 @@ class _WatermarkCache {
         '{{datetime}}',
         "drawtext=text='$dateTimeText':"
         "$fontSpec:fontcolor=white@0.95:fontsize=$dateSize:"
-        "x=$padding:y=ih-$barHeight+$cursorY:"
+        "x=$padding:y=ih-$effectiveBarHeight+$cursorY:"
         "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1",
       ),
     );
@@ -587,7 +587,7 @@ class _WatermarkCache {
         '{{operator_company}}',
         "drawtext=text='$opText':"
         "$fontSpec:fontcolor=white@0.9:fontsize=$operatorSize:"
-        "x=$padding:y=ih-$barHeight+$cursorY:"
+        "x=$padding:y=ih-$effectiveBarHeight+$cursorY:"
         "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1",
       ),
     );
@@ -599,7 +599,7 @@ class _WatermarkCache {
           '{{gps}}',
           "drawtext=text='📍 {{gps}}':"
           "$fontSpec:fontcolor=white@0.85:fontsize=$gpsSize:"
-          "x=$padding:y=ih-$barHeight+$cursorY:"
+          "x=$padding:y=ih-$effectiveBarHeight+$cursorY:"
           "shadowcolor=black@0.7:shadowx=$shadow1:shadowy=$shadow1",
         ),
       );
@@ -612,7 +612,7 @@ class _WatermarkCache {
           '{{location}}',
           "drawtext=text='🏷️ {{location}}':"
           "$fontSpec:fontcolor=white@0.8:fontsize=$locationSize:"
-          "x=$padding:y=ih-$barHeight+$cursorY:"
+          "x=$padding:y=ih-$effectiveBarHeight+$cursorY:"
           "shadowcolor=black@0.7:shadowx=$shadow1:shadowy=$shadow1",
         ),
       );
@@ -622,7 +622,7 @@ class _WatermarkCache {
     staticParts.add(
       "drawtext=text='{{code}}  •  TERMULSCAN VERIFIED':"
       "$fontSpec:fontcolor=white@0.7:fontsize=$codeSize:"
-      "x=w-text_w-$padding:y=ih-$barHeight-${codeSize + gap10}:"
+      "x=w-text_w-$padding:y=ih-$effectiveBarHeight-${codeSize + gap10}:"
       "shadowcolor=black@0.6:shadowx=$shadow1:shadowy=$shadow1",
     );
 
@@ -632,7 +632,7 @@ class _WatermarkCache {
       dynamicFilters: dynamicTemplates,
       staticFilters: staticParts,
       logoXY: logoXY,
-      barHeight: barHeight.toDouble(),
+      barHeight: effectiveBarHeight,
     );
   }
 
@@ -653,7 +653,7 @@ class _WatermarkCache {
     return lines;
   }
 
-  List<String> getTimestampDynamicData(ScanEntry entry, WatermarkSettings settings) {
+  List<String> getTimestampDynamicData(ScanEntry entry, WatermarkSettings settings, {int? maxLineLen}) {
     final metaLines = <String>[];
     if (entry.value.isNotEmpty) metaLines.add('📦 ${entry.value}');
     if (settings.operatorName.isNotEmpty) metaLines.add('👤 ${settings.operatorName}');
@@ -663,7 +663,8 @@ class _WatermarkCache {
         : (entry.latitude != null && entry.longitude != null)
             ? '${entry.latitude!.toStringAsFixed(4)}, ${entry.longitude!.toStringAsFixed(4)}'
             : 'Lokasi tidak tersedia';
-    final addressLines = _wrapAddress(addressText, maxLineLen: 42);
+    final maxLen = maxLineLen ?? 42;
+    final addressLines = _wrapAddress(addressText, maxLineLen: maxLen);
 
     return [
       _hhmmFF(entry.timestamp),
@@ -708,14 +709,20 @@ class _WatermarkCache {
     return _styleCache.putIfAbsent(key, () => _precomputeGeneral(_settings!, style, scale));
   }
 
-  _PrecomputedTimestamp getTimestamp(double scale) {
+  _PrecomputedTimestamp getTimestamp(double scale, {int? maxHeight}) {
     if (!_initialized) throw StateError('Cache belum diinisialisasi');
-    return _timestampCache.putIfAbsent(scale, () => _precomputeTimestamp(_settings!, scale));
+    return _timestampCache.putIfAbsent(
+      scale,
+      () => _precomputeTimestamp(_settings!, scale, maxHeight: maxHeight),
+    );
   }
 
-  _PrecomputedFullInfo getFullInfo(double scale) {
+  _PrecomputedFullInfo getFullInfo(double scale, {int? maxHeight}) {
     if (!_initialized) throw StateError('Cache belum diinisialisasi');
-    return _fullInfoCache.putIfAbsent(scale, () => _precomputeFullInfo(_settings!, scale));
+    return _fullInfoCache.putIfAbsent(
+      scale,
+      () => _precomputeFullInfo(_settings!, scale, maxHeight: maxHeight),
+    );
   }
 
   // ─── Font helper ──────────────────────────────────────────
@@ -820,7 +827,6 @@ class VideoWatermarkService {
         outH = 1280;
       } else {
         // Batas sisi terpanjang sesuai resolusi output yang dipilih.
-        // null = pertahankan resolusi asli (tidak di-scale sama sekali).
         int? maxSide;
         switch (settings.videoResolution) {
           case VideoResolution.original:
@@ -843,6 +849,7 @@ class VideoWatermarkService {
           }
         }
       }
+      // Pastikan dimensi genap
       outW = (outW ~/ 2) * 2;
       outH = (outH ~/ 2) * 2;
 
@@ -853,7 +860,7 @@ class VideoWatermarkService {
       final _XY logoXY;
 
       if (settings.style == WatermarkStyle.fullInfo) {
-        final precomputed = _cache.getFullInfo(scale);
+        final precomputed = _cache.getFullInfo(scale, maxHeight: outH);
         final data = _cache.getFullInfoData(entry, settings);
         watermarkFilters = precomputed.buildFilters(
           barcode: data[0],
@@ -867,8 +874,9 @@ class VideoWatermarkService {
         );
         logoXY = precomputed.logoXY;
       } else if (settings.style == WatermarkStyle.timestamp) {
-        final precomputed = _cache.getTimestamp(scale);
-        final dynamicData = _cache.getTimestampDynamicData(entry, settings);
+        final maxLineLen = (outW * 0.06).round(); // ~6% dari lebar sebagai karakter
+        final precomputed = _cache.getTimestamp(scale, maxHeight: outH);
+        final dynamicData = _cache.getTimestampDynamicData(entry, settings, maxLineLen: maxLineLen);
         watermarkFilters = precomputed.buildFilters(dynamicData);
         logoXY = precomputed.logoXY;
       } else {
@@ -878,7 +886,9 @@ class VideoWatermarkService {
         logoXY = precomputed.logoXY;
       }
 
-      final String scaleFilter = 'scale=$outW:$outH';
+      // ---------------------- PERBAIKAN UTAMA ----------------------
+      // Skala video dengan mempertahankan aspek rasio dan SAR=1
+      final String scaleFilter = 'scale=$outW:$outH,setsar=1,format=yuv420p';
       final String videoFilterChain =
           '[0:v]$scaleFilter,${watermarkFilters.join(',')}';
 
@@ -888,8 +898,11 @@ class VideoWatermarkService {
         final logoFile = File(logoPath);
         if (await logoFile.exists()) {
           final escapedLogoPath = _escapeFFmpegPath(logoPath);
+          // Logo diskalakan menjadi 8% dari tinggi video
+          final logoHeight = (outH * 0.08).round();
           filterComplex =
-              "movie='$escapedLogoPath'[logo]; $videoFilterChain[base]; [base][logo]overlay=${logoXY.x}:${logoXY.y}:format=auto[outv]";
+              "movie='$escapedLogoPath',scale=-1:$logoHeight,format=rgba,colorchannelmixer=aa=0.85[logo]; "
+              "$videoFilterChain[base]; [base][logo]overlay=${logoXY.x}:${logoXY.y}:format=auto[outv]";
         } else {
           filterComplex = "$videoFilterChain[outv]";
         }
@@ -920,6 +933,7 @@ class VideoWatermarkService {
         outputPath,
       ];
 
+      // Matikan audio (sesuai kebutuhan logistik)
       arguments.insertAll(arguments.length - 1, ['-an']);
 
       if (onProgress != null && durationSeconds > 0) {
@@ -930,7 +944,8 @@ class VideoWatermarkService {
             final match = regex.firstMatch(message);
             if (match != null) {
               final outTimeMs = int.parse(match.group(1)!);
-              double progress = outTimeMs / (durationSeconds * 1000);
+              // out_time_ms dalam mikrodetik, konversi ke detik
+              double progress = outTimeMs / (durationSeconds * 1000000);
               if (progress > 1.0) progress = 1.0;
               onProgress(progress);
             }
@@ -1036,7 +1051,7 @@ class _StyleLayout {
 
     final edgeGap = (20 * scale).round();
     final borderWidth = math.max(1, (2 * scale).round());
-    final boxWidth = 'iw*0.45';
+    final boxWidth = 'iw*0.6'; // Lebar lebih besar untuk portrait
     final x = _isRight ? 'iw-($boxWidth)-$edgeGap' : '$edgeGap';
     final y = _isBottom ? 'ih-${blockHeight.toInt()}-$edgeGap' : '$edgeGap';
     final fill = "drawbox=x=$x:y=$y:w=$boxWidth:h=${blockHeight.toInt()}:"
