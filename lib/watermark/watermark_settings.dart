@@ -28,6 +28,8 @@ class WatermarkSettings extends ChangeNotifier {
   static const String _keyShowGps = 'watermark_show_gps';       // baru
   static const String _keyShowLocation = 'watermark_show_location'; // baru
   static const String _keyVideoQuality = 'watermark_video_quality'; // baru
+  static const String _keyVideoResolution = 'watermark_video_resolution'; // baru
+  static const String _keyProcessingMode = 'watermark_processing_mode'; // baru
 
   // ========== PROPERTIES ==========
   String operatorName = '';
@@ -42,6 +44,16 @@ class WatermarkSettings extends ChangeNotifier {
   bool showGps = true;
   bool showLocation = true;
   VideoQuality videoQuality = VideoQuality.high; // default
+  // Default: pertahankan resolusi asli (prioritas kualitas)
+  VideoResolution videoResolution = VideoResolution.original;
+  // Default: mode profesional (prioritas kualitas & kompresi)
+  ProcessingMode processingMode = ProcessingMode.professional;
+
+  // Naik setiap kali ada perubahan settings (lihat save()).
+  // WatermarkSettings adalah singleton, jadi cache lain TIDAK BOLEH
+  // membandingkan instance (selalu sama) untuk deteksi "apakah settings
+  // berubah" — harus pakai revision ini.
+  int revision = 0;
 
   bool _loaded = false;
 
@@ -58,6 +70,16 @@ class WatermarkSettings extends ChangeNotifier {
   }
 
   String get videoBitrateString => '${videoBitrateKbps}k';
+
+  // ─── Getter untuk preset x264 berdasarkan mode ────────────
+  String get x264Preset {
+    switch (processingMode) {
+      case ProcessingMode.fast:
+        return 'veryfast';
+      case ProcessingMode.professional:
+        return 'slow';
+    }
+  }
 
   // ─── Load ──────────────────────────────────────────────────
   Future<void> load() async {
@@ -88,6 +110,16 @@ class WatermarkSettings extends ChangeNotifier {
       videoQuality = (qualityIndex >= 0 && qualityIndex < qValues.length)
           ? qValues[qualityIndex]
           : VideoQuality.high;
+      final resIndex = prefs.getInt(_keyVideoResolution) ?? VideoResolution.original.index;
+      final resValues = VideoResolution.values;
+      videoResolution = (resIndex >= 0 && resIndex < resValues.length)
+          ? resValues[resIndex]
+          : VideoResolution.original;
+      final modeIndex = prefs.getInt(_keyProcessingMode) ?? ProcessingMode.professional.index;
+      final modeValues = ProcessingMode.values;
+      processingMode = (modeIndex >= 0 && modeIndex < modeValues.length)
+          ? modeValues[modeIndex]
+          : ProcessingMode.professional;
       _loaded = true;
       debugPrint('✅ Watermark settings loaded');
     } catch (e) {
@@ -98,6 +130,7 @@ class WatermarkSettings extends ChangeNotifier {
 
   // ─── Save ──────────────────────────────────────────────────
   Future<void> save() async {
+    revision++;
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_keyOperatorName, operatorName);
@@ -116,6 +149,8 @@ class WatermarkSettings extends ChangeNotifier {
       await prefs.setBool(_keyShowGps, showGps);
       await prefs.setBool(_keyShowLocation, showLocation);
       await prefs.setInt(_keyVideoQuality, videoQuality.index);
+      await prefs.setInt(_keyVideoResolution, videoResolution.index);
+      await prefs.setInt(_keyProcessingMode, processingMode.index);
       debugPrint('✅ Watermark settings saved');
     } catch (e) {
       debugPrint('⚠️ Error saving watermark settings: $e');
@@ -194,6 +229,18 @@ class WatermarkSettings extends ChangeNotifier {
 
   Future<void> setVideoQuality(VideoQuality quality) async {
     videoQuality = quality;
+    notifyListeners();
+    await save();
+  }
+
+  Future<void> setVideoResolution(VideoResolution resolution) async {
+    videoResolution = resolution;
+    notifyListeners();
+    await save();
+  }
+
+  Future<void> setProcessingMode(ProcessingMode mode) async {
+    processingMode = mode;
     notifyListeners();
     await save();
   }
