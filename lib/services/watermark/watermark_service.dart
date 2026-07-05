@@ -56,34 +56,46 @@ class VideoWatermarkService {
       final durationSeconds = await probeVideoDuration(inputPath);
       debugPrint('⏱️ Durasi video: ${durationSeconds}s');
 
+      // ─── 1. Dapatkan dimensi dan rotasi ──────────────────────────
       final srcDim = await probeVideoDimensions(inputPath);
       int outW = srcDim.width;
       int outH = srcDim.height;
       if (outW <= 0 || outH <= 0) {
         outW = 720;
         outH = 1280;
-      } else {
-        // Batas sisi terpanjang sesuai resolusi output
-        int? maxSide;
-        switch (settings.videoResolution) {
-          case VideoResolution.original:
-            maxSide = null;
-            break;
-          case VideoResolution.res1080p:
-            maxSide = 1920;
-            break;
-          case VideoResolution.res720p:
-            maxSide = 1280;
-            break;
-        }
-        if (maxSide != null && (outW > maxSide || outH > maxSide)) {
-          if (outW >= outH) {
-            outH = (outH * maxSide / outW).round();
-            outW = maxSide;
-          } else {
-            outW = (outW * maxSide / outH).round();
-            outH = maxSide;
-          }
+      }
+
+      // Deteksi rotasi dari metadata
+      int rotation = await _getVideoRotation(inputPath);
+      debugPrint('🔄 Rotasi video: $rotation°');
+
+      // Jika rotasi 90 atau 270, tukar lebar/tinggi agar sesuai
+      if (rotation == 90 || rotation == 270) {
+        final temp = outW;
+        outW = outH;
+        outH = temp;
+      }
+
+      // ─── 2. Batasi resolusi jika diperlukan ──────────────────────
+      int? maxSide;
+      switch (settings.videoResolution) {
+        case VideoResolution.original:
+          maxSide = null;
+          break;
+        case VideoResolution.res1080p:
+          maxSide = 1920;
+          break;
+        case VideoResolution.res720p:
+          maxSide = 1280;
+          break;
+      }
+      if (maxSide != null && (outW > maxSide || outH > maxSide)) {
+        if (outW >= outH) {
+          outH = (outH * maxSide / outW).round();
+          outW = maxSide;
+        } else {
+          outW = (outW * maxSide / outH).round();
+          outH = maxSide;
         }
       }
       outW = (outW ~/ 2) * 2;
@@ -92,7 +104,25 @@ class VideoWatermarkService {
       final double scale = (math.min(outW, outH) / 720.0).clamp(0.6, 1.8);
       debugPrint('📐 Output: ${outW}x$outH | Skala watermark: $scale');
 
-      // ─── Dapatkan precomputed style ──────────────────────────
+      // ─── 3. Bangun filter scaling dengan handling rotasi ────────
+      // Jika ada rotasi, tambahkan transpose terlebih dahulu
+      String scaleFilter = '';
+      if (rotation == 90) {
+        scaleFilter = 'transpose=1,'; // 90° clockwise
+      } else if (rotation == 270) {
+        scaleFilter = 'transpose=2,'; // 90° counter-clockwise
+      } else if (rotation == 180) {
+        scaleFilter = 'transpose=2,transpose=2,'; // 180° (hflip+vflip)
+      }
+      // Tambahkan scale (jika resolusi berubah) atau biarkan iw:ih
+      if (outW != srcDim.width || outH != srcDim.height) {
+        scaleFilter += 'scale=$outW:$outH,';
+      } else {
+        scaleFilter += 'scale=iw:ih,';
+      }
+      scaleFilter += 'setsar=1,format=yuv420p';
+
+      // ─── 4. Dapatkan watermark filters ──────────────────────────
       List<String> watermarkFilters;
       XY logoXY;
 
@@ -114,6 +144,7 @@ class VideoWatermarkService {
         final maxLineLen = (outW * 0.06).round();
         final precomputed = _cache.getTimestamp(scale, maxHeight: outH);
         final dynamicData = _cache.getTimestampDynamicData(entry, settings, maxLineLen: maxLineLen);
+        debugPrint('📋 Timestamp dynamicData: $dynamicData');
         watermarkFilters = precomputed.buildFilters(dynamicData);
         logoXY = precomputed.logoXY;
       } else {
@@ -123,11 +154,11 @@ class VideoWatermarkService {
         logoXY = precomputed.logoXY;
       }
 
-      // ─── Bangun filter complex ──────────────────────────────
-      final String scaleFilter = 'scale=$outW:$outH,setsar=1,format=yuv420p';
+      // ─── 5. Gabungkan filter ─────────────────────────────────────
       final String videoFilterChain =
           '[0:v]$scaleFilter,${watermarkFilters.join(',')}';
 
+      // ─── 6. Logo ─────────────────────────────────────────────────
       final logoPath = _cache.logoPath;
       String filterComplex;
       if (logoPath != null) {
@@ -171,7 +202,7 @@ class VideoWatermarkService {
       // Matikan audio
       arguments.insertAll(arguments.length - 1, ['-an']);
 
-      // ─── Progress callback ──────────────────────────────────
+      // ─── 7. Progress callback ──────────────────────────────────
       if (onProgress != null && durationSeconds > 0) {
         FFmpegKitConfig.enableLogCallback((log) {
           final message = log.getMessage();
@@ -209,6 +240,27 @@ class VideoWatermarkService {
       lastError = 'Exception: $e';
       return null;
     }
+  }
+
+  /// Ambil rotasi video dari metadata via FFprobe
+  static Future<int> _getVideoRotation(String inputPath) async {
+    try {
+      final session = await FFprobeKit.getMediaInformation(inputPath);
+      final mediaInfo = session.getMediaInformation();
+      if (mediaInfo != null) {
+        final streams = mediaInfo.getStreams();
+        for (final stream in streams) {
+          final tags = stream.getTags();
+          if (tags != null && tags.containsKey('rotate')) {
+            final rotStr = tags['rotate']?.toString() ?? '0';
+            return int.tryParse(rotStr) ?? 0;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ Gagal membaca rotasi: $e');
+    }
+    return 0;
   }
 
   static String diagnoseFailure(String logs) {
