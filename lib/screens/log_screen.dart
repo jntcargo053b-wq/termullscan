@@ -3,6 +3,7 @@
 // ============================================================
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:gap/gap.dart';
 import 'package:intl/intl.dart';
@@ -11,6 +12,7 @@ import 'package:collection/collection.dart';
 import 'package:video_player/video_player.dart';
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
+import '../services/thumbnail_cache_service.dart';
 import '../theme/app_theme.dart';
 
 class LogScreen extends StatefulWidget {
@@ -663,10 +665,26 @@ class _LogItem extends StatelessWidget {
             Stack(
               children: [
                 CircleAvatar(backgroundColor: avatarColor, child: Icon(icon, color: Colors.white)),
-                if (isVideo && entry.videoThumbnail != null)
-                  CircleAvatar(
-                    backgroundColor: Colors.transparent,
-                    backgroundImage: FileImage(File(entry.videoThumbnail!)),
+                // Lazy: FutureBuilder ini hanya dieksekusi saat item benar-benar
+                // dibangun oleh ListView.builder (mis. saat terlihat di layar),
+                // bukan untuk seluruh daftar sekaligus.
+                if (isVideo)
+                  FutureBuilder<Uint8List?>(
+                    future: ThumbnailCacheService.instance.getThumbnail(
+                      existingThumbnailPath: entry.videoThumbnail,
+                      videoPath: entry.videoPath,
+                    ),
+                    builder: (context, snapshot) {
+                      final bytes = snapshot.data;
+                      if (snapshot.connectionState != ConnectionState.done ||
+                          bytes == null) {
+                        return const SizedBox.shrink();
+                      }
+                      return CircleAvatar(
+                        backgroundColor: Colors.transparent,
+                        backgroundImage: MemoryImage(bytes),
+                      );
+                    },
                   ),
               ],
             ),
