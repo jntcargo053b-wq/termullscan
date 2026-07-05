@@ -231,6 +231,7 @@ class _WatermarkCache {
 
   bool _initialized = false;
   WatermarkSettings? _settings;
+  int _lastRevision = -1;
   String? _cachedFontPath;
   String? _cachedLogoPath;
   ui.Image? _cachedLogoImage;
@@ -251,8 +252,16 @@ class _WatermarkCache {
   }
 
   Future<void> initialize(WatermarkSettings settings) async {
-    if (_initialized && _settings == settings) return;
+    // PENTING: WatermarkSettings adalah singleton, jadi `settings` yang
+    // dikirim selalu instance yang sama. Bandingkan `revision`-nya
+    // (naik setiap kali ada perubahan lewat setter), bukan identitas
+    // objeknya — kalau tidak, cache (termasuk logo) akan terkunci di
+    // kondisi lama walau user baru saja mengubah settings.
+    if (_initialized && _settings == settings && _lastRevision == settings.revision) {
+      return;
+    }
     _settings = settings;
+    _lastRevision = settings.revision;
     try {
       _cachedFontPath = await _getFontPath(settings.fontFamily);
     } catch (e) {
@@ -810,8 +819,21 @@ class VideoWatermarkService {
         outW = 720;
         outH = 1280;
       } else {
-        const maxSide = 1280;
-        if (outW > maxSide || outH > maxSide) {
+        // Batas sisi terpanjang sesuai resolusi output yang dipilih.
+        // null = pertahankan resolusi asli (tidak di-scale sama sekali).
+        int? maxSide;
+        switch (settings.videoResolution) {
+          case VideoResolution.original:
+            maxSide = null;
+            break;
+          case VideoResolution.res1080p:
+            maxSide = 1920;
+            break;
+          case VideoResolution.res720p:
+            maxSide = 1280;
+            break;
+        }
+        if (maxSide != null && (outW > maxSide || outH > maxSide)) {
           if (outW >= outH) {
             outH = (outH * maxSide / outW).round();
             outW = maxSide;
@@ -881,13 +903,14 @@ class VideoWatermarkService {
       ];
 
       final int bitrate = settings.videoBitrateKbps;
-      debugPrint('🎚️ Video bitrate: ${bitrate}kbps');
+      final String preset = settings.x264Preset;
+      debugPrint('🎚️ Video bitrate: ${bitrate}kbps | Preset: $preset | Resolusi: ${settings.videoResolution}');
 
       final arguments = <String>[
         '-i', inputPath,
         ...filterArgs,
         '-c:v', 'libx264',
-        '-preset', 'veryfast',
+        '-preset', preset,
         '-b:v', '${bitrate}k',
         '-maxrate', '${bitrate}k',
         '-bufsize', '${bitrate * 2}k',
