@@ -234,9 +234,10 @@ class WatermarkCache {
   String? _cachedLogoPath;
   ui.Image? _cachedLogoImage;
 
+  // Cache key menggunakan String agar bisa menyertakan scale + maxHeight
   final Map<String, PrecomputedStyle> _styleCache = {};
-  final Map<double, PrecomputedTimestamp> _timestampCache = {};
-  final Map<double, PrecomputedFullInfo> _fullInfoCache = {};
+  final Map<String, PrecomputedTimestamp> _timestampCache = {};
+  final Map<String, PrecomputedFullInfo> _fullInfoCache = {};
 
   String get _fontSpec {
     if (_cachedFontPath != null) {
@@ -364,8 +365,7 @@ class WatermarkCache {
   }
 
   // ─── Precompute Timestamp ──────────────────────────────
-  // Semua placeholder dynamic: meta0, meta1, time, date, day, addr0, addr1, code
-  // Urutan ini HARUS sama dengan yang dikembalikan oleh getTimestampDynamicData()
+  // Urutan dynamic filters: meta0, meta1, time, date, day, addr0, addr1, code
   PrecomputedTimestamp _precomputeTimestamp(WatermarkSettings settings, double scale, {int? maxHeight}) {
     final padding = (22 * scale).round();
     const accentColor = 'yellow';
@@ -409,7 +409,7 @@ class WatermarkCache {
       "color=black@${settings.backgroundOpacity.clamp(0.4, 1.0)}:t=fill",
     );
 
-    // Brand name & tagline (statis, tidak pakai placeholder)
+    // Brand name & tagline (statis)
     final brandText = settings.companyName.isNotEmpty ? settings.companyName : 'TermulScan';
     staticParts.add(
       "drawtext=text='${escapeFFmpegText(brandText)}':"
@@ -424,7 +424,7 @@ class WatermarkCache {
       "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1",
     );
 
-    // ─── Dynamic filters (semua placeholder) ────────────────
+    // ─── Dynamic filters ────────────────────────────────
     final dynamicTemplates = <FilterTemplate>[];
 
     // 1. meta0
@@ -514,7 +514,7 @@ class WatermarkCache {
       ),
     );
 
-    // 8. code (sekarang dynamic, bukan statis)
+    // 8. code
     dynamicTemplates.add(
       FilterTemplate(
         '{{code}}',
@@ -536,7 +536,7 @@ class WatermarkCache {
   }
 
   // ─── Precompute FullInfo ──────────────────────────────
-
+  // Urutan dynamic filters: barcode, date, time, operator, company, gps, location, code
   PrecomputedFullInfo _precomputeFullInfo(WatermarkSettings settings, double scale, {int? maxHeight}) {
     final padding = (20 * scale).round();
     const accentColor = 'orange';
@@ -591,6 +591,7 @@ class WatermarkCache {
 
     int cursorY = padding;
 
+    // 1. barcode
     dynamicTemplates.add(
       FilterTemplate(
         '{{barcode}}',
@@ -602,6 +603,7 @@ class WatermarkCache {
     );
     cursorY += barcodeSize + gap6;
 
+    // 2. date & time (digabung menjadi satu filter)
     final dateTimeText = "{{date}}  {{time}} WIB";
     dynamicTemplates.add(
       FilterTemplate(
@@ -614,6 +616,7 @@ class WatermarkCache {
     );
     cursorY += dateSize + gap8;
 
+    // 3. operator & company (digabung)
     final opText = "{{operator}}  •  {{company}}";
     dynamicTemplates.add(
       FilterTemplate(
@@ -626,6 +629,7 @@ class WatermarkCache {
     );
     cursorY += operatorSize + gap8;
 
+    // 4. gps
     if (settings.showGps) {
       dynamicTemplates.add(
         FilterTemplate(
@@ -639,6 +643,7 @@ class WatermarkCache {
       cursorY += gpsSize + gap4;
     }
 
+    // 5. location
     if (settings.showLocation) {
       dynamicTemplates.add(
         FilterTemplate(
@@ -652,11 +657,21 @@ class WatermarkCache {
       cursorY += locationSize + gap4;
     }
 
+    // 6. code (statis, tetapi pakai placeholder agar bisa di-render)
     staticParts.add(
       "drawtext=text='{{code}}  •  TERMULSCAN VERIFIED':"
       "$fontSpec:fontcolor=white@0.7:fontsize=$codeSize:"
       "x=w-text_w-$padding:y=ih-$effectiveBarHeight-${codeSize + gap10}:"
       "shadowcolor=black@0.6:shadowx=$shadow1:shadowy=$shadow1",
+    );
+
+    // Karena code ditangani statis, kita perlu menambahkan FilterTemplate untuk code
+    // agar buildFilters bisa mengganti placeholder-nya.
+    dynamicTemplates.add(
+      FilterTemplate(
+        '{{code}}',
+        "" // tidak digunakan karena sudah di staticParts, tapi placeholder harus tetap ada
+      ),
     );
 
     final logoXY = XY('W-w-$logoGap', 'H-h-$logoGap');
@@ -687,7 +702,6 @@ class WatermarkCache {
   }
 
   // Urutan HARUS: meta0, meta1, time, date, day, addr0, addr1, code
-  // Cocok dengan dynamicTemplates di _precomputeTimestamp
   List<String> getTimestampDynamicData(ScanEntry entry, WatermarkSettings settings, {int? maxLineLen}) {
     final metaLines = <String>[];
     if (entry.value.isNotEmpty) metaLines.add('📦 ${entry.value}');
@@ -713,6 +727,8 @@ class WatermarkCache {
     ];
   }
 
+  // Urutan HARUS: barcode, date, time, operator, company, gpsText, location, code
+  // (sama dengan urutan di buildFilters FullInfo)
   List<String> getFullInfoData(ScanEntry entry, WatermarkSettings settings) {
     final dateStr = ddmmyyyyFF(entry.timestamp);
     final timeStr = hhmmFF(entry.timestamp);
@@ -722,18 +738,18 @@ class WatermarkCache {
     final location = entry.locationName ?? '';
     final code = generateVerificationCode(entry, settings);
     return [
-      entry.value,
-      dateStr,
-      timeStr,
-      settings.operatorName.isNotEmpty ? settings.operatorName : '-',
-      settings.companyName.isNotEmpty ? settings.companyName : '-',
-      gpsText,
-      location,
-      code,
+      entry.value,              // barcode
+      dateStr,                  // date
+      timeStr,                  // time
+      settings.operatorName.isNotEmpty ? settings.operatorName : '-', // operator
+      settings.companyName.isNotEmpty ? settings.companyName : '-',   // company
+      gpsText,                  // gps
+      location,                 // location
+      code,                     // code
     ];
   }
 
-  // ─── Akses Cache ──────────────────────────────────────
+  // ─── Akses Cache (dengan String key) ──────────────────
 
   PrecomputedStyle getStyle(WatermarkStyle style, double scale) {
     if (!_initialized) throw StateError('Cache belum diinisialisasi');
@@ -746,16 +762,18 @@ class WatermarkCache {
 
   PrecomputedTimestamp getTimestamp(double scale, {int? maxHeight}) {
     if (!_initialized) throw StateError('Cache belum diinisialisasi');
+    final key = 'timestamp_${scale.toStringAsFixed(3)}_${maxHeight ?? 0}';
     return _timestampCache.putIfAbsent(
-      scale,
+      key,
       () => _precomputeTimestamp(_settings!, scale, maxHeight: maxHeight),
     );
   }
 
   PrecomputedFullInfo getFullInfo(double scale, {int? maxHeight}) {
     if (!_initialized) throw StateError('Cache belum diinisialisasi');
+    final key = 'fullinfo_${scale.toStringAsFixed(3)}_${maxHeight ?? 0}';
     return _fullInfoCache.putIfAbsent(
-      scale,
+      key,
       () => _precomputeFullInfo(_settings!, scale, maxHeight: maxHeight),
     );
   }
