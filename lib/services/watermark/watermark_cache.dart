@@ -59,7 +59,6 @@ class PrecomputedTimestamp {
   List<String> buildFilters(List<String> dynamicData) {
     final result = <String>[];
     result.addAll(staticFilters);
-    // Semua placeholder ada di dynamicFilters
     for (var i = 0; i < dynamicData.length && i < dynamicFilters.length; i++) {
       if (dynamicData[i].isEmpty) continue;
       result.add(dynamicFilters[i].render(dynamicData[i]));
