@@ -137,10 +137,25 @@ class VideoWatermarkService {
       debugPrint('🔧 Scale filter: $scaleFilter');
 
       // ─── 4. Dapatkan watermark filters ──────────────────────────
+      // Guard: gaya Minimal/Professional/Polaroid/Stamp memakai efek
+      // (rotasi teks, bingkai foto, badge) yang tidak bisa direplikasi oleh
+      // filter FFmpeg (drawtext/drawbox). Jika settings tersimpan masih
+      // memakai salah satu gaya itu (mis. dari sesi lama sebelum UI mode
+      // video ada), jatuhkan ke 'timestamp' agar hasil video tetap rapi
+      // & konsisten, bukan versi generik yang tidak mewakili desain aslinya.
+      final effectiveStyle =
+          settings.style.supportsVideo ? settings.style : WatermarkStyle.timestamp;
+      if (effectiveStyle != settings.style) {
+        debugPrint(
+          '⚠️ Gaya "${settings.style.name}" belum didukung penuh untuk video, '
+          'menggunakan "timestamp" sebagai gantinya.',
+        );
+      }
+
       List<String> watermarkFilters;
       XY logoXY;
 
-      if (settings.style == WatermarkStyle.fullInfo) {
+      if (effectiveStyle == WatermarkStyle.fullInfo) {
         final precomputed = _cache.getFullInfo(scale, maxHeight: outH);
         final data = _cache.getFullInfoData(entry, settings);
         watermarkFilters = precomputed.buildFilters(
@@ -154,7 +169,7 @@ class VideoWatermarkService {
           code: data[7],
         );
         logoXY = precomputed.logoXY;
-      } else if (settings.style == WatermarkStyle.timestamp) {
+      } else if (effectiveStyle == WatermarkStyle.timestamp) {
         final maxLineLen = (outW * 0.06).round();
         final precomputed = _cache.getTimestamp(scale, maxHeight: outH);
         final dynamicData = _cache.getTimestampDynamicData(entry, settings, maxLineLen: maxLineLen);
@@ -162,7 +177,7 @@ class VideoWatermarkService {
         watermarkFilters = precomputed.buildFilters(dynamicData);
         logoXY = precomputed.logoXY;
       } else {
-        final precomputed = _cache.getStyle(settings.style, scale);
+        final precomputed = _cache.getStyle(effectiveStyle, scale);
         final dynamicTexts = _cache.getDynamicTexts(entry, settings);
         watermarkFilters = precomputed.buildFilters(dynamicTexts);
         logoXY = precomputed.logoXY;
