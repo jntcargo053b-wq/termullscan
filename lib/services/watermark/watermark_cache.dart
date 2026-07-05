@@ -394,11 +394,12 @@ class WatermarkCache {
     final metaBlockH = maxMetaLines * (metaFontSize + gap8);
     final timeRowH = math.max(timeFontSize, dateFontSize + gap4 + dayFontSize) + gap10;
     final addressBlockH = maxAddressLines * (addressFontSize + gap8);
-    final barHeight = padding * 2 + metaBlockH + timeRowH + addressBlockH;
+    // --- PERBAIKAN: jadikan double secara eksplisit ---
+    final double barHeight = (padding * 2 + metaBlockH + timeRowH + addressBlockH).toDouble();
 
-    // PERBAIKAN: gunakan ternary langsung untuk hasil double pasti
-    final double effectiveBarHeight = maxHeight != null
-        ? (barHeight < maxHeight * 0.28 ? barHeight : maxHeight * 0.28)
+    // Sekarang math.min akan mengembalikan double
+    final double effectiveBarHeight = maxHeight != null 
+        ? math.min(barHeight, maxHeight * 0.28) 
         : barHeight;
 
     final fontSpec = _fontSpec;
@@ -537,11 +538,12 @@ class WatermarkCache {
     final row6 = codeSize + gap10;
 
     final totalRows = (row1 + row2 + row3 + row4 + row5 + row6).toInt();
-    final barHeight = padding * 2 + totalRows;
+    // --- PERBAIKAN: jadikan double secara eksplisit ---
+    final double barHeight = (padding * 2 + totalRows).toDouble();
 
-    // PERBAIKAN: gunakan ternary langsung untuk hasil double pasti
-    final double effectiveBarHeight = maxHeight != null
-        ? (barHeight < maxHeight * 0.28 ? barHeight : maxHeight * 0.28)
+    // Sekarang math.min akan mengembalikan double
+    final double effectiveBarHeight = maxHeight != null 
+        ? math.min(barHeight, maxHeight * 0.28) 
         : barHeight;
 
     final fontSpec = _fontSpec;
