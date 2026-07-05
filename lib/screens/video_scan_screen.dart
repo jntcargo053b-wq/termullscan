@@ -18,9 +18,11 @@ import '../services/watermark/watermark_service.dart';
 import '../services/permission_service.dart';
 import '../services/task_queue.dart';
 import '../watermark/watermark_settings.dart';
+import '../watermark/watermark_style.dart';
 import '../theme/app_theme.dart';
 import '../utils/file_helper.dart';
 import 'preview_screen.dart';
+import 'watermark_settings_sheet.dart';
 
 class VideoScanScreen extends StatefulWidget {
   final String? barcode;
@@ -450,6 +452,21 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       appBar: AppBar(
         title: Text('Rekam Video ${widget.barcode ?? ""}'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.tune, color: Colors.grey),
+            tooltip: 'Gaya watermark video',
+            onPressed: () {
+              showModalBottomSheet(
+                context: context,
+                isScrollControlled: true,
+                backgroundColor: const Color(0xFF1E1E1E),
+                shape: const RoundedRectangleBorder(
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                ),
+                builder: (_) => const WatermarkSettingsSheet(videoMode: true),
+              );
+            },
+          ),
           if (_pendingTasks > 0)
             IconButton(
               icon: const Icon(Icons.cancel, color: Colors.red),
