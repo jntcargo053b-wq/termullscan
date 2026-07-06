@@ -296,6 +296,16 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
             : 'Video tersimpan di internal (gagal ekspor)');
       } else {
         // 8. Watermark gagal → simpan video mentah
+        // ✅ FIX: sebelumnya kegagalan ini HANYA terlihat lewat teks status
+        // kecil yang gampang terlewat ("Watermark gagal, menyimpan video
+        // mentah..."). Sekarang ditampilkan juga sebagai snackbar merah yang
+        // jelas, dengan pesan diagnosis dari VideoWatermarkService.lastError
+        // (sudah lewat diagnoseFailure()), supaya user & log tahu alasan
+        // pastinya — bukan cuma "watermark hilang" tanpa penjelasan.
+        final reason = VideoWatermarkService.lastError ?? 'Penyebab tidak diketahui';
+        debugPrint('❌ Watermark video gagal: $reason');
+        _showError('Watermark gagal: $reason. Video disimpan tanpa watermark.');
+
         _safeSetState(() => _statusText = 'Watermark gagal, menyimpan video mentah...');
         final savedPath = await _storage.saveVideo(videoFile.path, name: widget.barcode);
         if (savedPath.isEmpty) throw Exception('Gagal menyimpan video mentah');

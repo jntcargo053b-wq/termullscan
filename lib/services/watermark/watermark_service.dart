@@ -223,7 +223,7 @@ class VideoWatermarkService {
           '-crf', '$crf',
           '-maxrate', '${bitrate}k',
           '-bufsize', '${bitrate * 2}k',
-          '-threads', '2',
+          '-threads', '0', // 0 = auto-detect semua core CPU yang tersedia
         ];
       }
 
@@ -265,13 +265,17 @@ class VideoWatermarkService {
       // Fallback jika hardware encoder gagal
       if (useHwEncoder && !ReturnCode.isSuccess(returnCode)) {
         debugPrint('⚠️ h264_mediacodec gagal (rc=${returnCode?.getValue()}), fallback ke libx264...');
+        // ⚡ Preset dipaksa lebih cepat di jalur fallback: user sudah
+        // menunggu 1x percobaan hardware yang gagal, jadi prioritaskan
+        // selesai cepat daripada kualitas maksimal di jalur ini.
+        const fallbackPreset = 'veryfast';
         final swEncoderArgs = [
           '-c:v', 'libx264',
-          '-preset', preset,
+          '-preset', fallbackPreset,
           '-crf', '$crf',
           '-maxrate', '${bitrate}k',
           '-bufsize', '${bitrate * 2}k',
-          '-threads', '2',
+          '-threads', '0', // 0 = auto-detect semua core CPU yang tersedia
         ];
         final swArguments = <String>[
           '-i', inputPath,
@@ -299,8 +303,10 @@ class VideoWatermarkService {
       if (!ReturnCode.isSuccess(returnCode)) {
         final output = await session.getOutput();
         final logs = await session.getAllLogsAsString();
+        final diagnosis = diagnoseFailure(logs);
         debugPrint('❌ FFmpeg error log:\n$logs');
-        throw Exception('FFmpeg gagal (rc=${returnCode?.getValue()}): $output\n$logs');
+        debugPrint('🩺 Diagnosis: $diagnosis');
+        throw Exception('$diagnosis (rc=${returnCode?.getValue()})\n$output\n$logs');
       }
 
       debugPrint('✅ Video watermark berhasil: $outputPath');
@@ -309,7 +315,22 @@ class VideoWatermarkService {
       FFmpegKitConfig.enableStatisticsCallback(null);
       FFmpegKitConfig.enableLogCallback(null);
       debugPrint('❌ Error video watermark: $e');
-      lastError = 'Exception: $e';
+      // Kalau exception ini bukan hasil diagnoseFailure() di atas (mis. error
+      // sebelum FFmpeg jalan: FFprobe gagal, overlay PNG gagal dibuat, dll),
+      // tetap coba jalankan diagnosis dari teks exception itu sendiri supaya
+      // lastError selalu berupa pesan yang bisa dipahami user, bukan dump
+      // exception mentah.
+      final msg = e.toString();
+      if (msg.contains('rc=')) {
+        // Sudah diagnosis oleh diagnoseFailure() di blok atas.
+        lastError = msg;
+      } else {
+        final diagnosis = diagnoseFailure(msg);
+        // Kalau tidak ada pola yang cocok, pertahankan pesan exception asli
+        // (biasanya sudah cukup jelas, mis. "Gagal membuat overlay PNG")
+        // daripada ditimpa pesan generik "Penyebab tidak dikenal".
+        lastError = diagnosis.startsWith('Penyebab tidak dikenal') ? msg : diagnosis;
+      }
       return null;
     } finally {
       if (overlayPngPath != null) {
