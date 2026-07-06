@@ -3,7 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
-import 'package:path_provider/path_provider.dart'; // ← untuk debug
+import 'package:path_provider/path_provider.dart';
 import '../models/scan_entry.dart';
 import 'models/watermark_data.dart';
 import 'theme/watermark_theme.dart';
@@ -190,7 +190,7 @@ class WatermarkRenderer {
       final baseSize = photoWidth < photoHeight ? photoWidth : photoHeight;
       final theme = WatermarkTheme.of(style: settings.style, data: data, baseSize: baseSize);
 
-      // Gunakan placeholder abu-abu, bukan transparan (agar layout seperti Polaroid terlihat)
+      // Gunakan placeholder abu-abu agar layout dengan bingkai (seperti Polaroid) terlihat
       placeholderImage = await _createPlaceholderImage(outW, outH);
 
       final recorder = ui.PictureRecorder();
@@ -302,11 +302,11 @@ class WatermarkRenderer {
     final recorder = ui.PictureRecorder();
     final canvas = ui.Canvas(
       recorder,
-      Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+      ui.Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
     );
     canvas.drawRect(
-      Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
-      Paint()..color = const Color(0xFF1A1A1A),
+      ui.Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+      ui.Paint()..color = const ui.Color(0xFF1A1A1A),
     );
     final picture = recorder.endRecording();
     final image = await picture.toImage(width, height);
