@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import '../../models/scan_entry.dart';
 import '../../watermark/watermark_settings.dart';
 import '../../watermark/watermark_style.dart';
+import '../../watermark/theme/watermark_typography.dart';
 import 'watermark_utils.dart';
 
 // ─── FILTER TEMPLATE ─────────────────────────────────────
@@ -20,30 +21,6 @@ class FilterTemplate {
 }
 
 // ─── PRECOMPUTED STYLES ──────────────────────────────────
-
-class PrecomputedStyle {
-  final List<FilterTemplate> filterTemplates;
-  final XY logoXY;
-  final double blockHeight;
-  final double blockLineHeight;
-  final List<String> staticFilters;
-  PrecomputedStyle({
-    required this.filterTemplates,
-    required this.logoXY,
-    required this.blockHeight,
-    required this.blockLineHeight,
-    required this.staticFilters,
-  });
-  List<String> buildFilters(List<String> dynamicTexts) {
-    final result = <String>[];
-    result.addAll(staticFilters);
-    for (var i = 0; i < dynamicTexts.length && i < filterTemplates.length; i++) {
-      if (dynamicTexts[i].isEmpty) continue;
-      result.add(filterTemplates[i].render(dynamicTexts[i]));
-    }
-    return result;
-  }
-}
 
 class PrecomputedTimestamp {
   final List<FilterTemplate> dynamicFilters;
@@ -116,11 +93,28 @@ class XY {
   XY(this.x, this.y);
 }
 
-class _TextLine {
+/// Tingkat hierarki visual satu baris pada blok info video.
+/// title = nama lokasi/perusahaan (paling besar & warna aksen)
+/// body  = barcode/operator/tanggal-jam (ukuran sedang, warna normal)
+/// caption = koordinat lat/lon (paling kecil, warna sedikit transparan)
+enum _Tier { title, body, caption }
+
+/// Satu baris pada blok info hierarki baru (lokasi/tanggal/jam/koordinat).
+/// `tier` menentukan ukuran & warna — bukan ikon, murni tipografi.
+class _HLine {
   final String text;
-  final double sizeOffset;
-  final bool isTitle;
-  _TextLine({required this.text, required this.sizeOffset, this.isTitle = false});
+  final _Tier tier;
+  _HLine(this.text, {this.tier = _Tier.body});
+  bool get isTitle => tier == _Tier.title;
+}
+
+/// Hasil akhir filter FFmpeg untuk gaya minimal/professional/polaroid/stamp
+/// di video, dibangun langsung per-entry (bukan lewat cache placeholder)
+/// karena hampir seluruh kontennya memang dinamis per entry.
+class GeneralStyleResult {
+  final List<String> filters;
+  final XY logoXY;
+  GeneralStyleResult(this.filters, this.logoXY);
 }
 
 class _StyleLayout {
@@ -140,8 +134,7 @@ class _StyleLayout {
   bool get _isRight =>
       position == WatermarkPosition.topRight || position == WatermarkPosition.bottomRight;
 
-  bool get _isFullWidthBanner =>
-      style == WatermarkStyle.professional || style == WatermarkStyle.polaroid;
+  bool get _isFullWidthBanner => style == WatermarkStyle.professional;
 
   String? buildBackground({required double blockHeight, required double opacity}) {
     if (style == WatermarkStyle.minimal) return null;
@@ -154,12 +147,17 @@ class _StyleLayout {
 
     final edgeGap = (20 * scale).round();
     final borderWidth = math.max(1, (2 * scale).round());
-    final boxWidth = 'iw*0.6';
+    final boxWidth = 'iw*0.38'; // maks. 38% lebar video, sesuai spesifikasi desain
     final x = _isRight ? 'iw-($boxWidth)-$edgeGap' : '$edgeGap';
     final y = _isBottom ? 'ih-${blockHeight.toInt()}-$edgeGap' : '$edgeGap';
+    // Polaroid = kartu putih transparan + garis tipis abu (bukan kotak
+    // gelap + garis putih seperti gaya lain).
+    final isPolaroid = style == WatermarkStyle.polaroid;
+    final fillColor = isPolaroid ? 'white' : 'black';
+    final borderColor = isPolaroid ? 'black@0.18' : 'white@0.9';
     final fill = "drawbox=x=$x:y=$y:w=$boxWidth:h=${blockHeight.toInt()}:"
-        "color=black@${opacity.clamp(0.0, 1.0)}:t=fill";
-    final border = "drawbox=x=$x:y=$y:w=$boxWidth:h=${blockHeight.toInt()}:color=white@0.9:t=$borderWidth";
+        "color=$fillColor@${opacity.clamp(0.0, 1.0)}:t=fill";
+    final border = "drawbox=x=$x:y=$y:w=$boxWidth:h=${blockHeight.toInt()}:color=$borderColor:t=$borderWidth";
     return '$fill,$border';
   }
 
@@ -175,7 +173,14 @@ class _StyleLayout {
   }
 
   String? buildDivider({required double blockHeight}) {
-    if (style == WatermarkStyle.minimal || style == WatermarkStyle.stamp) return null;
+    // Minimal & Stamp tidak pakai divider sama sekali. Polaroid juga di-skip
+    // sejak jadi kartu kecil bersudut (bukan banner) — garis tepi kartu
+    // (border pada buildBackground) sudah berfungsi sebagai "garis tipis".
+    if (style == WatermarkStyle.minimal ||
+        style == WatermarkStyle.stamp ||
+        style == WatermarkStyle.polaroid) {
+      return null;
+    }
 
     final edgeGap = (18 * scale).round();
     final lineHeight = math.max(1, (1 * scale).round());
@@ -188,6 +193,13 @@ class _StyleLayout {
     if (_isFullWidthBanner) return '(w-text_w)/2';
     final inset = (style == WatermarkStyle.stamp ? 32 : 20) * scale;
     return _isRight ? 'w-text_w-${inset.round()}' : '${(inset).round() + accentSpace}';
+  }
+
+  /// Sama seperti [textX] tapi TIDAK dipaksa center — dipakai untuk panel
+  /// info kamera profesional (Professional) yang tetap rata kiri/kanan
+  /// sesuai posisi watermark, mengikuti pola `professional_layout.dart` (foto).
+  String panelTextX({required double contentPadding}) {
+    return _isRight ? 'w-text_w-${contentPadding.round()}' : '${contentPadding.round()}';
   }
 
   String textY({
@@ -235,7 +247,6 @@ class WatermarkCache {
   ui.Image? _cachedLogoImage;
 
   // Cache key menggunakan String agar bisa menyertakan scale + maxHeight
-  final Map<String, PrecomputedStyle> _styleCache = {};
   final Map<String, PrecomputedTimestamp> _timestampCache = {};
   final Map<String, PrecomputedFullInfo> _fullInfoCache = {};
 
@@ -270,7 +281,6 @@ class WatermarkCache {
         _cachedLogoImage = await _decodeLogo(logoFile);
       }
     }
-    _styleCache.clear();
     _timestampCache.clear();
     _fullInfoCache.clear();
     _initialized = true;
@@ -301,67 +311,402 @@ class WatermarkCache {
     return null;
   }
 
-  // ─── Precompute General ────────────────────────────────
+  // ─── Engine Hierarki Info (minimal/professional/polaroid/stamp) ──
+  //
+  // Berbeda dari timestamp/fullInfo (yang punya bagian label statis vs
+  // nilai dinamis yang jelas), gaya-gaya ini kontennya hampir seluruhnya
+  // dinamis per entry (nama lokasi, barcode, operator, koordinat) — jadi
+  // dibangun langsung per panggilan, tanpa placeholder cache.
+  //
+  // Hierarki tampilan (baris di-skip kalau datanya kosong, TIDAK diganti
+  // teks "tidak tersedia"), disusun 3 tingkat visual seperti saran evaluasi:
+  //   [title]   Nama lokasi / nama perusahaan  — paling besar, warna aksen
+  //   [body]    Barcode, Operator, tanggal•jam — ukuran sedang, warna normal
+  //   [caption] Lat, Lon                       — paling kecil, opacity 75%
+  // (Altitude/Accuracy akan otomatis masuk tier caption begitu field-nya
+  // ditambahkan ke ScanEntry — lihat catatan di respons sebelumnya.)
+  //
+  // Ukuran font & padding responsif terhadap TINGGI video, memakai rasio
+  // WatermarkTypography yang sama dengan layout foto (title/body/caption)
+  // supaya video & foto satu keluarga desain. Lebar blok (styles non-banner)
+  // dibatasi 38% lebar video via `buildBackground` (lihat `_StyleLayout`).
 
-  PrecomputedStyle _precomputeGeneral(
-    WatermarkSettings settings,
-    WatermarkStyle style,
-    double scale,
-  ) {
+  GeneralStyleResult buildGeneralStyleFilters({
+    required WatermarkStyle style,
+    required WatermarkSettings settings,
+    required ScanEntry entry,
+    required double scale,
+    required int outW,
+    required int outH,
+  }) {
+    if (!_initialized) throw StateError('Cache belum diinisialisasi');
+
     final layout = _StyleLayout.forStyle(style, settings.position, scale);
-    final lines = _buildStaticTextLines(settings);
-    final baseFontSize = settings.fontSize * scale;
-    final blockLineHeight = baseFontSize + (8 * scale);
-    final blockHeight = lines.isEmpty
-        ? 0.0
-        : (lines.length * blockLineHeight) + (layout.padding * 2);
-
-    final staticParts = <String>[];
-    final bg = layout.buildBackground(blockHeight: blockHeight, opacity: settings.backgroundOpacity);
-    if (bg != null) staticParts.add(bg);
-    final accent = layout.buildAccentBar(blockHeight: blockHeight);
-    if (accent != null) staticParts.add(accent);
-    final divider = layout.buildDivider(blockHeight: blockHeight);
-    if (divider != null) staticParts.add(divider);
-
-    final templates = <FilterTemplate>[];
     final fontSpec = _fontSpec;
-    for (var i = 0; i < lines.length; i++) {
-      final line = lines[i];
-      final fontSize = (baseFontSize + line.sizeOffset * scale)
-          .clamp(10 * scale, 64 * scale)
-          .round();
-      final color = layout.textColor(line.isTitle);
-      final x = layout.textX();
-      final y = layout.textY(
-        lineIndex: i,
-        lineHeight: blockLineHeight,
-        blockHeight: blockHeight,
-      );
-      final placeholder = '{{line$i}}';
-      final filter =
-          "drawtext=text='$placeholder':"
-          "$fontSpec:"
-          "fontcolor=$color:"
-          "fontsize=$fontSize:"
-          "x=$x:"
-          "y=$y:"
-          "shadowcolor=black@0.8:"
-          "shadowx=${math.max(1, (2 * scale).round())}:"
-          "shadowy=${math.max(1, (2 * scale).round())}:"
-          "bordercolor=black@0.3:"
-          "borderw=${math.max(1, (1 * scale).round())}";
-      templates.add(FilterTemplate(placeholder, filter));
+    final H = outH.toDouble();
+
+    // ─── Ukuran responsif (berbasis tinggi video) ─────────
+    // Baseline "body" dihitung dari tinggi video, lalu title/caption
+    // diturunkan dari baseline yang SAMA memakai rasio WatermarkTypography
+    // yang sudah jadi standar di layout foto (title ×1.29, caption ×0.79)
+    // — supaya video & foto satu keluarga desain, bukan skala terpisah.
+    final fontBody = (H * 0.024).clamp(12.0, 46.0);
+    final fontTitle = WatermarkTypography.title(fontBody).clamp(16.0, 60.0);
+    final fontCaption = WatermarkTypography.caption(fontBody).clamp(10.0, 36.0);
+    final blockPadding = (H * 0.015).clamp(10.0, 36.0);
+    final lineGap = (H * 0.008).clamp(3.0, 14.0);
+    // Semua baris memakai TINGGI baris yang sama (dipatok ke tier terbesar
+    // yang dipakai) supaya posisi Y sederhana & tidak pernah tumpang tindih,
+    // meski ukuran font per tier berbeda.
+    final rowHeight = fontTitle + lineGap;
+    final shadowOff = math.max(1, (H * 0.0018).round());
+
+    double sizeFor(_Tier tier) {
+      switch (tier) {
+        case _Tier.title:
+          return fontTitle;
+        case _Tier.body:
+          return fontBody;
+        case _Tier.caption:
+          return fontCaption;
+      }
     }
 
-    final logoXY = layout.logoXY();
-    return PrecomputedStyle(
-      filterTemplates: templates,
-      logoXY: logoXY,
-      blockHeight: blockHeight,
-      blockLineHeight: blockLineHeight,
-      staticFilters: staticParts,
+    // ─── Lebar maksimum blok → dipakai untuk wrap nama lokasi ─
+    final maxBlockWidth = outW * 0.38;
+    final approxCharWidth = fontBody * 0.55;
+    final maxLineChars = math.max(10, (maxBlockWidth / approxCharWidth).floor());
+
+    // ─── Susun baris sesuai hierarki, skip kalau kosong ───
+    // Prioritas visual: lokasi (besar) > tanggal/jam & data operasional
+    // (sedang) > koordinat (kecil). Altitude/accuracy akan masuk tier
+    // caption juga begitu field-nya tersedia di ScanEntry.
+    //
+    // Catatan: baris nama perusahaan SENGAJA tidak ada di sini — dicek ke
+    // `minimal_layout.dart`/`polaroid_layout.dart` (foto), keduanya tidak
+    // pernah merender nama perusahaan sebagai teks (branding cuma lewat
+    // logo gambar). Baris itu di versi awal video adalah tambahan saya
+    // sendiri yang ternyata tidak sesuai versi foto — sudah dihapus.
+    final rawLocation = (entry.locationName ?? '').trim();
+    final locationLines = rawLocation.isEmpty
+        ? const <String>[]
+        : wrapAddress(rawLocation, maxLineLen: maxLineChars).take(2).toList();
+
+    final lines = <_HLine>[];
+    for (final l in locationLines) {
+      lines.add(_HLine(l, tier: _Tier.title));
+    }
+    if (entry.value.isNotEmpty) {
+      lines.add(_HLine('Barcode: ${entry.value}', tier: _Tier.body));
+    }
+    if (settings.operatorName.isNotEmpty) {
+      lines.add(_HLine('Operator: ${settings.operatorName}', tier: _Tier.body));
+    }
+    lines.add(_HLine(
+      '${ddmmyyyyFF(entry.timestamp)}  •  ${hhmmFF(entry.timestamp)} WIB',
+      tier: _Tier.body,
+    ));
+    if (entry.latitude != null) {
+      lines.add(_HLine('Lat ${entry.latitude!.toStringAsFixed(6)}', tier: _Tier.caption));
+    }
+    if (entry.longitude != null) {
+      lines.add(_HLine('Lon ${entry.longitude!.toStringAsFixed(6)}', tier: _Tier.caption));
+    }
+    // Indikator entri manual — ada di minimal/polaroid (foto) sebagai baris
+    // beraksen terpisah. Ditaruh paling akhir, dirender dengan tier title
+    // (aksen oranye) supaya tetap menonjol tanpa perlu warna ke-3.
+    if (entry.barcodeFormat == 'MANUAL') {
+      lines.add(_HLine('MANUAL ENTRY', tier: _Tier.title));
+    }
+
+    double blockHeight = (blockPadding * 2) + (lines.length * rowHeight);
+    // Polaroid harus tetap kecil (kartu, bukan banner) — dibatasi lebih
+    // ketat daripada gaya lain supaya tidak menutupi video.
+    final maxHeightRatio = style == WatermarkStyle.polaroid ? 0.28 : 0.5;
+    blockHeight = blockHeight.clamp(0.0, H * maxHeightRatio);
+
+    // ─── Background / accent / divider ────────────────────
+    final filters = <String>[];
+    final bg = layout.buildBackground(blockHeight: blockHeight, opacity: settings.backgroundOpacity);
+    if (bg != null) filters.add(bg);
+    final accent = layout.buildAccentBar(blockHeight: blockHeight);
+    if (accent != null) filters.add(accent);
+    final divider = layout.buildDivider(blockHeight: blockHeight);
+    if (divider != null) filters.add(divider);
+
+    // ─── Baris teks ────────────────────────────────────────
+    for (var i = 0; i < lines.length; i++) {
+      final line = lines[i];
+      final fontSize = sizeFor(line.tier).round();
+      final color = line.tier == _Tier.caption
+          ? (layout.textColor(false) == 'black' ? 'black@0.75' : 'white@0.75')
+          : layout.textColor(line.isTitle);
+      final x = layout.textX();
+      final y = layout.textY(lineIndex: i, lineHeight: rowHeight, blockHeight: blockHeight);
+      filters.add(
+        "drawtext=text='${escapeFFmpegText(line.text)}':"
+        "$fontSpec:"
+        "fontcolor=$color:"
+        "fontsize=$fontSize:"
+        "x=$x:"
+        "y=$y:"
+        "shadowcolor=black@0.8:"
+        "shadowx=$shadowOff:"
+        "shadowy=$shadowOff:"
+        "bordercolor=black@0.3:"
+        "borderw=${math.max(1, (shadowOff / 2).round())}",
+      );
+    }
+
+    return GeneralStyleResult(filters, layout.logoXY());
+  }
+
+  // ─── Stamp (dedikasi, bukan engine generik) ────────────────
+  //
+  // Meniru semangat `stamp_layout.dart` (foto): badge modern hijau
+  // "VERIFIED" (atau oranye "MANUAL" untuk entri manual) — BUKAN cap merah
+  // tradisional. Video tidak bisa rotasi teks seperti foto, jadi badge
+  // dirender sebagai baris judul tebal di atas panel (bukan kotak
+  // terpisah yang dimiringkan) — penyederhanaan yang disengaja untuk
+  // keterbatasan drawtext.
+  GeneralStyleResult buildStampVideoFilters({
+    required WatermarkSettings settings,
+    required ScanEntry entry,
+    required double scale,
+    required int outW,
+    required int outH,
+  }) {
+    if (!_initialized) throw StateError('Cache belum diinisialisasi');
+
+    final layout = _StyleLayout.forStyle(WatermarkStyle.stamp, settings.position, scale);
+    final fontSpec = _fontSpec;
+    final H = outH.toDouble();
+
+    final isManual = entry.barcodeFormat == 'MANUAL';
+    // Hijau modern untuk terverifikasi, oranye untuk entri manual — selaras
+    // dengan warna di stamp_layout.dart foto (bukan merah tradisional).
+    final badgeColor = isManual ? 'darkorange' : 'seagreen';
+    final badgeLabel = isManual ? 'MANUAL' : 'VERIFIED';
+
+    final fontBody = (H * 0.022).clamp(11.0, 42.0);
+    final fontBadge = WatermarkTypography.title(fontBody).clamp(15.0, 54.0);
+    final fontCaption = WatermarkTypography.caption(fontBody).clamp(9.0, 32.0);
+    final fontBarcode = (fontBody * 1.2).clamp(13.0, 48.0);
+
+    final blockPadding = (H * 0.014).clamp(8.0, 30.0);
+    final lineGap = (H * 0.007).clamp(3.0, 12.0);
+    final shadowOff = math.max(1, (H * 0.0016).round());
+
+    final rows = <_HLine>[
+      _HLine(badgeLabel, tier: _Tier.title),
+    ];
+    if (entry.value.isNotEmpty) {
+      rows.add(_HLine('Brg: ${entry.value}', tier: _Tier.body));
+    }
+    if (settings.operatorName.isNotEmpty) {
+      rows.add(_HLine('Op: ${settings.operatorName}', tier: _Tier.body));
+    }
+    rows.add(_HLine(
+      '${ddmmyyyyFF(entry.timestamp)} ${hhmmFF(entry.timestamp)} WIB',
+      tier: _Tier.body,
+    ));
+    if (entry.latitude != null) {
+      rows.add(_HLine('Lat ${entry.latitude!.toStringAsFixed(6)}', tier: _Tier.caption));
+    }
+    if (entry.longitude != null) {
+      rows.add(_HLine('Lon ${entry.longitude!.toStringAsFixed(6)}', tier: _Tier.caption));
+    }
+
+    final rowHeight = fontBadge + lineGap;
+    var blockHeight = (blockPadding * 2) + (rows.length * rowHeight);
+    blockHeight = blockHeight.clamp(0.0, H * 0.4);
+    final blockHeightInt = blockHeight.toInt();
+
+    final filters = <String>[];
+    final bg = layout.buildBackground(blockHeight: blockHeight, opacity: settings.backgroundOpacity);
+    if (bg != null) filters.add(bg);
+
+    // Accent bar warna dinamis (hijau/oranye sesuai status), bukan orange
+    // tetap seperti gaya lain — dibangun manual, bukan lewat
+    // layout.buildAccentBar() yang warnanya statis.
+    final barWidth = math.max(2, (4 * scale).round());
+    final edgeGap = (18 * scale).round();
+    final isRight = settings.position == WatermarkPosition.topRight ||
+        settings.position == WatermarkPosition.bottomRight;
+    final isBottom = settings.position == WatermarkPosition.bottomLeft ||
+        settings.position == WatermarkPosition.bottomRight;
+    final barX = isRight ? 'iw-$barWidth-$edgeGap' : '$edgeGap';
+    final barY = isBottom ? 'ih-$blockHeightInt' : '0';
+    filters.add(
+      "drawbox=x=$barX:y=$barY:w=$barWidth:h=$blockHeightInt:color=$badgeColor@0.9:t=fill",
     );
+
+    final x = layout.textX();
+    for (var i = 0; i < rows.length; i++) {
+      final row = rows[i];
+      final fontSize = (row.tier == _Tier.title
+              ? fontBadge
+              : row.tier == _Tier.caption
+                  ? fontCaption
+                  : (row.text.startsWith('Brg:') ? fontBarcode : fontBody))
+          .round();
+      final color = row.tier == _Tier.title
+          ? badgeColor
+          : row.tier == _Tier.caption
+              ? 'white@0.7'
+              : 'white@0.92';
+      final y = layout.textY(lineIndex: i, lineHeight: rowHeight, blockHeight: blockHeight);
+      filters.add(
+        "drawtext=text='${escapeFFmpegText(row.text)}':"
+        "$fontSpec:"
+        "fontcolor=$color:"
+        "fontsize=$fontSize:"
+        "x=$x:"
+        "y=$y:"
+        "shadowcolor=black@0.8:"
+        "shadowx=$shadowOff:"
+        "shadowy=$shadowOff",
+      );
+    }
+
+    return GeneralStyleResult(filters, layout.logoXY());
+  }
+  //
+  // Meniru pola `professional_layout.dart` (foto) persis: LOKASI (judul,
+  // aksen) → KODE BARANG (label kecil + value besar-tebal) → OPERATOR
+  // (label + value) → TANGGAL (label + value) → JAM (label + value,
+  // TERPISAH dari tanggal) → Lat/Lon (kecil, tanpa label, skip jika
+  // kosong). Beda dari 4 gaya lain, di sini setiap field bernilai adalah
+  // pasangan LABEL (caption pudar) + VALUE (lebih besar), bukan satu
+  // baris datar — ini yang bikin panel terasa "info kamera profesional"
+  // alih-alih semua teks berukuran hampir sama.
+  GeneralStyleResult buildProfessionalVideoFilters({
+    required WatermarkSettings settings,
+    required ScanEntry entry,
+    required double scale,
+    required int outW,
+    required int outH,
+  }) {
+    if (!_initialized) throw StateError('Cache belum diinisialisasi');
+
+    final layout = _StyleLayout.forStyle(WatermarkStyle.professional, settings.position, scale);
+    final fontSpec = _fontSpec;
+    final H = outH.toDouble();
+
+    final fontBody = (H * 0.024).clamp(12.0, 46.0);
+    final fontTitle = WatermarkTypography.title(fontBody).clamp(16.0, 60.0);
+    final fontCaption = WatermarkTypography.caption(fontBody).clamp(10.0, 34.0);
+    // Nilai barcode ditekankan (lebih besar), meniru theme.barcodeFontSize.
+    final fontBarcode = (fontBody * 1.35).clamp(14.0, 54.0);
+
+    final blockPadding = (H * 0.018).clamp(10.0, 40.0);
+    final labelGap = (H * 0.004).clamp(1.0, 6.0); // jarak label → value
+    final fieldGap = (H * 0.010).clamp(4.0, 20.0); // jarak antar field
+    final titleGap = (H * 0.012).clamp(4.0, 22.0);
+    final shadowOff = math.max(1, (H * 0.0018).round());
+
+    final barWidth = math.max(2, (4 * scale).round());
+    final edgeGap = (18 * scale).round();
+    final contentPadding = (edgeGap + barWidth + (10 * scale)).toDouble();
+
+    // Lebar wrap nama lokasi (panel full-width, jadi lebar longgar).
+    final maxBlockWidth = outW * 0.85;
+    final approxCharWidth = fontTitle * 0.55;
+    final maxLineChars = math.max(10, (maxBlockWidth / approxCharWidth).floor());
+    final rawLocation = (entry.locationName ?? '').trim();
+    final locationLines = rawLocation.isEmpty
+        ? const <String>[]
+        : wrapAddress(rawLocation, maxLineLen: maxLineChars).take(2).toList();
+
+    final hasBarcode = entry.value.isNotEmpty;
+    final hasOperator = settings.operatorName.isNotEmpty;
+    final hasCoords = entry.latitude != null || entry.longitude != null;
+
+    // ─── Hitung tinggi total blok ──────────────────────────
+    double height = blockPadding * 2;
+    for (var i = 0; i < locationLines.length; i++) {
+      height += fontTitle + (i == locationLines.length - 1 ? titleGap : labelGap);
+    }
+    if (hasBarcode) height += fontCaption + labelGap + fontBarcode + fieldGap;
+    if (hasOperator) height += fontCaption + labelGap + fontBody + fieldGap;
+    height += fontCaption + labelGap + fontBody + fieldGap; // TANGGAL
+    height += fontCaption + labelGap + fontBody; // JAM (field terakhir sebelum koordinat)
+    if (hasCoords) {
+      height += fieldGap;
+      if (entry.latitude != null) height += fontCaption + labelGap;
+      if (entry.longitude != null) height += fontCaption;
+    }
+    final blockHeight = height.clamp(0.0, H * 0.55);
+    final blockHeightInt = blockHeight.toInt();
+
+    final filters = <String>[];
+    final bg = layout.buildBackground(blockHeight: blockHeight, opacity: settings.backgroundOpacity);
+    if (bg != null) filters.add(bg);
+    final accent = layout.buildAccentBar(blockHeight: blockHeight);
+    if (accent != null) filters.add(accent);
+    final divider = layout.buildDivider(blockHeight: blockHeight);
+    if (divider != null) filters.add(divider);
+
+    final x = layout.panelTextX(contentPadding: contentPadding);
+    final topExpr = layout._isBottom ? 'h-$blockHeightInt' : '0';
+    String yExpr(double cursor) => '($topExpr)+${cursor.round()}';
+
+    double cursor = blockPadding;
+
+    void addLine(String text, {required double fontSize, required String color, bool bold = false}) {
+      filters.add(
+        "drawtext=text='${escapeFFmpegText(text)}':"
+        "$fontSpec:"
+        "fontcolor=$color:"
+        "fontsize=${fontSize.round()}:"
+        "x=$x:"
+        "y=${yExpr(cursor)}:"
+        "shadowcolor=black@0.8:"
+        "shadowx=$shadowOff:"
+        "shadowy=$shadowOff"
+        "${bold ? ':bordercolor=black@0.4:borderw=${math.max(1, (shadowOff * 1.4).round())}' : ''}",
+      );
+    }
+
+    void addLabelValue(String label, String value, {required double valueSize, required String valueColor, bool bold = false}) {
+      addLine(label, fontSize: fontCaption, color: 'white@0.45');
+      cursor += fontCaption + labelGap;
+      addLine(value, fontSize: valueSize, color: valueColor, bold: bold);
+      cursor += valueSize + fieldGap;
+    }
+
+    // Lokasi (judul, aksen oranye)
+    for (var i = 0; i < locationLines.length; i++) {
+      addLine(locationLines[i], fontSize: fontTitle, color: 'orange', bold: true);
+      cursor += fontTitle + (i == locationLines.length - 1 ? titleGap : labelGap);
+    }
+
+    if (hasBarcode) {
+      addLabelValue('KODE BARANG', entry.value, valueSize: fontBarcode, valueColor: 'white', bold: true);
+    }
+    if (hasOperator) {
+      addLabelValue('OPERATOR', settings.operatorName, valueSize: fontBody, valueColor: 'white@0.92');
+    }
+    addLabelValue('TANGGAL', ddmmyyyyFF(entry.timestamp), valueSize: fontBody, valueColor: 'white@0.85');
+    // JAM ditulis manual (bukan lewat addLabelValue) karena tidak perlu
+    // fieldGap tambahan sebelum baris koordinat.
+    addLine('JAM', fontSize: fontCaption, color: 'white@0.45');
+    cursor += fontCaption + labelGap;
+    addLine('${hhmmFF(entry.timestamp)} WIB', fontSize: fontBody, color: 'white@0.80');
+    cursor += fontBody;
+
+    if (hasCoords) {
+      cursor += fieldGap;
+      if (entry.latitude != null) {
+        addLine('Lat ${entry.latitude!.toStringAsFixed(6)}', fontSize: fontCaption, color: 'white@0.65');
+        cursor += fontCaption + labelGap;
+      }
+      if (entry.longitude != null) {
+        addLine('Lon ${entry.longitude!.toStringAsFixed(6)}', fontSize: fontCaption, color: 'white@0.65');
+      }
+    }
+
+    return GeneralStyleResult(filters, layout.logoXY());
   }
 
   // ─── Precompute Timestamp ──────────────────────────────
@@ -433,7 +778,7 @@ class WatermarkCache {
         '{{meta0}}',
         "drawtext=text='{{meta0}}':"
         "$fontSpec:fontcolor=white@0.9:fontsize=$metaFontSize:"
-        "x=$padding:y=ih-$effectiveBarHeight+${padding + 0 * (metaFontSize + gap8)}:"
+        "x=$padding:y=h-$effectiveBarHeight+${padding + 0 * (metaFontSize + gap8)}:"
         "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1",
       ),
     );
@@ -443,7 +788,7 @@ class WatermarkCache {
         '{{meta1}}',
         "drawtext=text='{{meta1}}':"
         "$fontSpec:fontcolor=white@0.9:fontsize=$metaFontSize:"
-        "x=$padding:y=ih-$effectiveBarHeight+${padding + 1 * (metaFontSize + gap8)}:"
+        "x=$padding:y=h-$effectiveBarHeight+${padding + 1 * (metaFontSize + gap8)}:"
         "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1",
       ),
     );
@@ -456,7 +801,7 @@ class WatermarkCache {
         '{{time}}',
         "drawtext=text='{{time}}':"
         "$fontSpec:fontcolor=white:fontsize=$timeFontSize:"
-        "x=$padding:y=ih-$effectiveBarHeight+$timeRowTop:"
+        "x=$padding:y=h-$effectiveBarHeight+$timeRowTop:"
         "shadowcolor=black@0.85:shadowx=$shadow2:shadowy=$shadow2",
       ),
     );
@@ -476,7 +821,7 @@ class WatermarkCache {
         '{{date}}',
         "drawtext=text='{{date}}':"
         "$fontSpec:fontcolor=white:fontsize=$dateFontSize:"
-        "x=$dateColX:y=ih-$effectiveBarHeight+$timeRowTop:"
+        "x=$dateColX:y=h-$effectiveBarHeight+$timeRowTop:"
         "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1",
       ),
     );
@@ -486,7 +831,7 @@ class WatermarkCache {
         '{{day}}',
         "drawtext=text='{{day}}':"
         "$fontSpec:fontcolor=white@0.8:fontsize=$dayFontSize:"
-        "x=$dateColX:y=ih-$effectiveBarHeight+$timeRowTop+${dateFontSize + gap4}:"
+        "x=$dateColX:y=h-$effectiveBarHeight+$timeRowTop+${dateFontSize + gap4}:"
         "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1",
       ),
     );
@@ -499,7 +844,7 @@ class WatermarkCache {
         '{{addr0}}',
         "drawtext=text='{{addr0}}':"
         "$fontSpec:fontcolor=white:fontsize=$addressFontSize:"
-        "x=$padding:y=ih-$effectiveBarHeight+$addressStartY:"
+        "x=$padding:y=h-$effectiveBarHeight+$addressStartY:"
         "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1",
       ),
     );
@@ -509,7 +854,7 @@ class WatermarkCache {
         '{{addr1}}',
         "drawtext=text='{{addr1}}':"
         "$fontSpec:fontcolor=white:fontsize=$addressFontSize:"
-        "x=$padding:y=ih-$effectiveBarHeight+$addressStartY + ${addressFontSize + gap8}:"
+        "x=$padding:y=h-$effectiveBarHeight+$addressStartY + ${addressFontSize + gap8}:"
         "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1",
       ),
     );
@@ -520,7 +865,7 @@ class WatermarkCache {
         '{{code}}',
         "drawtext=text='{{code}}  •  TERMULSCAN VERIFIED':"
         "$fontSpec:fontcolor=white@0.75:fontsize=$codeFontSize:"
-        "x=w-text_w-$padding:y=ih-$effectiveBarHeight-${codeFontSize + gap10}:"
+        "x=w-text_w-$padding:y=h-$effectiveBarHeight-${codeFontSize + gap10}:"
         "shadowcolor=black@0.7:shadowx=$shadow1:shadowy=$shadow1",
       ),
     );
@@ -597,7 +942,7 @@ class WatermarkCache {
         '{{barcode}}',
         "drawtext=text='{{barcode}}':"
         "$fontSpec:fontcolor=white:fontsize=$barcodeSize:"
-        "x=$padding:y=ih-$effectiveBarHeight+$cursorY:"
+        "x=$padding:y=h-$effectiveBarHeight+$cursorY:"
         "shadowcolor=black@0.85:shadowx=$shadow2:shadowy=$shadow2",
       ),
     );
@@ -610,7 +955,7 @@ class WatermarkCache {
         '{{datetime}}',
         "drawtext=text='$dateTimeText':"
         "$fontSpec:fontcolor=white@0.95:fontsize=$dateSize:"
-        "x=$padding:y=ih-$effectiveBarHeight+$cursorY:"
+        "x=$padding:y=h-$effectiveBarHeight+$cursorY:"
         "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1",
       ),
     );
@@ -623,7 +968,7 @@ class WatermarkCache {
         '{{operator_company}}',
         "drawtext=text='$opText':"
         "$fontSpec:fontcolor=white@0.9:fontsize=$operatorSize:"
-        "x=$padding:y=ih-$effectiveBarHeight+$cursorY:"
+        "x=$padding:y=h-$effectiveBarHeight+$cursorY:"
         "shadowcolor=black@0.8:shadowx=$shadow1:shadowy=$shadow1",
       ),
     );
@@ -634,9 +979,9 @@ class WatermarkCache {
       dynamicTemplates.add(
         FilterTemplate(
           '{{gps}}',
-          "drawtext=text='📍 {{gps}}':"
+          "drawtext=text='GPS: {{gps}}':"
           "$fontSpec:fontcolor=white@0.85:fontsize=$gpsSize:"
-          "x=$padding:y=ih-$effectiveBarHeight+$cursorY:"
+          "x=$padding:y=h-$effectiveBarHeight+$cursorY:"
           "shadowcolor=black@0.7:shadowx=$shadow1:shadowy=$shadow1",
         ),
       );
@@ -648,9 +993,9 @@ class WatermarkCache {
       dynamicTemplates.add(
         FilterTemplate(
           '{{location}}',
-          "drawtext=text='🏷️ {{location}}':"
+          "drawtext=text='Lok: {{location}}':"
           "$fontSpec:fontcolor=white@0.8:fontsize=$locationSize:"
-          "x=$padding:y=ih-$effectiveBarHeight+$cursorY:"
+          "x=$padding:y=h-$effectiveBarHeight+$cursorY:"
           "shadowcolor=black@0.7:shadowx=$shadow1:shadowy=$shadow1",
         ),
       );
@@ -661,7 +1006,7 @@ class WatermarkCache {
     staticParts.add(
       "drawtext=text='{{code}}  •  TERMULSCAN VERIFIED':"
       "$fontSpec:fontcolor=white@0.7:fontsize=$codeSize:"
-      "x=w-text_w-$padding:y=ih-$effectiveBarHeight-${codeSize + gap10}:"
+      "x=w-text_w-$padding:y=h-$effectiveBarHeight-${codeSize + gap10}:"
       "shadowcolor=black@0.6:shadowx=$shadow1:shadowy=$shadow1",
     );
 
@@ -686,26 +1031,11 @@ class WatermarkCache {
 
   // ─── Data Dinamis ──────────────────────────────────────
 
-  List<String> getDynamicTexts(ScanEntry entry, WatermarkSettings settings) {
-    final lines = <String>[];
-    if (entry.value.isNotEmpty) lines.add(entry.value);
-    if (settings.operatorName.isNotEmpty) lines.add(settings.operatorName);
-    lines.add(formatTimestamp(entry.timestamp));
-    if (entry.locationName != null && entry.locationName!.isNotEmpty) {
-      lines.add(entry.locationName!);
-    } else if (entry.latitude != null && entry.longitude != null) {
-      lines.add('${entry.latitude!.toStringAsFixed(4)}, ${entry.longitude!.toStringAsFixed(4)}');
-    } else {
-      lines.add('Lokasi tidak tersedia');
-    }
-    return lines;
-  }
-
   // Urutan HARUS: meta0, meta1, time, date, day, addr0, addr1, code
   List<String> getTimestampDynamicData(ScanEntry entry, WatermarkSettings settings, {int? maxLineLen}) {
     final metaLines = <String>[];
-    if (entry.value.isNotEmpty) metaLines.add('📦 ${entry.value}');
-    if (settings.operatorName.isNotEmpty) metaLines.add('👤 ${settings.operatorName}');
+    if (entry.value.isNotEmpty) metaLines.add('Brg: ${entry.value}');
+    if (settings.operatorName.isNotEmpty) metaLines.add('Op: ${settings.operatorName}');
 
     final addressText = (entry.locationName != null && entry.locationName!.isNotEmpty)
         ? entry.locationName!
@@ -750,15 +1080,6 @@ class WatermarkCache {
   }
 
   // ─── Akses Cache (dengan String key) ──────────────────
-
-  PrecomputedStyle getStyle(WatermarkStyle style, double scale) {
-    if (!_initialized) throw StateError('Cache belum diinisialisasi');
-    if (style == WatermarkStyle.timestamp) {
-      throw ArgumentError('Gunakan getTimestamp() untuk gaya timestamp');
-    }
-    final key = '${style.name}_${scale.toStringAsFixed(3)}';
-    return _styleCache.putIfAbsent(key, () => _precomputeGeneral(_settings!, style, scale));
-  }
 
   PrecomputedTimestamp getTimestamp(double scale, {int? maxHeight}) {
     if (!_initialized) throw StateError('Cache belum diinisialisasi');
@@ -809,19 +1130,4 @@ class WatermarkCache {
     }
   }
 
-  static List<_TextLine> _buildStaticTextLines(WatermarkSettings settings) {
-    final lines = <_TextLine>[];
-    if (settings.companyName.isNotEmpty) {
-      lines.add(_TextLine(
-        text: settings.companyName.toUpperCase(),
-        sizeOffset: 6,
-        isTitle: true,
-      ));
-    }
-    lines.add(_TextLine(text: 'Barcode: {{line0}}', sizeOffset: 0));
-    lines.add(_TextLine(text: 'Operator: {{line1}}', sizeOffset: 0));
-    lines.add(_TextLine(text: 'Waktu: {{line2}}', sizeOffset: -1));
-    lines.add(_TextLine(text: 'Lokasi: {{line3}}', sizeOffset: -1));
-    return lines;
-  }
 }

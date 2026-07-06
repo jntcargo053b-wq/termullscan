@@ -53,6 +53,7 @@ class WatermarkTheme {
   final double barcodeFontSize;
   final double lineHeight;
   final double barcodeLineHeight;
+  final double titleLineHeight;
 
   // ── Logo ──────────────────────────────────────────────────
   final double logoSize;
@@ -71,6 +72,7 @@ class WatermarkTheme {
     required this.barcodeFontSize,
     required this.lineHeight,
     required this.barcodeLineHeight,
+    required this.titleLineHeight,
     required this.logoSize,
     required this.color,
   });
@@ -93,6 +95,8 @@ class WatermarkTheme {
       lineHeight: WatermarkTypography.lineHeight(fontSize),
       barcodeLineHeight:
           WatermarkTypography.lineHeight(WatermarkTypography.barcode(fontSize)),
+      titleLineHeight:
+          WatermarkTypography.lineHeight(WatermarkTypography.title(fontSize)),
       logoSize: WatermarkLogoStyle.size(baseSize),
       color: WatermarkColor.forStyle(style),
     );
@@ -102,6 +106,11 @@ class WatermarkTheme {
   /// baris normal — dipakai untuk menambah tinggi strip/panel/overlay
   /// supaya baris barcode tidak tumpang tindih dengan baris di bawahnya.
   double get barcodeRowBonus => barcodeLineHeight - lineHeight;
+
+  /// Sama seperti [barcodeRowBonus], tapi untuk baris judul (mis. nama
+  /// lokasi di Professional layout) yang dirender lebih besar dari baris
+  /// normal.
+  double get titleRowBonus => titleLineHeight - lineHeight;
 
   // ── Metrics passthrough (supaya layout tidak perlu import terpisah) ──
   double get cardRadius => WatermarkMetrics.cardRadius;

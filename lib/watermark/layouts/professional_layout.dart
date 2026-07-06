@@ -33,17 +33,22 @@ class ProfessionalLayout extends WatermarkLayout {
     final baseSize = theme.baseSize;
     final padding = theme.padding;
 
-    int rowCount = 1; // timestamp
+    // Baris yang SELALU ada: tanggal + jam (dipisah, bukan digabung jadi
+    // satu baris seperti sebelumnya — mengikuti panel info kamera profesional).
+    int rowCount = 2; // tanggal, jam
     if (data.hasBarcode) rowCount++;
     if (data.hasOperator) rowCount++;
-    rowCount++; // location
+    final hasLocationTitle = data.hasLocation;
+    if (hasLocationTitle) rowCount++; // baris judul nama lokasi
+    if (data.hasCoordinates) rowCount += 2; // Lat + Lon, baris kecil terpisah
 
     final lineH = theme.lineHeight; // ✅ konsisten di semua layout
     final barcodeBonus = data.hasBarcode ? theme.barcodeRowBonus : 0.0;
+    final titleBonus = hasLocationTitle ? theme.titleRowBonus : 0.0;
 
     final overlayHeight = math.max(
       photoHeight * 0.14,
-      rowCount * lineH + barcodeBonus + padding * 2.0,
+      rowCount * lineH + barcodeBonus + titleBonus + padding * 2.0,
     );
 
     final logoMaxSize = theme.logoSize;
@@ -143,7 +148,9 @@ class ProfessionalLayout extends WatermarkLayout {
         ? padding
         : photoWidth - padding - accentBarW;
     final barcodeBonus = data.hasBarcode ? theme.barcodeRowBonus : 0.0;
-    final textBlockHeight = metrics.textRowCount * metrics.lineHeight + barcodeBonus;
+    final titleBonus = data.hasLocation ? theme.titleRowBonus : 0.0;
+    final textBlockHeight =
+        metrics.textRowCount * metrics.lineHeight + barcodeBonus + titleBonus;
     canvas.drawRect(
       Rect.fromLTWH(
         barX,
@@ -194,6 +201,47 @@ class ProfessionalLayout extends WatermarkLayout {
       textY += rowLineHeight;
     }
 
+    void drawTitleRow(String text) {
+      TextHelper.paintText(
+        canvas: canvas,
+        text: text,
+        x: textX,
+        y: textY,
+        maxWidth: textContentWidth,
+        color: c.accent,
+        fontSize: theme.titleFontSize,
+        fontWeight: FontWeight.w800,
+        maxLines: 1,
+        textAlign: textAlign,
+        fontFamily: data.fontFamily,
+      );
+      textY += metrics.lineHeight + theme.titleRowBonus;
+    }
+
+    void drawCoordLine(String text) {
+      if (text.isEmpty) return;
+      TextHelper.paintText(
+        canvas: canvas,
+        text: text,
+        x: textX,
+        y: textY,
+        maxWidth: textContentWidth,
+        color: Colors.white.withOpacity(0.65),
+        fontSize: theme.captionFontSize,
+        fontWeight: FontWeight.w600,
+        maxLines: 1,
+        textAlign: textAlign,
+        fontFamily: data.fontFamily,
+      );
+      textY += metrics.lineHeight;
+    }
+
+    // ─── Urutan sesuai panel info kamera profesional ───────
+    // Nama lokasi (besar, aksen) → data operasional (barcode/operator) →
+    // tanggal & jam terpisah → koordinat (kecil, opsional, skip jika kosong)
+    if (data.hasLocation) {
+      drawTitleRow(data.locationName!);
+    }
     if (data.hasBarcode) {
       drawLabelValue(
         'KODE BARANG',
@@ -210,15 +258,19 @@ class ProfessionalLayout extends WatermarkLayout {
       );
     }
     drawLabelValue(
-      'WAKTU',
-      data.formattedTimestamp,
-      Colors.white.withOpacity(0.80),
+      'TANGGAL',
+      data.formattedDate,
+      Colors.white.withOpacity(0.85),
     );
     drawLabelValue(
-      'LOKASI',
-      data.displayLocation,
-      Colors.white.withOpacity(0.70),
+      'JAM',
+      data.formattedTime,
+      Colors.white.withOpacity(0.80),
     );
+    if (data.hasCoordinates) {
+      drawCoordLine(data.latText);
+      drawCoordLine(data.lonText);
+    }
 
     if (logoImage != null) {
       final logoMaxH = logoMaxSize;
@@ -407,6 +459,21 @@ class ProfessionalLayout extends WatermarkLayout {
           isLeftAligned ? CrossAxisAlignment.start : CrossAxisAlignment.end,
       mainAxisSize: MainAxisSize.min,
       children: [
+        if (previewData.hasLocation)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 3),
+            child: Text(
+              previewData.locationName!,
+              style: const TextStyle(
+                color: Color(0xFFFFA726), // aksen oranye tema professional
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: isLeftAligned ? TextAlign.left : TextAlign.right,
+            ),
+          ),
         if (previewData.hasBarcode)
           _PreviewField(
             label: 'KODE BARANG',
@@ -423,17 +490,29 @@ class ProfessionalLayout extends WatermarkLayout {
             alignEnd: !isLeftAligned,
           ),
         _PreviewField(
-          label: 'WAKTU',
-          value: previewData.formattedTimestamp,
-          valueColor: Colors.white.withOpacity(0.80),
+          label: 'TANGGAL',
+          value: previewData.formattedDate,
+          valueColor: Colors.white.withOpacity(0.85),
           alignEnd: !isLeftAligned,
         ),
         _PreviewField(
-          label: 'LOKASI',
-          value: previewData.displayLocation,
-          valueColor: Colors.white.withOpacity(0.70),
+          label: 'JAM',
+          value: previewData.formattedTime,
+          valueColor: Colors.white.withOpacity(0.80),
           alignEnd: !isLeftAligned,
         ),
+        if (previewData.hasCoordinates) ...[
+          Text(
+            previewData.latText,
+            style: TextStyle(color: Colors.white.withOpacity(0.65), fontSize: 7.5),
+            textAlign: isLeftAligned ? TextAlign.left : TextAlign.right,
+          ),
+          Text(
+            previewData.lonText,
+            style: TextStyle(color: Colors.white.withOpacity(0.65), fontSize: 7.5),
+            textAlign: isLeftAligned ? TextAlign.left : TextAlign.right,
+          ),
+        ],
       ],
     );
   }

@@ -28,12 +28,14 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
     super.initState();
     _settings = WatermarkSettings();
     // Jika dibuka dalam mode video dan gaya yang tersimpan saat ini tidak
-    // video-safe, alihkan otomatis ke 'timestamp' supaya hasil video tidak
-    // mengejutkan pengguna.
+    // video-safe, koreksi SEKARANG (synchronous), sebelum build pertama.
+    // Kalau ini ditunda ke postFrameCallback, DropdownButton akan sempat
+    // build sekali dengan `value` yang tidak ada di daftar item yang sudah
+    // difilter → Flutter melempar assertion error ("There should be
+    // exactly one item with [DropdownButton]'s value").
     if (widget.videoMode && !_settings.style.supportsVideo) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _settings.setStyle(WatermarkStyle.timestamp);
-      });
+      _settings.style = WatermarkStyle.timestamp;
+      _settings.save();
     }
   }
 
@@ -143,9 +145,6 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                           label = 'Full Info (Lengkap)';
                           break;
                       }
-                      if (!widget.videoMode && !style.supportsVideo) {
-                        label += ' (Foto saja)';
-                      }
                       return DropdownMenuItem(
                         value: style,
                         child: Text(label),
@@ -171,26 +170,9 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                     Gap(6),
                     Expanded(
                       child: Text(
-                        'Untuk video, hanya gaya Timestamp & Full Info yang tersedia karena '
-                        'gaya lain (Minimal/Professional/Polaroid/Stamp) memakai efek '
-                        '(rotasi teks, bingkai, badge) yang tidak bisa direplikasi mesin '
-                        'watermark video.',
-                        style: TextStyle(color: Colors.grey, fontSize: 11),
-                      ),
-                    ),
-                  ],
-                ),
-              ] else if (!_settings.style.supportsVideo) ...[
-                const Gap(6),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: const [
-                    Icon(Icons.info_outline, color: Colors.grey, size: 14),
-                    Gap(6),
-                    Expanded(
-                      child: Text(
-                        'Gaya ini hanya tampil penuh di foto. Jika dipakai untuk video, '
-                        'tampilannya akan disederhanakan otomatis.',
+                        'Di video, efek yang murni foto (bingkai Polaroid, badge Stamp) '
+                        'disederhanakan jadi panel/box, tapi info lokasi, tanggal/jam, dan '
+                        'koordinat tetap tampil.',
                         style: TextStyle(color: Colors.grey, fontSize: 11),
                       ),
                     ),

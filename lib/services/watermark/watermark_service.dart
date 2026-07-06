@@ -137,25 +137,13 @@ class VideoWatermarkService {
       debugPrint('🔧 Scale filter: $scaleFilter');
 
       // ─── 4. Dapatkan watermark filters ──────────────────────────
-      // Guard: gaya Minimal/Professional/Polaroid/Stamp memakai efek
-      // (rotasi teks, bingkai foto, badge) yang tidak bisa direplikasi oleh
-      // filter FFmpeg (drawtext/drawbox). Jika settings tersimpan masih
-      // memakai salah satu gaya itu (mis. dari sesi lama sebelum UI mode
-      // video ada), jatuhkan ke 'timestamp' agar hasil video tetap rapi
-      // & konsisten, bukan versi generik yang tidak mewakili desain aslinya.
-      final effectiveStyle =
-          settings.style.supportsVideo ? settings.style : WatermarkStyle.timestamp;
-      if (effectiveStyle != settings.style) {
-        debugPrint(
-          '⚠️ Gaya "${settings.style.name}" belum didukung penuh untuk video, '
-          'menggunakan "timestamp" sebagai gantinya.',
-        );
-      }
-
+      // Sejak unifikasi engine hierarki info, KELIMA gaya punya
+      // implementasi video sendiri — tidak ada lagi fallback paksa ke
+      // 'timestamp' (lihat WatermarkStyleCapability.supportsVideo).
       List<String> watermarkFilters;
       XY logoXY;
 
-      if (effectiveStyle == WatermarkStyle.fullInfo) {
+      if (settings.style == WatermarkStyle.fullInfo) {
         final precomputed = _cache.getFullInfo(scale, maxHeight: outH);
         final data = _cache.getFullInfoData(entry, settings);
         watermarkFilters = precomputed.buildFilters(
@@ -169,18 +157,49 @@ class VideoWatermarkService {
           code: data[7],
         );
         logoXY = precomputed.logoXY;
-      } else if (effectiveStyle == WatermarkStyle.timestamp) {
+      } else if (settings.style == WatermarkStyle.timestamp) {
         final maxLineLen = (outW * 0.06).round();
         final precomputed = _cache.getTimestamp(scale, maxHeight: outH);
         final dynamicData = _cache.getTimestampDynamicData(entry, settings, maxLineLen: maxLineLen);
         debugPrint('📋 Timestamp dynamicData: $dynamicData');
         watermarkFilters = precomputed.buildFilters(dynamicData);
         logoXY = precomputed.logoXY;
+      } else if (settings.style == WatermarkStyle.professional) {
+        // Professional punya renderer khusus (label di atas value, meniru
+        // panel info kamera profesional di foto) — bukan engine generik.
+        final result = _cache.buildProfessionalVideoFilters(
+          settings: settings,
+          entry: entry,
+          scale: scale,
+          outW: outW,
+          outH: outH,
+        );
+        watermarkFilters = result.filters;
+        logoXY = result.logoXY;
+      } else if (settings.style == WatermarkStyle.stamp) {
+        // Stamp punya renderer khusus (badge VERIFIED/MANUAL berwarna),
+        // bukan engine generik.
+        final result = _cache.buildStampVideoFilters(
+          settings: settings,
+          entry: entry,
+          scale: scale,
+          outW: outW,
+          outH: outH,
+        );
+        watermarkFilters = result.filters;
+        logoXY = result.logoXY;
       } else {
-        final precomputed = _cache.getStyle(effectiveStyle, scale);
-        final dynamicTexts = _cache.getDynamicTexts(entry, settings);
-        watermarkFilters = precomputed.buildFilters(dynamicTexts);
-        logoXY = precomputed.logoXY;
+        // minimal / polaroid → engine hierarki generik
+        final result = _cache.buildGeneralStyleFilters(
+          style: settings.style,
+          settings: settings,
+          entry: entry,
+          scale: scale,
+          outW: outW,
+          outH: outH,
+        );
+        watermarkFilters = result.filters;
+        logoXY = result.logoXY;
       }
 
       // ─── 5. Gabungkan filter ─────────────────────────────────────
@@ -194,7 +213,8 @@ class VideoWatermarkService {
         final logoFile = File(logoPath);
         if (await logoFile.exists()) {
           final escapedLogoPath = escapeFFmpegPath(logoPath);
-          final logoHeight = (outH * 0.08).round();
+          final logoHeightRatio = settings.style == WatermarkStyle.polaroid ? 0.055 : 0.08;
+          final logoHeight = (outH * logoHeightRatio).round();
           filterComplex =
               "movie='$escapedLogoPath',scale=-1:$logoHeight,format=rgba,colorchannelmixer=aa=0.85[logo]; "
               "$videoFilterChain[base]; [base][logo]overlay=${logoXY.x}:${logoXY.y}:format=auto[outv]";

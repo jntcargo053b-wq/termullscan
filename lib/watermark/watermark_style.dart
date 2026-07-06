@@ -9,26 +9,15 @@ enum WatermarkStyle {
 
 /// Kapabilitas tiap gaya watermark untuk pipeline VIDEO (FFmpeg drawtext/drawbox).
 ///
-/// Renderer FOTO memakai Flutter Canvas (bisa rotasi teks, bingkai custom,
-/// badge melingkar, dsb), sedangkan renderer VIDEO memakai filter FFmpeg
-/// (drawtext/drawbox) yang jauh lebih terbatas — tidak bisa rotasi teks,
-/// tidak bisa memperluas kanvas (bingkai Polaroid), dan tidak bisa bentuk
-/// custom (badge Stamp). Hanya gaya dengan implementasi FFmpeg khusus &
-/// teruji (timestamp, fullInfo) yang dianggap "video-safe". Gaya lain jatuh
-/// ke fallback generik yang tidak merepresentasikan desain aslinya di video.
+/// Sejak unifikasi engine hierarki info (lokasi/tanggal/jam/koordinat),
+/// SEMUA gaya kini punya implementasi video (lihat
+/// `WatermarkCache.buildGeneralStyleFilters` untuk minimal/professional/
+/// polaroid/stamp, dan `getTimestamp`/`getFullInfo` untuk 2 gaya lainnya).
+/// Efek yang murni Canvas-only (rotasi teks, bingkai Polaroid yang
+/// memperluas kanvas, badge melingkar Stamp) disederhanakan jadi panel/box
+/// persegi di video, tapi kontennya sudah representatif dan konsisten.
 extension WatermarkStyleCapability on WatermarkStyle {
-  bool get supportsVideo {
-    switch (this) {
-      case WatermarkStyle.timestamp:
-      case WatermarkStyle.fullInfo:
-        return true;
-      case WatermarkStyle.minimal:
-      case WatermarkStyle.professional:
-      case WatermarkStyle.polaroid:
-      case WatermarkStyle.stamp:
-        return false;
-    }
-  }
+  bool get supportsVideo => true;
 }
 
 enum VideoQuality {
