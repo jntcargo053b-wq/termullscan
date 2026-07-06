@@ -46,8 +46,11 @@ class WatermarkSettings extends ChangeNotifier {
   VideoQuality videoQuality = VideoQuality.high; // default
   // Default: pertahankan resolusi asli (prioritas kualitas)
   VideoResolution videoResolution = VideoResolution.original;
-  // Default: mode profesional (prioritas kualitas & kompresi)
-  ProcessingMode processingMode = ProcessingMode.professional;
+  // Default: mode cepat (veryfast) — dengan pipeline overlay PNG (bukan
+  // drawtext lagi), 'professional'/slow tidak lagi memberi keuntungan
+  // kualitas yang sepadan dengan biaya waktu prosesnya untuk kasus
+  // pemakaian lapangan (banyak video, perangkat menengah).
+  ProcessingMode processingMode = ProcessingMode.fast;
 
   // Naik setiap kali ada perubahan settings (lihat save()).
   // WatermarkSettings adalah singleton, jadi cache lain TIDAK BOLEH
@@ -70,6 +73,21 @@ class WatermarkSettings extends ChangeNotifier {
   }
 
   String get videoBitrateString => '${videoBitrateKbps}k';
+
+  // ─── Getter untuk CRF (dipakai sebagai mode encode utama) ──
+  // videoBitrateKbps di atas TETAP dipakai sebagai -maxrate/-bufsize
+  // (capped-CRF), bukan dibuang — supaya ukuran file tidak melonjak liar
+  // di adegan gerak cepat/kompleks, penting untuk kondisi upload lapangan.
+  int get videoCrf {
+    switch (videoQuality) {
+      case VideoQuality.low:
+        return 28;
+      case VideoQuality.medium:
+        return 23;
+      case VideoQuality.high:
+        return 20;
+    }
+  }
 
   // ─── Getter untuk preset x264 berdasarkan mode ────────────
   String get x264Preset {
@@ -115,11 +133,11 @@ class WatermarkSettings extends ChangeNotifier {
       videoResolution = (resIndex >= 0 && resIndex < resValues.length)
           ? resValues[resIndex]
           : VideoResolution.original;
-      final modeIndex = prefs.getInt(_keyProcessingMode) ?? ProcessingMode.professional.index;
+      final modeIndex = prefs.getInt(_keyProcessingMode) ?? ProcessingMode.fast.index;
       final modeValues = ProcessingMode.values;
       processingMode = (modeIndex >= 0 && modeIndex < modeValues.length)
           ? modeValues[modeIndex]
-          : ProcessingMode.professional;
+          : ProcessingMode.fast;
       _loaded = true;
       debugPrint('✅ Watermark settings loaded');
     } catch (e) {
