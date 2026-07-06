@@ -1,9 +1,4 @@
-// ============================================================
-// lib/watermark/layouts/timestamp_layout.dart (BARU – GPS TIMESTAMP STYLE)
-// ============================================================
-// Terinspirasi gaya aplikasi kamera timestamp populer: jam besar di
-// kiri-bawah, garis aksen vertikal, tanggal/hari, alamat, badge brand
-// di kanan-atas, dan kode verifikasi vertikal di tepi kanan.
+// lib/watermark/layouts/timestamp_layout.dart
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -38,14 +33,6 @@ class TimestampLayout extends WatermarkLayout {
     return code.padLeft(10, 'X').substring(0, 10);
   }
 
-  // Catatan desain: berbeda dari 4 layout lain (Polaroid/Minimal/Professional/
-  // Stamp) yang teksnya berbasis `data.fontSize` (setting yang bisa diubah
-  // pengguna), gaya "jam digital besar" di layout ini SENGAJA tetap
-  // proporsional terhadap resolusi foto (baseSize) — persis seperti ukuran
-  // logo & padding yang sudah dipakai bersama lewat WatermarkTheme. Elemen
-  // baseSize-relative TETAP diambil dari theme (baseSize, padding, logoSize,
-  // warna aksen); hanya rasio jam/tanggal/brand yang tetap unik milik layout
-  // ini karena itu bagian dari identitas visualnya, bukan info-table biasa.
   @override
   LayoutMetrics computeMetrics({
     required double photoWidth,
@@ -53,8 +40,8 @@ class TimestampLayout extends WatermarkLayout {
     required WatermarkData data,
     required WatermarkTheme theme,
   }) {
-    final baseSize = theme.baseSize;
-    final padding = theme.padding;
+    final baseSize = theme.typography.baseSize;
+    final padding = theme.typography.padding;
 
     final timeFontSize = baseSize * 0.11;
     final addressFontSize = baseSize * 0.030;
@@ -76,7 +63,7 @@ class TimestampLayout extends WatermarkLayout {
       fontSize: timeFontSize,
       lineHeight: addressLineH,
       stripHeight: barHeight,
-      logoMaxSize: theme.logoSize,
+      logoMaxSize: theme.logo.maxSize,
       textRowCount: metaLines + 3,
       canvasWidth: photoWidth,
       canvasHeight: photoHeight,
@@ -110,7 +97,7 @@ class TimestampLayout extends WatermarkLayout {
     final barTop = photoHeight - barHeight;
     final bgOpacity = data.backgroundOpacity.clamp(0.4, 1.0);
 
-    // ── Bar bawah solid (bukan gradient, sesuai referensi) ──
+    // ── Bar bawah solid ──
     canvas.drawRect(
       Rect.fromLTWH(0, barTop, photoWidth, barHeight),
       Paint()..color = Colors.black.withOpacity(bgOpacity),
@@ -118,7 +105,7 @@ class TimestampLayout extends WatermarkLayout {
 
     double cursorY = barTop + padding * 0.7;
 
-    // ── Baris meta kecil (barcode / operator), opsional ──
+    // ── Baris meta kecil ──
     final metaFontSize = baseSize * 0.032;
     if (data.hasBarcode) {
       TextHelper.paintText(
@@ -174,7 +161,7 @@ class TimestampLayout extends WatermarkLayout {
     final dividerH = timeFontSize * 0.95;
     canvas.drawRect(
       Rect.fromLTWH(dividerX, rowTop + (timeTp.height - dividerH) / 2, baseSize * 0.006, dividerH),
-      Paint()..color = theme.color.accent,
+      Paint()..color = theme.accent.color,
     );
 
     final dateColX = dividerX + baseSize * 0.02;
@@ -210,14 +197,15 @@ class TimestampLayout extends WatermarkLayout {
 
     cursorY = rowTop + timeTp.height + padding * 0.5;
 
-    // ── Alamat / lokasi (maks 2 baris) ──
+    // ── Alamat / lokasi ──
     final addressFontSize = baseSize * 0.030;
+    final logoReserve = (logoImage != null) ? metrics.logoMaxSize * 0.6 : 0.0;
     TextHelper.paintText(
       canvas: canvas,
       text: data.displayLocation,
       x: padding,
       y: cursorY,
-      maxWidth: metrics.textAvailableWidth - (data.hasLogo ? metrics.logoMaxSize * 0.6 : 0),
+      maxWidth: metrics.textAvailableWidth - logoReserve,
       color: Colors.white,
       fontSize: addressFontSize,
       fontWeight: FontWeight.w600,
@@ -230,7 +218,7 @@ class TimestampLayout extends WatermarkLayout {
         text: TextSpan(
           text: 'INPUT MANUAL',
           style: TextStyle(
-            color: theme.color.accent,
+            color: theme.accent.color,
             fontSize: metaFontSize * 0.95,
             fontWeight: FontWeight.w700,
             letterSpacing: 0.5,
@@ -242,7 +230,7 @@ class TimestampLayout extends WatermarkLayout {
       manualTp.paint(canvas, Offset(photoWidth - padding - manualTp.width, barTop + padding * 0.4));
     }
 
-    // ── Logo perusahaan (opsional) kecil di ujung kanan bar ──
+    // ── Logo ──
     if (logoImage != null) {
       final logoSize = metrics.logoMaxSize * 0.6;
       final logoW = logoImage.width.toDouble();
@@ -261,7 +249,7 @@ class TimestampLayout extends WatermarkLayout {
       );
     }
 
-    // ── Badge brand pojok kanan-atas (langsung di atas foto) ──
+    // ── Badge brand pojok kanan atas ──
     final brandText = data.hasCompany ? data.companyName : 'TermulScan';
     final brandFontSize = baseSize * 0.042;
     final taglineFontSize = baseSize * 0.024;
@@ -271,7 +259,7 @@ class TimestampLayout extends WatermarkLayout {
       text: TextSpan(
         text: brandText,
         style: TextStyle(
-          color: theme.color.accent,
+          color: theme.accent.color,
           fontSize: brandFontSize,
           fontWeight: FontWeight.w800,
           fontFamily: data.fontFamily,
@@ -299,7 +287,7 @@ class TimestampLayout extends WatermarkLayout {
     )..layout(maxWidth: photoWidth - padding * 2);
     taglineTp.paint(canvas, Offset(photoWidth - padding - taglineTp.width, padding * 0.7 + brandTp.height + 2));
 
-    // ── Kode verifikasi vertikal di tepi kanan ──
+    // ── Kode verifikasi vertikal ──
     final code = _generateCode(data);
     final vertTp = TextPainter(
       text: TextSpan(
@@ -359,7 +347,7 @@ class TimestampLayout extends WatermarkLayout {
                 child: Icon(Icons.image, color: Colors.white12, size: 28),
               ),
             ),
-            // Badge brand pojok kanan atas
+            // Badge brand
             Positioned(
               top: 8, right: 8,
               child: Column(
@@ -367,7 +355,7 @@ class TimestampLayout extends WatermarkLayout {
                 children: [
                   Text(
                     previewData.hasCompany ? previewData.companyName : 'TermulScan',
-                    style: TextStyle(color: theme.color.accent, fontSize: 12, fontWeight: FontWeight.w800),
+                    style: TextStyle(color: theme.accent.color, fontSize: 12, fontWeight: FontWeight.w800),
                   ),
                   const Text(
                     'Foto Terverifikasi GPS',
@@ -417,7 +405,7 @@ class TimestampLayout extends WatermarkLayout {
                           style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w800, height: 1.0),
                         ),
                         const SizedBox(width: 6),
-                        Container(width: 2, height: 24, color: theme.color.accent),
+                        Container(width: 2, height: 24, color: theme.accent.color),
                         const SizedBox(width: 6),
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
