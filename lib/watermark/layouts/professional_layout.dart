@@ -694,7 +694,7 @@ class _ProfessionalPreviewPainter extends CustomPainter {
       final iconPaint2 = Paint()..color = Colors.white38;
       canvas.drawRect(Rect.fromLTWH(logoX, logoY, drawW, drawH), iconPaint2);
 
-      // ✅ Perbaikan: ParagraphStyle tidak punya color, gunakan pushStyle
+      // Teks "LOGO" menggunakan Paragraph yang benar
       final paragraphStyle = ui.ParagraphStyle(
         fontSize: 10,
         fontWeight: FontWeight.w500,
@@ -718,14 +718,13 @@ class _ProfessionalPreviewPainter extends CustomPainter {
       RRect.fromRectAndRadius(const Rect.fromLTWH(6, 6, 70, 16), Radius.circular(4)),
       labelPaint,
     );
-    // ✅ Perbaikan: ParagraphStyle tidak punya color
+    // Perbaikan: letterSpacing tidak bisa di ParagraphStyle, gunakan pushStyle
     final labelParagraphStyle = ui.ParagraphStyle(
       fontSize: 8,
       fontWeight: FontWeight.w700,
-      letterSpacing: 0.5,
     );
     final labelBuilder = ui.ParagraphBuilder(labelParagraphStyle)
-      ..pushStyle(ui.TextStyle(color: Colors.grey))
+      ..pushStyle(ui.TextStyle(color: Colors.grey, letterSpacing: 0.5))
       ..addText('🏢 Professional')
       ..pop();
     final labelPara = labelBuilder.build();
