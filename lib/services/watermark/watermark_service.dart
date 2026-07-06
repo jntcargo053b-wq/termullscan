@@ -302,7 +302,7 @@ class VideoWatermarkService {
 
       if (!ReturnCode.isSuccess(returnCode)) {
         final output = await session.getOutput();
-        final logs = await session.getAllLogsAsString();
+        final logs = await session.getAllLogsAsString() ?? '';
         final diagnosis = diagnoseFailure(logs);
         debugPrint('❌ FFmpeg error log:\n$logs');
         debugPrint('🩺 Diagnosis: $diagnosis');
