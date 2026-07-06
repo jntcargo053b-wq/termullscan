@@ -84,7 +84,6 @@ class WatermarkRenderer {
       final photoWidth = srcImage.width.toDouble();
       final photoHeight = srcImage.height.toDouble();
 
-      // Gunakan cache logo
       if (settings.hasLogo && settings.logoPath != null && settings.logoPath!.isNotEmpty) {
         logoImage = await _loadLogoWithCache(settings.logoPath!, targetWidth: 1600);
       }
@@ -214,12 +213,19 @@ class WatermarkRenderer {
     required double photoWidth,
     required double photoHeight,
   }) {
-    // Gunakan TextPainter untuk mengukur teks
-    final textStyle = theme.textStyle;
+    // Ambil textStyle dari theme
+    // Karena WatermarkTheme mungkin tidak punya textStyle, kita buat sendiri dari theme
+    // Gunakan theme.textStyle jika ada, jika tidak buat dari theme.properties
+    final textStyle = theme.textStyle ?? const TextStyle(
+      color: ui.Color.fromARGB(255, 255, 255, 255),
+      fontSize: 14,
+      fontFamily: 'Roboto',
+      fontWeight: FontWeight.w500,
+    );
+
     final double padding = theme.padding;
     final double spacing = 4.0;
 
-    // Kumpulkan semua teks yang akan ditampilkan
     final List<String> lines = [];
 
     // Timestamp
@@ -236,9 +242,10 @@ class WatermarkRenderer {
       lines.add(data.companyName);
     }
 
-    // Barcode
-    if (data.barcodeValue.isNotEmpty) {
-      lines.add('${data.barcodeFormat}: ${data.barcodeValue}');
+    // Barcode (data.barcodeValue mungkin nullable, gunakan ?? '')
+    final barcodeVal = data.barcodeValue ?? '';
+    if (barcodeVal.isNotEmpty) {
+      lines.add('${data.barcodeFormat}: $barcodeVal');
     }
 
     // Lokasi
@@ -253,7 +260,6 @@ class WatermarkRenderer {
       lines.add('🌐 $lat, $lng');
     }
 
-    // Ukur setiap baris
     double maxLineWidth = 0;
     double totalTextHeight = 0;
 
@@ -264,7 +270,7 @@ class WatermarkRenderer {
 
     for (int i = 0; i < lines.length; i++) {
       painter.text = TextSpan(text: lines[i], style: textStyle);
-      painter.layout(maxWidth: photoWidth * 0.9); // batasi agar tidak overflow
+      painter.layout(maxWidth: photoWidth * 0.9);
 
       final lineWidth = painter.width;
       if (lineWidth > maxLineWidth) maxLineWidth = lineWidth;
@@ -273,7 +279,6 @@ class WatermarkRenderer {
       if (i < lines.length - 1) totalTextHeight += spacing;
     }
 
-    // Lebar watermark = max lebar teks + padding + logo
     double logoWidth = 0;
     double logoHeight = 0;
     if (logoImage != null) {
@@ -290,7 +295,6 @@ class WatermarkRenderer {
         ? logoHeight + (padding * 2)
         : totalTextHeight + (padding * 2);
 
-    // Pastikan minimal 80x40 agar tidak terlalu kecil
     final int finalWidth = (contentWidth < 80 ? 80 : contentWidth).ceil();
     final int finalHeight = (contentHeight < 40 ? 40 : contentHeight).ceil();
 
@@ -343,7 +347,6 @@ class WatermarkRenderer {
         break;
     }
 
-    // Pastikan tidak negatif
     x = x.clamp(0, photoWidth.toInt() - contentWidth);
     y = y.clamp(0, photoHeight.toInt() - contentHeight);
 
@@ -357,7 +360,6 @@ class WatermarkRenderer {
     required WatermarkSettings settings,
     required ScanEntry entry,
   }) async {
-    // ─── 1. Buat cache key ──────────────────────────────────
     final cacheKey = _buildCacheKey(
       outW: outW,
       outH: outH,
@@ -365,7 +367,6 @@ class WatermarkRenderer {
       entry: entry,
     );
 
-    // ─── 2. Cek cache ──────────────────────────────────────
     if (_overlayCache.containsKey(cacheKey)) {
       final cached = _overlayCache[cacheKey]!;
       if (kDebugMode) debugPrint('♻️ Overlay from cache (${cached.width}x${cached.height})');
@@ -374,6 +375,7 @@ class WatermarkRenderer {
 
     ui.Image? logoImage;
     ui.Image? outputImage;
+    ui.Image? transparentSrc;
     ui.Picture? picture;
 
     try {
@@ -382,12 +384,10 @@ class WatermarkRenderer {
         return null;
       }
 
-      // ─── 3. Load logo (dengan cache) ──────────────────────
       if (settings.hasLogo && settings.logoPath != null && settings.logoPath!.isNotEmpty) {
         logoImage = await _loadLogoWithCache(settings.logoPath!, targetWidth: outW);
       }
 
-      // ─── 4. Siapkan data & theme ──────────────────────────
       final data = WatermarkData(
         timestamp: entry.timestamp,
         operatorName: settings.operatorName,
@@ -413,7 +413,6 @@ class WatermarkRenderer {
         baseSize: baseSize,
       );
 
-      // ─── 5. Hitung ukuran watermark ──────────────────────
       final (contentW, contentH) = _calculateContentSize(
         data: data,
         theme: theme,
@@ -423,7 +422,6 @@ class WatermarkRenderer {
         photoHeight: photoHeight,
       );
 
-      // ─── 6. Hitung posisi offset ──────────────────────────
       final (offsetX, offsetY) = _calculatePosition(
         contentWidth: contentW,
         contentHeight: contentH,
@@ -437,15 +435,17 @@ class WatermarkRenderer {
         debugPrint('🎯 Content: ${contentW}x$contentH, Offset: ($offsetX, $offsetY)');
       }
 
-      // ─── 7. Buat kanvas SESUAI UKURAN WATERMARK ──────────
+      // ─── Buat transparentSrc full size untuk layout ──────
+      // Karena layout mungkin membutuhkan srcImage untuk background,
+      // kita buat gambar transparan full size, tapi hanya digunakan
+      // untuk memenuhi parameter non-nullable.
+      transparentSrc = await _createTransparentImage(outW, outH);
+
+      // ─── Buat kanvas SESUAI UKURAN WATERMARK ──────────────
       final recorder = ui.PictureRecorder();
       final canvas = ui.Canvas(recorder);
 
-      // Translasi agar layout (yang menggambar relatif terhadap full photo)
-      // sekarang menggambar di area kecil kita.
       canvas.translate(-offsetX.toDouble(), -offsetY.toDouble());
-
-      // Potong agar tidak meluber
       canvas.clipRect(ui.Rect.fromLTWH(
         offsetX.toDouble(),
         offsetY.toDouble(),
@@ -453,9 +453,7 @@ class WatermarkRenderer {
         contentH.toDouble(),
       ));
 
-      // ─── 8. Gunakan layout yang sudah ada untuk menggambar ──
       final layout = WatermarkFactory.create(settings.style);
-
       final metrics = layout.computeMetrics(
         photoWidth: photoWidth,
         photoHeight: photoHeight,
@@ -466,7 +464,7 @@ class WatermarkRenderer {
       layout.paintOnCanvas(
         canvas: canvas,
         metrics: metrics,
-        srcImage: null, // Tidak perlu foto asli
+        srcImage: transparentSrc, // berikan gambar transparan
         photoWidth: photoWidth,
         photoHeight: photoHeight,
         logoImage: logoImage,
@@ -476,7 +474,6 @@ class WatermarkRenderer {
 
       picture = recorder.endRecording();
 
-      // ─── 9. Render ke PNG ukuran kecil ────────────────────
       outputImage = await picture.toImage(contentW, contentH);
       if (outputImage == null) {
         throw Exception('Gagal membuat ui.Image kecil');
@@ -489,7 +486,6 @@ class WatermarkRenderer {
 
       final pngBytes = byteData.buffer.asUint8List();
 
-      // ─── 10. Simpan ke cache ──────────────────────────────
       final cached = _CachedOverlay(
         pngBytes: pngBytes,
         offsetX: offsetX,
@@ -500,7 +496,6 @@ class WatermarkRenderer {
 
       _overlayCache[cacheKey] = cached;
 
-      // Jaga ukuran cache
       if (_overlayCache.length > _maxCacheSize) {
         final keys = _overlayCache.keys.toList();
         for (int i = 0; i < keys.length - _maxCacheSize; i++) {
@@ -519,6 +514,7 @@ class WatermarkRenderer {
       return null;
     } finally {
       logoImage?.dispose();
+      transparentSrc?.dispose();
       outputImage?.dispose();
       picture?.dispose();
     }
@@ -551,7 +547,6 @@ class WatermarkRenderer {
   }
 
   // ─── VERSI LAMA (Fullscreen) untuk kompatibilitas ─────────
-  // Tetap dipertahankan, tapi internal memanggil yang baru
   static Future<Uint8List?> renderVideoOverlayPng({
     required int outW,
     required int outH,
@@ -565,5 +560,15 @@ class WatermarkRenderer {
       entry: entry,
     );
     return result?.$1;
+  }
+
+  // ─── BUAT GAMBAR TRANSPARAN ─────────────────────────────────
+  static Future<ui.Image> _createTransparentImage(int width, int height) async {
+    final recorder = ui.PictureRecorder();
+    ui.Canvas(recorder); // tidak menggambar apa pun → transparan
+    final picture = recorder.endRecording();
+    final image = await picture.toImage(width, height);
+    picture.dispose();
+    return image;
   }
 }
