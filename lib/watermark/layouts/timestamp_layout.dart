@@ -249,7 +249,7 @@ class TimestampLayout extends WatermarkLayout {
       );
     }
 
-    // ── Badge brand pojok kanan atas ──
+    // ── Badge brand pojok kanan-atas ──
     final brandText = data.hasCompany ? data.companyName : 'TermulScan';
     final brandFontSize = baseSize * 0.042;
     final taglineFontSize = baseSize * 0.024;
