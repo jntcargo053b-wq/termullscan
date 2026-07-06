@@ -28,35 +28,31 @@ class ProfessionalLayout extends WatermarkLayout {
     required WatermarkData data,
     required WatermarkTheme theme,
   }) {
-    // Responsif terhadap orientasi
     final isPortrait = photoHeight > photoWidth;
-    double effectiveBaseSize = theme.baseSize;
-    double effectivePadding = theme.padding;
+    double effectiveBaseSize = theme.typography.baseSize;
+    double effectivePadding = theme.typography.padding;
     if (theme.usePortraitScaling && isPortrait) {
       effectiveBaseSize *= theme.portraitScaleFactor;
       effectivePadding *= theme.portraitScaleFactor;
     }
 
-    // Hitung jumlah baris
-    int rowCount = 2; // tanggal, jam
+    int rowCount = 2;
     if (data.hasBarcode) rowCount++;
     if (data.hasOperator) rowCount++;
-    final hasLocationTitle = data.hasLocation;
-    if (hasLocationTitle) rowCount++; // judul lokasi
-    if (data.hasCoordinates) rowCount += 2; // Lat + Lon
+    if (data.hasLocation) rowCount++;
+    if (data.hasCoordinates) rowCount += 2;
 
-    final lineH = effectiveBaseSize * theme.lineHeight;
-    final barcodeBonus = data.hasBarcode ? theme.barcodeRowBonus : 0.0;
-    final titleBonus = hasLocationTitle ? theme.titleRowBonus : 0.0;
+    final lineH = effectiveBaseSize * theme.typography.lineHeight;
+    final barcodeBonus = data.hasBarcode ? theme.typography.barcodeRowBonus : 0.0;
+    final titleBonus = data.hasLocation ? theme.typography.titleRowBonus : 0.0;
 
-    // Tinggi panel minimal 9–11% dari tinggi frame
     final minHeight = photoHeight * theme.minPanelHeightFraction;
     final contentHeight = rowCount * lineH + barcodeBonus + titleBonus + effectivePadding * 2.0;
     final overlayHeight = math.max(minHeight, contentHeight);
 
-    final logoMaxSize = effectiveBaseSize * (theme.logoSize / 10.0) * theme.logoScaleFactor;
+    final logoMaxSize = effectiveBaseSize * (theme.logo.maxSize / 10.0) * theme.logo.scaleFactor;
     final rightReserved = logoMaxSize + effectivePadding * 1.4;
-    final accentBarSpace = theme.accentBarWidth + effectivePadding * 0.5;
+    final accentBarSpace = (theme.accent.showBar ? theme.accent.barWidth : 0.0) + effectivePadding * 0.5;
     final textW = photoWidth - effectivePadding * 2 - rightReserved - accentBarSpace;
 
     return LayoutMetrics(
@@ -85,11 +81,9 @@ class ProfessionalLayout extends WatermarkLayout {
     required WatermarkTheme theme,
   }) {
     final padding = metrics.padding;
-    final baseSize = metrics.baseSize;
     final overlayHeight = metrics.stripHeight;
-    final c = theme.color;
+    final c = theme.accent.color;
 
-    // Posisi panel (bawah/tengah)
     final placement = WatermarkAlignment.resolve(
       position: data.position,
       photoHeight: photoHeight,
@@ -109,26 +103,24 @@ class ProfessionalLayout extends WatermarkLayout {
         ..isAntiAlias = true,
     );
 
-    // ============================================================
-    //  BACKGROUND PANEL PREMIUM (solid + gradien + border + highlight)
-    // ============================================================
+    // ─── PANEL BACKGROUND ─────────────────────────────────────
     final panelRect = Rect.fromLTWH(0, overlayTop, photoWidth, overlayHeight);
 
-    // Layer 1: solid dengan opacity 55%
+    // Layer 1: solid
     canvas.drawRect(
       panelRect,
-      Paint()..color = theme.panelBackgroundColor.withOpacity(theme.panelBackgroundOpacity),
+      Paint()..color = theme.panel.backgroundColor.withOpacity(theme.panel.backgroundOpacity),
     );
 
-    // Layer 2: gradien halus dari atas ke bawah (atau sebaliknya)
+    // Layer 2: gradien
     final gradientColors = overlayAtBottom
         ? [
-            theme.panelBackgroundColor.withOpacity(theme.panelGradientStartOpacity),
-            theme.panelBackgroundColor.withOpacity(theme.panelGradientEndOpacity),
+            theme.panel.backgroundColor.withOpacity(theme.panel.gradientStartOpacity),
+            theme.panel.backgroundColor.withOpacity(theme.panel.gradientEndOpacity),
           ]
         : [
-            theme.panelBackgroundColor.withOpacity(theme.panelGradientEndOpacity),
-            theme.panelBackgroundColor.withOpacity(theme.panelGradientStartOpacity),
+            theme.panel.backgroundColor.withOpacity(theme.panel.gradientEndOpacity),
+            theme.panel.backgroundColor.withOpacity(theme.panel.gradientStartOpacity),
           ];
     final gradientPaint = Paint()
       ..shader = ui.Gradient.linear(
@@ -138,45 +130,47 @@ class ProfessionalLayout extends WatermarkLayout {
       );
     canvas.drawRect(panelRect, gradientPaint);
 
-    // Layer 3: border tipis dengan radius
-    final borderPaint = Paint()
-      ..color = theme.panelBorderColor.withOpacity(theme.panelBorderOpacity)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = theme.panelBorderWidth;
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(
-          theme.panelBorderWidth / 2,
-          overlayTop + theme.panelBorderWidth / 2,
-          photoWidth - theme.panelBorderWidth,
-          overlayHeight - theme.panelBorderWidth,
-        ),
-        Radius.circular(theme.panelBorderRadius),
-      ),
-      borderPaint,
-    );
-
-    // Layer 4: highlight 1px di bagian atas (efek glass)
-    if (theme.panelHighlightOpacity > 0) {
-      final highlightPaint = Paint()
-        ..color = theme.panelHighlightColor.withOpacity(theme.panelHighlightOpacity)
+    // Layer 3: border (jika aktif)
+    if (theme.panel.showBorder) {
+      final borderPaint = Paint()
+        ..color = theme.panel.borderColor.withOpacity(theme.panel.borderOpacity)
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.0;
-      final highlightRect = Rect.fromLTWH(
-        theme.panelBorderWidth + 2,
-        overlayTop + theme.panelBorderWidth + 2,
-        photoWidth - (theme.panelBorderWidth + 2) * 2,
-        1.0,
+        ..strokeWidth = theme.panel.borderWidth;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(
+            theme.panel.borderWidth / 2,
+            overlayTop + theme.panel.borderWidth / 2,
+            photoWidth - theme.panel.borderWidth,
+            overlayHeight - theme.panel.borderWidth,
+          ),
+          Radius.circular(theme.panel.borderRadius),
+        ),
+        borderPaint,
       );
-      canvas.drawRect(highlightRect, highlightPaint);
     }
 
-    // ============================================================
-    //  LOGO (posisi di tengah vertikal panel)
-    // ============================================================
-    final logoMaxSize = metrics.logoMaxSize; // sudah diskalakan
-    final accentBarW = theme.accentBarWidth;
+    // Layer 4: highlight (jika aktif)
+    if (theme.panel.showHighlight && theme.panel.highlightOpacity > 0) {
+      final highlightPaint = Paint()
+        ..color = theme.panel.highlightColor.withOpacity(theme.panel.highlightOpacity)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0;
+      canvas.drawRect(
+        Rect.fromLTWH(
+          theme.panel.borderWidth + 2,
+          overlayTop + theme.panel.borderWidth + 2,
+          photoWidth - (theme.panel.borderWidth + 2) * 2,
+          1.0,
+        ),
+        highlightPaint,
+      );
+    }
+
+    // ─── ACCENT BAR ────────────────────────────────────────────
+    final accentBarW = theme.accent.showBar ? theme.accent.barWidth : 0.0;
     final accentBarSpace = accentBarW + padding * 0.5;
+    final logoMaxSize = metrics.logoMaxSize;
     final logoReserve = (logoImage != null) ? logoMaxSize + padding * 1.4 : 0.0;
     final textContentWidth = photoWidth - padding * 2 - logoReserve - accentBarSpace;
 
@@ -185,27 +179,24 @@ class ProfessionalLayout extends WatermarkLayout {
         : photoWidth - padding - textContentWidth;
     double textY = overlayTop + padding * 0.95;
 
-    // Accent bar (dengan opacity)
-    final barX = textAlign == TextAlign.left
-        ? padding
-        : photoWidth - padding - accentBarW;
-    final barcodeBonus = data.hasBarcode ? theme.barcodeRowBonus : 0.0;
-    final titleBonus = data.hasLocation ? theme.titleRowBonus : 0.0;
-    final textBlockHeight =
-        metrics.textRowCount * metrics.lineHeight + barcodeBonus + titleBonus;
-    canvas.drawRect(
-      Rect.fromLTWH(
-        barX,
-        overlayTop + padding * 0.85,
-        accentBarW,
-        textBlockHeight,
-      ),
-      Paint()..color = c.accent.withOpacity(theme.accentBarOpacity),
-    );
+    if (theme.accent.showBar && accentBarW > 0) {
+      final barX = textAlign == TextAlign.left ? padding : photoWidth - padding - accentBarW;
+      final barcodeBonus = data.hasBarcode ? theme.typography.barcodeRowBonus : 0.0;
+      final titleBonus = data.hasLocation ? theme.typography.titleRowBonus : 0.0;
+      final textBlockHeight =
+          metrics.textRowCount * metrics.lineHeight + barcodeBonus + titleBonus;
+      canvas.drawRect(
+        Rect.fromLTWH(
+          barX,
+          overlayTop + padding * 0.85,
+          accentBarW,
+          textBlockHeight,
+        ),
+        Paint()..color = c.withOpacity(theme.accent.barOpacity),
+      );
+    }
 
-    // ============================================================
-    //  FUNGSI GAMBAR TEKS DENGAN HIERARKI
-    // ============================================================
+    // ─── FUNGSI MENGGAMBAR TEKS ──────────────────────────────
     void drawLabelValue(
       String label,
       String value,
@@ -214,12 +205,14 @@ class ProfessionalLayout extends WatermarkLayout {
       double? customFontSize,
     }) {
       final valueFontSize = customFontSize ??
-          (emphasize ? theme.barcodeFontSize : theme.bodyFontSize);
-      final rowLineHeight = emphasize ? theme.barcodeLineHeight : metrics.lineHeight;
+          (emphasize ? theme.typography.barcodeFontSize : theme.typography.bodyFontSize);
+      final rowLineHeight = emphasize
+          ? theme.typography.barcodeLineHeight
+          : metrics.lineHeight;
 
-      // Label – gunakan spacing jika termasuk dalam daftar
       String displayLabel = label;
-      if (theme.useSpacedLabels && theme.spacedLabelKeys.contains(label)) {
+      if (theme.typography.useSpacedLabels &&
+          theme.typography.spacedLabelKeys.contains(label)) {
         displayLabel = _spaceOutLabel(label);
       }
 
@@ -230,13 +223,12 @@ class ProfessionalLayout extends WatermarkLayout {
         y: textY,
         maxWidth: textContentWidth,
         color: Colors.white.withOpacity(0.45),
-        fontSize: theme.captionFontSize,
+        fontSize: theme.typography.captionFontSize,
         fontWeight: FontWeight.w700,
         maxLines: 1,
         textAlign: textAlign,
         fontFamily: data.fontFamily,
       );
-      // Nilai
       TextHelper.paintText(
         canvas: canvas,
         text: value,
@@ -245,7 +237,7 @@ class ProfessionalLayout extends WatermarkLayout {
         maxWidth: textContentWidth,
         color: valueColor,
         fontSize: valueFontSize,
-        fontWeight: emphasize ? FontWeight.w600 : FontWeight.w500, // lebih halus
+        fontWeight: emphasize ? FontWeight.w600 : FontWeight.w500,
         maxLines: 1,
         textAlign: textAlign,
         fontFamily: data.fontFamily,
@@ -260,14 +252,14 @@ class ProfessionalLayout extends WatermarkLayout {
         x: textX,
         y: textY,
         maxWidth: textContentWidth,
-        color: c.accent,
-        fontSize: theme.titleFontSize,
+        color: c,
+        fontSize: theme.typography.titleFontSize,
         fontWeight: FontWeight.w800,
         maxLines: 1,
         textAlign: textAlign,
         fontFamily: data.fontFamily,
       );
-      textY += metrics.lineHeight + theme.titleRowBonus;
+      textY += metrics.lineHeight + theme.typography.titleRowBonus;
     }
 
     void drawCoordLine(String text) {
@@ -279,7 +271,7 @@ class ProfessionalLayout extends WatermarkLayout {
         y: textY,
         maxWidth: textContentWidth,
         color: Colors.white.withOpacity(0.65),
-        fontSize: theme.captionFontSize,
+        fontSize: theme.typography.captionFontSize,
         fontWeight: FontWeight.w600,
         maxLines: 1,
         textAlign: textAlign,
@@ -288,32 +280,26 @@ class ProfessionalLayout extends WatermarkLayout {
       textY += metrics.lineHeight;
     }
 
-    // ============================================================
-    //  URUTAN INFORMASI
-    // ============================================================
-    // 1. Lokasi (judul)
+    // ─── URUTAN INFORMASI ──────────────────────────────────────
     if (data.hasLocation) {
       drawTitleRow(data.locationName!);
     }
 
-    // 2. Tanggal & Jam (ukuran besar)
     drawLabelValue(
       'TANGGAL',
       data.formattedDate,
       Colors.white.withOpacity(0.85),
-      customFontSize: theme.barcodeFontSize,
+      customFontSize: theme.typography.barcodeFontSize,
     );
     drawLabelValue(
       'JAM',
       data.formattedTime,
       Colors.white.withOpacity(0.80),
-      customFontSize: theme.barcodeFontSize,
+      customFontSize: theme.typography.barcodeFontSize,
     );
 
-    // Spasi antar grup
-    textY += theme.groupSpacing;
+    textY += theme.typography.groupSpacing;
 
-    // 3. Operator & Barcode
     if (data.hasOperator) {
       drawLabelValue(
         'OPERATOR',
@@ -326,46 +312,35 @@ class ProfessionalLayout extends WatermarkLayout {
         'KODE BARANG',
         data.barcodeValue ?? '',
         Colors.white,
-        emphasize: true, // ukuran lebih besar, weight SemiBold
+        emphasize: true,
       );
     }
 
-    // Spasi ekstra sebelum koordinat (1.2x groupSpacing)
     if (data.hasCoordinates) {
-      textY += theme.groupSpacing * 1.2;
-    }
-
-    // 4. Koordinat (footer)
-    if (data.hasCoordinates) {
+      textY += theme.typography.coordSpacing;
       drawCoordLine(data.latText);
       drawCoordLine(data.lonText);
     }
 
-    // ============================================================
-    //  GAMBAR LOGO (di tengah vertikal panel)
-    // ============================================================
+    // ─── LOGO ──────────────────────────────────────────────────
     if (logoImage != null) {
-      final logoMaxH = logoMaxSize;
+      final logoMaxH = metrics.logoMaxSize; // sudah termasuk scaleFactor
       final logoW = logoImage.width.toDouble();
       final logoH = logoImage.height.toDouble();
       final scale = math.min(logoMaxH / logoW, logoMaxH / logoH);
       final drawW = logoW * scale;
       final drawH = logoH * scale;
 
-      // Posisi logo: di tengah vertikal panel (jika centerLogoVertically = true)
       double logoX = textAlign == TextAlign.left
           ? photoWidth - padding - drawW
           : padding;
       double logoY;
-      if (theme.centerLogoVertically) {
+      if (theme.logo.centerVertically) {
         logoY = overlayTop + (overlayHeight - drawH) / 2;
       } else {
-        logoY = overlayAtBottom
-            ? photoHeight - padding - drawH
-            : padding;
+        logoY = overlayAtBottom ? photoHeight - padding - drawH : padding;
       }
 
-      // Card background dengan opacity lebih rendah (0.18)
       final cardPad = theme.logoCardPadding(drawW);
       canvas.drawRRect(
         RRect.fromRectAndRadius(
@@ -377,7 +352,7 @@ class ProfessionalLayout extends WatermarkLayout {
           ),
           Radius.circular(theme.logoCardRadius(cardPad)),
         ),
-        Paint()..color = Colors.black.withOpacity(theme.logoCardOpacity),
+        Paint()..color = Colors.black.withOpacity(theme.logo.cardOpacity),
       );
 
       LogoWidget.paint(
@@ -387,7 +362,7 @@ class ProfessionalLayout extends WatermarkLayout {
         y: logoY,
         maxWidth: drawW,
         maxHeight: drawH,
-        opacity: theme.logoOpacity,
+        opacity: theme.logo.opacity,
       );
     }
   }
@@ -396,9 +371,7 @@ class ProfessionalLayout extends WatermarkLayout {
     return label.split('').join('\u200a ');
   }
 
-  // ================================================================
-  //  PREVIEW – IDENTIK DENGAN RENDERER (menggunakan CustomPaint)
-  // ================================================================
+  // ─── PREVIEW ──────────────────────────────────────────────────
   @override
   Widget buildPreview({
     required WatermarkData previewData,
@@ -416,25 +389,6 @@ class ProfessionalLayout extends WatermarkLayout {
       theme: theme,
     );
 
-    // Untuk preview, kita akan menggunakan CustomPaint yang memanggil paintOnCanvas
-    // dengan srcImage berupa gambar dummy (atau bisa juga menggunakan gambar latar belakang).
-    // Karena kita tidak punya ui.Image di sini, kita buat dummy dengan menggunakan
-    // gambar placeholder (gradient) yang sama dengan yang digunakan di renderer.
-    // Cara paling sederhana: gunakan CustomPaint dengan painter yang menggambar
-    // background gradient dan kemudian memanggil paintOnCanvas dengan ui.Image kosong?
-    // Lebih praktis: kita rebuild ulang tampilan dengan widget yang sama persis
-    // dengan yang dihasilkan oleh paintOnCanvas, tapi kali ini menggunakan
-    // CustomPaint dan kita beri gambar placeholder.
-
-    // Karena paintOnCanvas membutuhkan ui.Image, kita tidak bisa langsung memanggilnya
-    // di widget. Alternatif: kita buat preview dengan cara meniru hasil secara manual,
-    // tapi agar identik, kita bisa menggunakan CustomPaint dengan painter yang
-    // menggambar background gradient dan teks-teks dengan gaya yang sama.
-    // Saya akan membuat preview yang menggunakan canvas dengan cara yang sama
-    // seperti paintOnCanvas, namun tanpa gambar latar (hanya gradient placeholder).
-
-    // Untuk konsistensi, saya akan buat PreviewPainter yang meniru paintOnCanvas
-    // dengan background berupa gradient abu-abu (placeholder).
     return ClipRRect(
       borderRadius: BorderRadius.circular(6),
       child: AspectRatio(
@@ -452,16 +406,14 @@ class ProfessionalLayout extends WatermarkLayout {
                     previewData.position != WatermarkPosition.topRight),
             isLeftAligned: WatermarkAlignment.isLeftAligned(previewData.position),
           ),
-          child: Container(), // biar CustomPaint yang menggambar semua
+          child: Container(),
         ),
       ),
     );
   }
 }
 
-// ================================================================
-//  PREVIEW PAINTER – identik dengan paintOnCanvas
-// ================================================================
+// ─── PREVIEW PAINTER ────────────────────────────────────────────
 class _ProfessionalPreviewPainter extends CustomPainter {
   final WatermarkData previewData;
   final bool hasLogo;
@@ -489,9 +441,9 @@ class _ProfessionalPreviewPainter extends CustomPainter {
     final overlayTop = isBottom ? photoHeight - overlayHeight : 0.0;
     final padding = metrics.padding;
     final textAlign = isLeftAligned ? TextAlign.left : TextAlign.right;
-    final c = theme.color;
+    final c = theme.accent.color;
 
-    // ---- Background placeholder (gradient abu-abu) ----
+    // Background placeholder
     final bgPaint = Paint()
       ..shader = ui.Gradient.linear(
         Offset(0, 0),
@@ -499,32 +451,23 @@ class _ProfessionalPreviewPainter extends CustomPainter {
         [const Color(0xFF33373D), const Color(0xFF1B1E22)],
       );
     canvas.drawRect(Rect.fromLTWH(0, 0, photoWidth, photoHeight), bgPaint);
-
-    // ---- Gambar ikon image di tengah ----
     final iconPaint = Paint()..color = Colors.white12;
-    const iconSize = 28.0;
-    canvas.drawCircle(
-      Offset(photoWidth / 2, photoHeight / 2),
-      iconSize / 2,
-      iconPaint,
-    );
+    canvas.drawCircle(Offset(photoWidth / 2, photoHeight / 2), 14, iconPaint);
 
-    // ---- Panel Background (sama seperti di paintOnCanvas) ----
+    // Panel (sama seperti paintOnCanvas)
     final panelRect = Rect.fromLTWH(0, overlayTop, photoWidth, overlayHeight);
-    // Layer 1: solid
     canvas.drawRect(
       panelRect,
-      Paint()..color = theme.panelBackgroundColor.withOpacity(theme.panelBackgroundOpacity),
+      Paint()..color = theme.panel.backgroundColor.withOpacity(theme.panel.backgroundOpacity),
     );
-    // Layer 2: gradient
     final gradientColors = isBottom
         ? [
-            theme.panelBackgroundColor.withOpacity(theme.panelGradientStartOpacity),
-            theme.panelBackgroundColor.withOpacity(theme.panelGradientEndOpacity),
+            theme.panel.backgroundColor.withOpacity(theme.panel.gradientStartOpacity),
+            theme.panel.backgroundColor.withOpacity(theme.panel.gradientEndOpacity),
           ]
         : [
-            theme.panelBackgroundColor.withOpacity(theme.panelGradientEndOpacity),
-            theme.panelBackgroundColor.withOpacity(theme.panelGradientStartOpacity),
+            theme.panel.backgroundColor.withOpacity(theme.panel.gradientEndOpacity),
+            theme.panel.backgroundColor.withOpacity(theme.panel.gradientStartOpacity),
           ];
     final gradientPaint = Paint()
       ..shader = ui.Gradient.linear(
@@ -533,42 +476,44 @@ class _ProfessionalPreviewPainter extends CustomPainter {
         gradientColors,
       );
     canvas.drawRect(panelRect, gradientPaint);
-    // Layer 3: border
-    final borderPaint = Paint()
-      ..color = theme.panelBorderColor.withOpacity(theme.panelBorderOpacity)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = theme.panelBorderWidth;
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(
-          theme.panelBorderWidth / 2,
-          overlayTop + theme.panelBorderWidth / 2,
-          photoWidth - theme.panelBorderWidth,
-          overlayHeight - theme.panelBorderWidth,
+
+    if (theme.panel.showBorder) {
+      final borderPaint = Paint()
+        ..color = theme.panel.borderColor.withOpacity(theme.panel.borderOpacity)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = theme.panel.borderWidth;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(
+            theme.panel.borderWidth / 2,
+            overlayTop + theme.panel.borderWidth / 2,
+            photoWidth - theme.panel.borderWidth,
+            overlayHeight - theme.panel.borderWidth,
+          ),
+          Radius.circular(theme.panel.borderRadius),
         ),
-        Radius.circular(theme.panelBorderRadius),
-      ),
-      borderPaint,
-    );
-    // Layer 4: highlight
-    if (theme.panelHighlightOpacity > 0) {
+        borderPaint,
+      );
+    }
+
+    if (theme.panel.showHighlight && theme.panel.highlightOpacity > 0) {
       final highlightPaint = Paint()
-        ..color = theme.panelHighlightColor.withOpacity(theme.panelHighlightOpacity)
+        ..color = theme.panel.highlightColor.withOpacity(theme.panel.highlightOpacity)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.0;
       canvas.drawRect(
         Rect.fromLTWH(
-          theme.panelBorderWidth + 2,
-          overlayTop + theme.panelBorderWidth + 2,
-          photoWidth - (theme.panelBorderWidth + 2) * 2,
+          theme.panel.borderWidth + 2,
+          overlayTop + theme.panel.borderWidth + 2,
+          photoWidth - (theme.panel.borderWidth + 2) * 2,
           1.0,
         ),
         highlightPaint,
       );
     }
 
-    // ---- Accent bar ----
-    final accentBarW = theme.accentBarWidth;
+    // Accent bar
+    final accentBarW = theme.accent.showBar ? theme.accent.barWidth : 0.0;
     final accentBarSpace = accentBarW + padding * 0.5;
     final logoMaxSize = metrics.logoMaxSize;
     final logoReserve = (hasLogo && logoPath != null) ? logoMaxSize + padding * 1.4 : 0.0;
@@ -578,31 +523,38 @@ class _ProfessionalPreviewPainter extends CustomPainter {
         : photoWidth - padding - textContentWidth;
     double textY = overlayTop + padding * 0.95;
 
-    final barX = isLeftAligned ? padding : photoWidth - padding - accentBarW;
-    final barcodeBonus = previewData.hasBarcode ? theme.barcodeRowBonus : 0.0;
-    final titleBonus = previewData.hasLocation ? theme.titleRowBonus : 0.0;
-    final textBlockHeight =
-        metrics.textRowCount * metrics.lineHeight + barcodeBonus + titleBonus;
-    canvas.drawRect(
-      Rect.fromLTWH(
-        barX,
-        overlayTop + padding * 0.85,
-        accentBarW,
-        textBlockHeight,
-      ),
-      Paint()..color = c.accent.withOpacity(theme.accentBarOpacity),
-    );
+    if (theme.accent.showBar && accentBarW > 0) {
+      final barX = isLeftAligned ? padding : photoWidth - padding - accentBarW;
+      final barcodeBonus = previewData.hasBarcode ? theme.typography.barcodeRowBonus : 0.0;
+      final titleBonus = previewData.hasLocation ? theme.typography.titleRowBonus : 0.0;
+      final textBlockHeight =
+          metrics.textRowCount * metrics.lineHeight + barcodeBonus + titleBonus;
+      canvas.drawRect(
+        Rect.fromLTWH(
+          barX,
+          overlayTop + padding * 0.85,
+          accentBarW,
+          textBlockHeight,
+        ),
+        Paint()..color = c.withOpacity(theme.accent.barOpacity),
+      );
+    }
 
-    // ---- Fungsi teks (sama) ----
+    // Fungsi teks (sama)
     void drawLabelValue(String label, String value, Color valueColor,
         {bool emphasize = false, double? customFontSize}) {
       final valueFontSize = customFontSize ??
-          (emphasize ? theme.barcodeFontSize : theme.bodyFontSize);
-      final rowLineHeight = emphasize ? theme.barcodeLineHeight : metrics.lineHeight;
+          (emphasize ? theme.typography.barcodeFontSize : theme.typography.bodyFontSize);
+      final rowLineHeight = emphasize
+          ? theme.typography.barcodeLineHeight
+          : metrics.lineHeight;
+
       String displayLabel = label;
-      if (theme.useSpacedLabels && theme.spacedLabelKeys.contains(label)) {
+      if (theme.typography.useSpacedLabels &&
+          theme.typography.spacedLabelKeys.contains(label)) {
         displayLabel = label.split('').join('\u200a ');
       }
+
       TextHelper.paintText(
         canvas: canvas,
         text: displayLabel,
@@ -610,7 +562,7 @@ class _ProfessionalPreviewPainter extends CustomPainter {
         y: textY,
         maxWidth: textContentWidth,
         color: Colors.white.withOpacity(0.45),
-        fontSize: theme.captionFontSize,
+        fontSize: theme.typography.captionFontSize,
         fontWeight: FontWeight.w700,
         maxLines: 1,
         textAlign: textAlign,
@@ -639,14 +591,14 @@ class _ProfessionalPreviewPainter extends CustomPainter {
         x: textX,
         y: textY,
         maxWidth: textContentWidth,
-        color: c.accent,
-        fontSize: theme.titleFontSize,
+        color: c,
+        fontSize: theme.typography.titleFontSize,
         fontWeight: FontWeight.w800,
         maxLines: 1,
         textAlign: textAlign,
         fontFamily: previewData.fontFamily,
       );
-      textY += metrics.lineHeight + theme.titleRowBonus;
+      textY += metrics.lineHeight + theme.typography.titleRowBonus;
     }
 
     void drawCoordLine(String text) {
@@ -658,7 +610,7 @@ class _ProfessionalPreviewPainter extends CustomPainter {
         y: textY,
         maxWidth: textContentWidth,
         color: Colors.white.withOpacity(0.65),
-        fontSize: theme.captionFontSize,
+        fontSize: theme.typography.captionFontSize,
         fontWeight: FontWeight.w600,
         maxLines: 1,
         textAlign: textAlign,
@@ -667,7 +619,7 @@ class _ProfessionalPreviewPainter extends CustomPainter {
       textY += metrics.lineHeight;
     }
 
-    // ---- Informasi ----
+    // Informasi
     if (previewData.hasLocation) {
       drawTitleRow(previewData.locationName!);
     }
@@ -675,15 +627,16 @@ class _ProfessionalPreviewPainter extends CustomPainter {
       'TANGGAL',
       previewData.formattedDate,
       Colors.white.withOpacity(0.85),
-      customFontSize: theme.barcodeFontSize,
+      customFontSize: theme.typography.barcodeFontSize,
     );
     drawLabelValue(
       'JAM',
       previewData.formattedTime,
       Colors.white.withOpacity(0.80),
-      customFontSize: theme.barcodeFontSize,
+      customFontSize: theme.typography.barcodeFontSize,
     );
-    textY += theme.groupSpacing;
+    textY += theme.typography.groupSpacing;
+
     if (previewData.hasOperator) {
       drawLabelValue(
         'OPERATOR',
@@ -700,28 +653,24 @@ class _ProfessionalPreviewPainter extends CustomPainter {
       );
     }
     if (previewData.hasCoordinates) {
-      textY += theme.groupSpacing * 1.2;
+      textY += theme.typography.coordSpacing;
       drawCoordLine(previewData.latText);
       drawCoordLine(previewData.lonText);
     }
 
-    // ---- Logo ----
+    // Logo (placeholder)
     if (hasLogo && logoPath != null) {
-      // Karena kita tidak punya ui.Image, kita hanya gambar placeholder
-      // Untuk preview, kita bisa gambar kotak atau ikon.
-      // Tapi lebih baik kita tampilkan logo dari file (jika ada) dengan cara
-      // menggunakan ui.Image dari file, tapi di painter tidak bisa async.
-      // Untuk preview, kita akan tampilkan ikon bisnis sebagai placeholder.
       final logoSize = metrics.logoMaxSize;
       final drawW = logoSize * 0.8;
       final drawH = logoSize * 0.8;
       double logoX = isLeftAligned ? photoWidth - padding - drawW : padding;
       double logoY;
-      if (theme.centerLogoVertically) {
+      if (theme.logo.centerVertically) {
         logoY = overlayTop + (overlayHeight - drawH) / 2;
       } else {
         logoY = isBottom ? photoHeight - padding - drawH : padding;
       }
+
       final cardPad = theme.logoCardPadding(drawW);
       canvas.drawRRect(
         RRect.fromRectAndRadius(
@@ -733,35 +682,30 @@ class _ProfessionalPreviewPainter extends CustomPainter {
           ),
           Radius.circular(theme.logoCardRadius(cardPad)),
         ),
-        Paint()..color = Colors.black.withOpacity(theme.logoCardOpacity),
+        Paint()..color = Colors.black.withOpacity(theme.logo.cardOpacity),
       );
-      // Gambar ikon bisnis
+
       final iconPaint2 = Paint()..color = Colors.white38;
-      canvas.drawRect(
-        Rect.fromLTWH(logoX, logoY, drawW, drawH),
-        iconPaint2,
-      );
-      // Teks "LOGO" placeholder
+      canvas.drawRect(Rect.fromLTWH(logoX, logoY, drawW, drawH), iconPaint2);
       final textStyle = ui.TextStyle(
         color: Colors.white54,
         fontSize: 10,
         fontWeight: FontWeight.w500,
       );
-      final paragraphBuilder = ui.ParagraphBuilder(textStyle)
-        ..addText('LOGO');
-      final paragraph = paragraphBuilder.build()
+      final para = ui.ParagraphBuilder(textStyle)
+        ..addText('LOGO')
+        ..build()
         ..layout(ui.ParagraphConstraints(width: drawW));
       canvas.drawParagraph(
-        paragraph,
-        Offset(logoX + (drawW - paragraph.width) / 2, logoY + (drawH - paragraph.height) / 2),
+        para,
+        Offset(logoX + (drawW - para.width) / 2, logoY + (drawH - para.height) / 2),
       );
     }
 
-    // ---- Label nama layout di pojok kiri atas ----
+    // Label layout
     final labelPaint = Paint()..color = Colors.grey.withOpacity(0.85);
-    final labelRect = Rect.fromLTWH(6, 6, 60, 16);
     canvas.drawRRect(
-      RRect.fromRectAndRadius(labelRect, Radius.circular(4)),
+      RRect.fromRectAndRadius(const Rect.fromLTWH(6, 6, 70, 16), Radius.circular(4)),
       labelPaint,
     );
     final labelStyle = ui.TextStyle(
@@ -773,8 +717,8 @@ class _ProfessionalPreviewPainter extends CustomPainter {
     final labelPara = ui.ParagraphBuilder(labelStyle)
       ..addText('🏢 Professional')
       ..build()
-      ..layout(ui.ParagraphConstraints(width: 60));
-    canvas.drawParagraph(labelPara, Offset(8, 7));
+      ..layout(ui.ParagraphConstraints(width: 70));
+    canvas.drawParagraph(labelPara, const Offset(8, 7));
   }
 
   @override
