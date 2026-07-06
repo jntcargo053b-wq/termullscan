@@ -1,6 +1,4 @@
-// ============================================================
-// lib/watermark/layouts/stamp_layout.dart (FINAL – WatermarkTheme)
-// ============================================================
+// lib/watermark/layouts/stamp_layout.dart
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -24,6 +22,9 @@ class StampLayout extends WatermarkLayout {
   @override
   WatermarkStyle get style => WatermarkStyle.stamp;
 
+  // konstanta internal untuk stroke stempel (karena tidak ada di theme)
+  static const double _stampStroke = 2.0;
+
   @override
   LayoutMetrics computeMetrics({
     required double photoWidth,
@@ -31,27 +32,27 @@ class StampLayout extends WatermarkLayout {
     required WatermarkData data,
     required WatermarkTheme theme,
   }) {
-    final baseSize = theme.baseSize;
-    final padding = theme.padding;
+    final baseSize = theme.typography.baseSize;
+    final padding = theme.typography.padding;
 
     int lineCount = 1;
     if (data.hasBarcode) lineCount++;
     if (data.hasOperator) lineCount++;
     lineCount++; // location
 
-    final lineH = theme.lineHeight; // ✅ konsisten di semua layout
-    final barcodeBonus = data.hasBarcode ? theme.barcodeRowBonus : 0.0;
+    final lineH = baseSize * theme.typography.lineHeight;
+    final barcodeBonus = data.hasBarcode ? theme.typography.barcodeRowBonus : 0.0;
 
     final panelHeight = lineCount * lineH + barcodeBonus + padding * 1.4;
 
-    final logoMaxSize = theme.logoSize;
+    final logoMaxSize = theme.logo.maxSize;
     final panelWidth = baseSize * 0.50;
     final textW = panelWidth - padding * 0.8;
 
     return LayoutMetrics(
       baseSize: baseSize,
       padding: padding,
-      fontSize: theme.fontSize,
+      fontSize: theme.typography.fontSize,
       lineHeight: lineH,
       stripHeight: panelHeight,
       logoMaxSize: logoMaxSize,
@@ -119,7 +120,6 @@ class StampLayout extends WatermarkLayout {
     canvas.rotate(-0.06);
 
     final stampRect = Rect.fromCenter(center: Offset.zero, width: stampW, height: stampH);
-    final strokeWidth = theme.stampStroke;
 
     canvas.drawRRect(
       RRect.fromRectAndRadius(stampRect, Radius.circular(stampH * 0.14)),
@@ -132,18 +132,12 @@ class StampLayout extends WatermarkLayout {
       Paint()
         ..color = stampColor
         ..style = PaintingStyle.stroke
-        ..strokeWidth = strokeWidth,
+        ..strokeWidth = _stampStroke,
     );
 
-    // "VERIFIED"/"MANUAL" adalah elemen Judul stempel → idealnya mengikuti
-    // theme.titleFontSize (berbasis data.fontSize) supaya konsisten dengan
-    // layout lain saat fontSize diubah. TAPI kotak stempel (stampW x stampH)
-    // ukurannya tetap (berbasis baseSize foto, bukan fontSize), jadi di foto
-    // kecil + fontSize besar, teks bisa lebih besar dari kotaknya. Maka
-    // di-clamp ke rasio lama (stampH * 0.32 / 0.18) sebagai batas aman —
-    // dipakai rasio mana pun yang LEBIH KECIL.
-    final titleFontSize = theme.clampedFontSize(theme.titleFontSize, stampH * 0.32);
-    final captionFontSize = theme.clampedFontSize(theme.captionFontSize, stampH * 0.18);
+    // Ukuran font: clamp antara theme title/caption dan batas stempel
+    final titleFontSize = _clampFontSize(theme.typography.titleFontSize, stampH * 0.32);
+    final captionFontSize = _clampFontSize(theme.typography.captionFontSize, stampH * 0.18);
     final titleLineH = math.max(titleFontSize * 1.7, stampH * 0.30);
     final captionLineH = math.max(captionFontSize * 1.7, stampH * 0.24);
 
@@ -195,15 +189,14 @@ class StampLayout extends WatermarkLayout {
     canvas.restore();
 
     // ─── INFO PANEL ────────────────────────────────────────────
-    // (text, isBarcode) supaya baris kode bisa ditekankan seperti layout lain.
     final infoLines = <(String, bool)>[];
     if (data.hasBarcode) infoLines.add((data.barcodeValue!, true));
     if (data.hasOperator) infoLines.add(('OP: ${data.operatorName}', false));
     infoLines.add((data.displayLocation, false));
 
-    final fontSize = theme.fontSize;
-    final lineHeight = theme.lineHeight; // ✅ konsisten
-    final barcodeRowH = theme.barcodeLineHeight;
+    final fontSize = theme.typography.fontSize;
+    final lineHeight = baseSize * theme.typography.lineHeight;
+    final barcodeRowH = theme.typography.barcodeLineHeight;
     final panelPadding = 12.0;
     final panelHeight = infoLines.fold<double>(
           0.0,
@@ -245,16 +238,18 @@ class StampLayout extends WatermarkLayout {
         ..style = PaintingStyle.fill,
     );
 
-    final accentBarW = theme.accentBarWidth;
-    canvas.drawRect(
-      Rect.fromLTWH(
-        panelX + 3,
-        panelY + 6,
-        accentBarW,
-        panelHeight - 12,
-      ),
-      Paint()..color = stampColor.withOpacity(0.7),
-    );
+    final accentBarW = theme.accent.showBar ? theme.accent.barWidth : 0.0;
+    if (accentBarW > 0) {
+      canvas.drawRect(
+        Rect.fromLTWH(
+          panelX + 3,
+          panelY + 6,
+          accentBarW,
+          panelHeight - 12,
+        ),
+        Paint()..color = stampColor.withOpacity(0.7),
+      );
+    }
 
     double textY2 = panelY + panelPadding;
     final textX2 = panelX + panelPadding + 8;
@@ -266,7 +261,7 @@ class StampLayout extends WatermarkLayout {
         y: textY2,
         maxWidth: panelWidth - panelPadding * 2 - 12,
         color: Colors.white,
-        fontSize: isBarcode ? theme.barcodeFontSize : theme.bodyFontSize,
+        fontSize: isBarcode ? theme.typography.barcodeFontSize : theme.typography.bodyFontSize,
         fontWeight: isBarcode ? FontWeight.w800 : FontWeight.w600,
         maxLines: 1,
         fontFamily: data.fontFamily,
@@ -329,6 +324,11 @@ class StampLayout extends WatermarkLayout {
         opacity: 1.0,
       );
     }
+  }
+
+  // ─── Helper clamp font size agar tidak melebihi batas ───
+  double _clampFontSize(double desired, double maxAllowed) {
+    return math.min(desired, maxAllowed);
   }
 
   // ─── PREVIEW ──────────────────────────────────────────────────
