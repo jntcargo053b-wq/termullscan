@@ -9,7 +9,7 @@ import 'package:ffmpeg_kit_flutter_new/statistics.dart';
 import '../../models/scan_entry.dart';
 import '../../watermark/watermark_settings.dart';
 import '../../watermark/watermark_renderer.dart';
-import '../../watermark/watermark_style.dart'; // ← import untuk VideoResolution
+import '../../watermark/watermark_style.dart';
 import 'watermark_cache.dart';
 
 /// Service untuk menambahkan watermark ke video
@@ -67,9 +67,11 @@ class VideoWatermarkService {
         throw Exception('Gagal membaca metadata video (mediaInfo null)');
       }
 
-      // Perbaiki: getDuration() mengembalikan Object?, cast ke double
+      // Perbaiki: getDuration() mengembalikan Object?, cast dengan aman
       final durationObj = mediaInfo.getDuration();
-      final double durationSeconds = (durationObj is double) ? durationObj : 0.0;
+      final double durationSeconds = (durationObj != null && durationObj is double)
+          ? durationObj as double
+          : 0.0;
 
       int srcW = 720;
       int srcH = 1280;
@@ -77,20 +79,7 @@ class VideoWatermarkService {
 
       final streams = mediaInfo.getStreams();
       for (final stream in streams) {
-        // Cari stream video: coba pakai getCodecName() dan cek apakah mengandung 'video'
-        // atau kita bisa gunakan getCodecName() dan lihat apakah bukan audio.
-        // Cara lebih aman: ambil stream pertama yang memiliki getCodecName() dan bukan audio.
-        // Di FFmpegKit, tidak ada getCodecType().
-        final codecName = stream.getCodecName()?.toLowerCase() ?? '';
-        // Stream audio biasanya 'aac', 'mp3', 'opus', dll.
-        // Kita anggap stream video jika bukan audio dan memiliki dimensi > 0.
-        if (codecName.contains('aac') || codecName.contains('mp3') ||
-            codecName.contains('opus') || codecName.contains('vorbis') ||
-            codecName.contains('flac')) {
-          continue; // skip audio
-        }
-
-        // Coba ambil dimensi
+        // Deteksi stream video: coba ambil dimensi, jika > 0 maka video
         final w = stream.getWidth();
         final h = stream.getHeight();
         if (w != null && h != null && w > 0 && h > 0) {
@@ -191,7 +180,6 @@ class VideoWatermarkService {
       final offsetX = overlayResult.$2;
       final offsetY = overlayResult.$3;
 
-      // Periksa null
       if (overlayBytes == null) {
         throw Exception('Overlay PNG bytes null');
       }
@@ -260,7 +248,7 @@ class VideoWatermarkService {
       // ─── 9. Progress callback (StatisticsCallback) ──────────
       if (onProgress != null && durationSeconds > 0) {
         FFmpegKitConfig.enableStatisticsCallback((statistics) {
-          final timeMicros = statistics.getTime(); // microseconds
+          final timeMicros = statistics.getTime();
           if (timeMicros > 0) {
             double progress = timeMicros / (durationSeconds * 1000000);
             if (progress > 1.0) progress = 1.0;
@@ -338,7 +326,6 @@ class VideoWatermarkService {
   static bool? _hwEncoderAvailable;
   static bool? _isEmulator;
 
-  /// Cek apakah perangkat adalah Android Emulator
   static Future<bool> _checkIsEmulator() async {
     if (_isEmulator != null) return _isEmulator!;
     try {
@@ -354,7 +341,6 @@ class VideoWatermarkService {
     return _isEmulator!;
   }
 
-  /// Keputusan pakai hardware encoder atau tidak
   static Future<bool> _shouldUseHardwareEncoder() async {
     if (Platform.isAndroid) {
       final isEmu = await _checkIsEmulator();
