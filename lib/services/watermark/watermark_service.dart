@@ -1,14 +1,13 @@
 // lib/services/watermark/watermark_service.dart
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit_config.dart';
 import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:ffmpeg_kit_flutter_new/statistics.dart';
-import 'package:path_provider/path_provider.dart'; // ⬅️ TAMBAHKAN
+import 'package:path_provider/path_provider.dart';
 import '../../models/scan_entry.dart';
 import '../../watermark/watermark_settings.dart';
 import '../../watermark/watermark_renderer.dart';
@@ -21,7 +20,7 @@ class VideoWatermarkService {
   static bool _warmedUp = false;
   static final WatermarkCache _cache = WatermarkCache();
 
-  // Cache overlay: key -> path file PNG
+  // Cache overlay: key -> path file PNG (untuk file)
   static final Map<String, String> _overlayFileCache = {};
   static const int _maxCacheSize = 50;
 
@@ -34,7 +33,6 @@ class VideoWatermarkService {
     if (_warmedUp) return;
     try {
       _log('info', '🔥 Memanaskan FFmpeg (ringan)...');
-      // Perintah lebih ringan dari -version
       final session = await FFmpegKit.execute(
         '-hide_banner -f lavfi -i color -frames:v 1 -f null -',
       );
@@ -62,11 +60,12 @@ class VideoWatermarkService {
     required String outputPath,
     required ScanEntry entry,
     required WatermarkSettings settings,
-    bool keepAudio = false,
+    bool keepAudio = false, // ← default false = audio dimatikan
     void Function(double progress)? onProgress,
   }) async {
     lastError = null;
     String? overlayPath;
+    int offsetX = 0, offsetY = 0;
     final int sessionId = _sessionCounter++;
 
     try {
@@ -82,15 +81,21 @@ class VideoWatermarkService {
       final dims = _computeDimensions(videoInfo, settings);
       _log('info', '📐 Output: ${dims.outW}x${dims.outH} | Rotasi: ${dims.rotation}°');
 
-      // 3. Render overlay PNG (dengan cache)
-      overlayPath = await _renderOverlay(
+      // 3. Render overlay PNG (dengan cache) – kembalikan (path, offsetX, offsetY)
+      final overlayResult = await _renderOverlay(
         outW: dims.outW,
         outH: dims.outH,
         settings: settings,
         entry: entry,
       );
-      if (overlayPath == null) {
+      if (overlayResult == null) {
         throw Exception('Gagal membuat overlay watermark PNG');
+      }
+      overlayPath = overlayResult.$1;
+      offsetX = overlayResult.$2;
+      offsetY = overlayResult.$3;
+      if (overlayPath == null) {
+        throw Exception('Overlay path null');
       }
 
       // 4. Bangun argumen FFmpeg
@@ -98,6 +103,8 @@ class VideoWatermarkService {
         inputPath: inputPath,
         outputPath: outputPath,
         overlayPath: overlayPath,
+        offsetX: offsetX,
+        offsetY: offsetY,
         dims: dims,
         settings: settings,
         keepAudio: keepAudio,
@@ -120,7 +127,6 @@ class VideoWatermarkService {
       );
 
       if (!success) {
-        // Error sudah di-set di _executeEncoding
         return null;
       }
 
@@ -131,7 +137,6 @@ class VideoWatermarkService {
       lastError = diagnoseFailure(e.toString());
       return null;
     } finally {
-      // Bersihkan callback progress untuk session ini
       _progressCallbacks.remove(sessionId);
       // Hapus overlay sementara (jika tidak di-cache)
       if (overlayPath != null && !_overlayFileCache.containsValue(overlayPath)) {
@@ -142,7 +147,6 @@ class VideoWatermarkService {
           _log('error', '⚠️ Gagal hapus overlay sementara: $e');
         }
       }
-      // Nonaktifkan callback global jika tidak ada session aktif
       if (_progressCallbacks.isEmpty) {
         FFmpegKitConfig.enableStatisticsCallback(null);
       }
@@ -156,7 +160,6 @@ class VideoWatermarkService {
     if (mediaInfo == null) return null;
 
     final durationObj = mediaInfo.getDuration();
-    // ✅ PERBAIKAN: cast ke double? lalu ?? 0.0
     final double duration = (durationObj as double?) ?? 0.0;
 
     int srcW = 720, srcH = 1280, rotation = 0;
@@ -238,19 +241,20 @@ class VideoWatermarkService {
   }
 
   // ─── 3. RENDER OVERLAY (DENGAN CACHE) ──────────────────────
-  static Future<String?> _renderOverlay({
+  static Future<(String?, int, int)?> _renderOverlay({
     required int outW,
     required int outH,
     required WatermarkSettings settings,
     required ScanEntry entry,
   }) async {
-    // Buat key cache
     final key = _cacheKey(outW, outH, settings, entry);
+    // Cek cache file
     if (_overlayFileCache.containsKey(key)) {
       final cachedPath = _overlayFileCache[key]!;
       if (await File(cachedPath).exists()) {
         _log('info', '🔄 Menggunakan overlay dari cache: $cachedPath');
-        return cachedPath;
+        // Offset selalu (0,0) karena PNG full-frame
+        return (cachedPath, 0, 0);
       } else {
         _overlayFileCache.remove(key);
       }
@@ -268,7 +272,7 @@ class VideoWatermarkService {
     final overlayBytes = overlayResult.$1;
     final offsetX = overlayResult.$2;
     final offsetY = overlayResult.$3;
-    if (overlayBytes == null) return null;
+    if (overlayBytes == null || overlayBytes.isEmpty) return null;
 
     // Simpan ke file cache
     final cacheDir = await _getCacheDirectory();
@@ -277,14 +281,13 @@ class VideoWatermarkService {
     final file = File(filePath);
     await file.writeAsBytes(overlayBytes);
 
-    // Simpan di map (dan batasi ukuran)
     _overlayFileCache[key] = filePath;
     if (_overlayFileCache.length > _maxCacheSize) {
       _trimCache();
     }
 
     _log('info', '🖼️ Overlay PNG dibuat & di-cache: $filePath (${overlayBytes.length} bytes), posisi: ($offsetX, $offsetY)');
-    return filePath;
+    return (filePath, offsetX, offsetY);
   }
 
   static String _cacheKey(int outW, int outH, WatermarkSettings settings, ScanEntry entry) {
@@ -304,7 +307,6 @@ class VideoWatermarkService {
   static void _trimCache() {
     if (_overlayFileCache.length <= _maxCacheSize) return;
     final entries = _overlayFileCache.entries.toList();
-    // Hapus entri tertua (first-in-first-out)
     final toRemove = entries.take(_overlayFileCache.length - _maxCacheSize);
     for (final entry in toRemove) {
       try {
@@ -320,14 +322,17 @@ class VideoWatermarkService {
     required String inputPath,
     required String outputPath,
     required String overlayPath,
+    required int offsetX,
+    required int offsetY,
     required _Dimensions dims,
     required WatermarkSettings settings,
     required bool keepAudio,
     required _VideoInfo videoInfo,
   }) {
+    // Filter complex dengan offset overlay
     final filterComplex =
         '[0:v]${dims.scaleFilter}[base];'
-        '[base][1:v]overlay=0:0:format=auto[outv];'
+        '[base][1:v]overlay=$offsetX:$offsetY:format=auto[outv];'
         '[outv]format=yuv420p[out]';
 
     final List<String> filterArgs = [
@@ -338,14 +343,13 @@ class VideoWatermarkService {
     final bitrate = settings.videoBitrateKbps;
     final crf = settings.videoCrf;
     final preset = settings.x264Preset;
-    final useHw = _shouldUseHardwareEncoder(); // sync, karena tidak async
+    final useHw = _shouldUseHardwareEncoder();
 
     final List<String> encoderArgs;
     if (useHw) {
       encoderArgs = [
         '-c:v', 'h264_mediacodec',
         '-b:v', '${bitrate}k',
-        // -maxrate dan -bufsize tidak selalu didukung hardware, kita hindari
       ];
     } else {
       encoderArgs = [
@@ -370,10 +374,15 @@ class VideoWatermarkService {
       outputPath,
     ];
 
+    // ─── AUDIO: matikan kecuali keepAudio = true ─────────────
     if (keepAudio) {
+      // Salin audio
       arguments.insertAll(arguments.length - 1, ['-map', '0:a?', '-c:a', 'copy']);
+      _log('info', '🔊 Audio akan disalin dari input');
     } else {
+      // Matikan audio
       arguments.insertAll(arguments.length - 1, ['-an']);
+      _log('info', '🔇 Audio akan dihilangkan');
     }
 
     return arguments;
@@ -393,7 +402,7 @@ class VideoWatermarkService {
     required _Dimensions dims,
     required _VideoInfo videoInfo,
   }) async {
-    // Registrasi callback progress untuk session ini
+    // Registrasi callback progress
     if (onProgress != null && duration > 0) {
       _progressCallbacks[sessionId] = onProgress;
       FFmpegKitConfig.enableStatisticsCallback((statistics) {
@@ -413,26 +422,25 @@ class VideoWatermarkService {
     var session = await FFmpegKit.executeWithArguments(args);
     var returnCode = await session.getReturnCode();
 
-    // Fallback hardware -> software
+    // Fallback hardware → software
     final useHw = _shouldUseHardwareEncoder();
     if (useHw && !ReturnCode.isSuccess(returnCode)) {
       _log('error', '⚠️ h264_mediacodec gagal (rc=${returnCode?.getValue()}), fallback ke libx264...');
-      // Build ulang argumen dengan encoder software
       final swArgs = _buildFFmpegArguments(
         inputPath: inputPath,
         outputPath: outputPath,
         overlayPath: overlayPath,
+        offsetX: 0,
+        offsetY: 0,
         dims: dims,
         settings: settings,
         keepAudio: keepAudio,
         videoInfo: videoInfo,
       );
-      // Ganti encoder args
       final swIndex = swArgs.indexWhere((arg) => arg == '-c:v');
       if (swIndex != -1) {
         swArgs[swIndex + 1] = 'libx264';
         swArgs.removeRange(swIndex + 2, swIndex + 2);
-        // tambahkan preset, crf, dll
         swArgs.insertAll(swIndex + 2, [
           '-preset', 'veryfast',
           '-crf', '${settings.videoCrf}',
@@ -445,7 +453,6 @@ class VideoWatermarkService {
       returnCode = await session.getReturnCode();
     }
 
-    // Matikan callback jika tidak ada session aktif
     if (_progressCallbacks.isEmpty) {
       FFmpegKitConfig.enableStatisticsCallback(null);
     }
@@ -461,8 +468,6 @@ class VideoWatermarkService {
     }
     return true;
   }
-
-  // ─── CLEANUP DILAKUKAN DI finally ───────────────────────────
 
   // ─── DETEKSI ROTASI ──────────────────────────────────────────
   static int _detectRotation(dynamic stream) {
@@ -516,14 +521,8 @@ class VideoWatermarkService {
   }
 
   static bool _shouldUseHardwareEncoder() {
-    // Untuk sync, kita gunakan nilai cached
     if (_hwEncoderAvailable != null) return _hwEncoderAvailable!;
-    // Inisialisasi secara sync dengan memanggil Future? Tidak bisa.
-    // Kita kembalikan false default dan akan di-set async nanti.
-    // Lebih baik kita lakukan pengecekan async di warmUp atau di awal.
-    // Sementara kita kembalikan false dan nanti di _executeEncoding kita cek lagi.
-    // Untuk sekarang, kita langsung false agar tidak blocking.
-    // Tapi kita sudah punya logika fallback, jadi aman.
+    // default false, akan di-set async nanti
     return false;
   }
 
