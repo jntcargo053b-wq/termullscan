@@ -694,15 +694,16 @@ class _ProfessionalPreviewPainter extends CustomPainter {
       final iconPaint2 = Paint()..color = Colors.white38;
       canvas.drawRect(Rect.fromLTWH(logoX, logoY, drawW, drawH), iconPaint2);
 
-      // Teks "LOGO" menggunakan Paragraph yang benar
-      final style = ui.ParagraphStyle(
+      // ✅ Perbaikan: ParagraphStyle tidak punya color, gunakan pushStyle
+      final paragraphStyle = ui.ParagraphStyle(
         fontSize: 10,
         fontWeight: FontWeight.w500,
-        color: Colors.white54,
         textAlign: ui.TextAlign.center,
       );
-      final builder = ui.ParagraphBuilder(style)
-        ..addText('LOGO');
+      final builder = ui.ParagraphBuilder(paragraphStyle)
+        ..pushStyle(ui.TextStyle(color: Colors.white54))
+        ..addText('LOGO')
+        ..pop();
       final paragraph = builder.build();
       paragraph.layout(ui.ParagraphConstraints(width: drawW));
       canvas.drawParagraph(
@@ -717,14 +718,16 @@ class _ProfessionalPreviewPainter extends CustomPainter {
       RRect.fromRectAndRadius(const Rect.fromLTWH(6, 6, 70, 16), Radius.circular(4)),
       labelPaint,
     );
-    final labelStyle = ui.ParagraphStyle(
+    // ✅ Perbaikan: ParagraphStyle tidak punya color
+    final labelParagraphStyle = ui.ParagraphStyle(
       fontSize: 8,
       fontWeight: FontWeight.w700,
-      color: Colors.grey,
       letterSpacing: 0.5,
     );
-    final labelBuilder = ui.ParagraphBuilder(labelStyle)
-      ..addText('🏢 Professional');
+    final labelBuilder = ui.ParagraphBuilder(labelParagraphStyle)
+      ..pushStyle(ui.TextStyle(color: Colors.grey))
+      ..addText('🏢 Professional')
+      ..pop();
     final labelPara = labelBuilder.build();
     labelPara.layout(ui.ParagraphConstraints(width: 70));
     canvas.drawParagraph(labelPara, const Offset(8, 7));
