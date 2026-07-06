@@ -1,6 +1,4 @@
-// ============================================================
-// lib/watermark/layouts/minimal_layout.dart (FINAL – WatermarkTheme)
-// ============================================================
+// lib/watermark/layouts/minimal_layout.dart
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -29,8 +27,17 @@ class MinimalLayout extends WatermarkLayout {
     required WatermarkData data,
     required WatermarkTheme theme,
   }) {
-    final baseSize = theme.baseSize;
-    final padding = theme.padding;
+    // === RESPONSIF ORIENTASI ===
+    final isPortrait = photoHeight > photoWidth;
+    double effectiveBaseSize = theme.baseSize;
+    double effectivePadding = theme.padding;
+    if (theme.usePortraitScaling && isPortrait) {
+      effectiveBaseSize *= theme.portraitScaleFactor;
+      effectivePadding *= theme.portraitScaleFactor;
+    }
+
+    final baseSize = effectiveBaseSize;
+    final padding = effectivePadding;
 
     int lineCount = 0;
     if (data.hasBarcode) lineCount++;
@@ -38,12 +45,15 @@ class MinimalLayout extends WatermarkLayout {
     lineCount++; // timestamp
     if (data.hasLocation) lineCount++;
 
-    final lineH = theme.lineHeight; // ✅ konsisten di semua layout
+    final lineH = baseSize * theme.lineHeight;
     final barcodeBonus = data.hasBarcode ? theme.barcodeRowBonus : 0.0;
 
-    final overlayHeight = lineCount * lineH + barcodeBonus + padding * 1.2;
+    // Minimum tinggi panel = 8–10% dari tinggi frame
+    final minHeight = photoHeight * theme.minPanelHeightFraction;
+    final contentHeight = lineCount * lineH + barcodeBonus + padding * 1.2;
+    final overlayHeight = math.max(minHeight, contentHeight);
 
-    final logoMaxSize = theme.logoSize;
+    final logoMaxSize = baseSize * (theme.logoSize / 10.0) * theme.logoScaleFactor;
     final textW = photoWidth - padding * 2 - logoMaxSize - 12;
 
     return LayoutMetrics(
@@ -83,6 +93,7 @@ class MinimalLayout extends WatermarkLayout {
     final textAlign = placement.textAlign;
     final overlayAtBottom = placement.atBottom;
 
+    // Gambar background
     canvas.drawImageRect(
       srcImage,
       Rect.fromLTWH(0, 0, photoWidth, photoHeight),
@@ -92,26 +103,28 @@ class MinimalLayout extends WatermarkLayout {
         ..isAntiAlias = true,
     );
 
-    final bgOpacity = data.backgroundOpacity.clamp(0.0, 1.0);
-    final gradientPaint = Paint()
-      ..shader = ui.Gradient.linear(
-        Offset(0, overlayTop),
-        Offset(0, overlayTop + overlayHeight),
-        overlayAtBottom
-            ? [
-                Colors.black.withOpacity(0.0),
-                Colors.black.withOpacity(bgOpacity),
-              ]
-            : [
-                Colors.black.withOpacity(bgOpacity),
-                Colors.black.withOpacity(0.0),
-              ],
-        [0.0, 1.0],
-      );
+    // === BACKGROUND PANEL (glassmorphism sederhana) ===
+    // Lapisan solid hitam 70%
     canvas.drawRect(
       Rect.fromLTWH(0, overlayTop, photoWidth, overlayHeight),
-      gradientPaint,
+      Paint()..color = Colors.black.withOpacity(0.7),
     );
+
+    // Border tipis dengan radius
+    final borderPaint = Paint()
+      ..color = Colors.white.withOpacity(theme.panelBorderOpacity)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(2, overlayTop + 2, photoWidth - 4, overlayHeight - 4),
+        Radius.circular(theme.panelBorderRadius),
+      ),
+      borderPaint,
+    );
+
+    // (Gradient sebelumnya diganti dengan solid + border, lebih bersih)
+    // Jika ingin tetap mempertahankan gradien, bisa dikombinasikan.
 
     final c = theme.color;
     final textContentWidth = metrics.textAvailableWidth;
@@ -156,22 +169,39 @@ class MinimalLayout extends WatermarkLayout {
       textY += rowLineHeight;
     }
 
+    // === URUTAN INFORMASI (dengan hierarki sederhana) ===
+    // Timestamp (paling besar)
+    drawIconLine('🕒', data.formattedTimestamp, Colors.white.withOpacity(0.85), emphasize: true);
+
+    // Spasi antar grup
+    textY += theme.groupSpacing;
+
+    // Barcode & Operator (ukuran sedang)
     if (data.hasBarcode) {
-      drawIconLine('📦', data.barcodeValue ?? '', Colors.white, emphasize: true);
+      drawIconLine('📦', data.barcodeValue ?? '', Colors.white, emphasize: false);
     }
     if (data.hasOperator) {
       drawIconLine('👤', data.operatorName, Colors.white.withOpacity(0.92));
     }
-    drawIconLine('🕒', data.formattedTimestamp, Colors.white.withOpacity(0.85));
+
+    // Spasi sebelum lokasi
     if (data.hasLocation) {
-      drawIconLine('📍', data.displayLocation, Colors.white.withOpacity(0.85));
+      textY += theme.groupSpacing * 0.5;
     }
+
+    // Lokasi (ukuran lebih kecil)
+    if (data.hasLocation) {
+      drawIconLine('📍', data.displayLocation, Colors.white.withOpacity(0.75));
+    }
+
+    // Manual entry (kecil)
     if (data.isManual) {
       drawIconLine('⚡', 'MANUAL ENTRY', c.accent);
     }
 
+    // === LOGO (dengan scaling & opacity) ===
     if (logoImage != null) {
-      final logoSize = metrics.logoMaxSize;
+      final logoSize = metrics.logoMaxSize; // sudah diskalakan
       final logoW = logoImage.width.toDouble();
       final logoH = logoImage.height.toDouble();
       final scale = math.min(logoSize / logoW, logoSize / logoH);
@@ -205,11 +235,12 @@ class MinimalLayout extends WatermarkLayout {
         y: logoY,
         maxWidth: drawW,
         maxHeight: drawH,
-        opacity: 1.0,
+        opacity: theme.logoOpacity,
       );
     }
   }
 
+  // ======================== PREVIEW WIDGET ============================
   @override
   Widget buildPreview({
     required WatermarkData previewData,
@@ -254,7 +285,7 @@ class MinimalLayout extends WatermarkLayout {
             Align(
               alignment: isBottom ? Alignment.bottomCenter : Alignment.topCenter,
               child: FractionallySizedBox(
-                heightFactor: overlayFractionHeight.clamp(0.12, 0.8),
+                heightFactor: overlayFractionHeight.clamp(0.08, 0.8),
                 widthFactor: 1.0,
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -335,17 +366,22 @@ class MinimalLayout extends WatermarkLayout {
     final align = alignLeft ? TextAlign.left : TextAlign.right;
 
     final lines = <Widget>[];
+    // Timestamp (paling besar)
+    lines.add(Text(
+      '🕒 ${data.formattedTimestamp}',
+      style: textStyle.copyWith(fontWeight: FontWeight.w800, fontSize: 10),
+      textAlign: align,
+    ));
     if (data.hasBarcode) {
       lines.add(Text(
         '📦 ${data.barcodeValue}',
-        style: textStyle.copyWith(fontWeight: FontWeight.w800, fontSize: 10),
+        style: textStyle,
         textAlign: align,
       ));
     }
     if (data.hasOperator) {
       lines.add(Text('👤 ${data.operatorName}', style: textStyle, textAlign: align));
     }
-    lines.add(Text('🕒 ${data.formattedTimestamp}', style: textStyle, textAlign: align));
     if (data.hasLocation) {
       lines.add(Text('📍 ${data.displayLocation}', style: textStyle, maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: align));
     }
