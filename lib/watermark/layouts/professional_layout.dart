@@ -36,7 +36,7 @@ class ProfessionalLayout extends WatermarkLayout {
       effectivePadding *= theme.portraitScaleFactor;
     }
 
-    int rowCount = 2;
+    int rowCount = 2; // tanggal, jam
     if (data.hasBarcode) rowCount++;
     if (data.hasOperator) rowCount++;
     if (data.hasLocation) rowCount++;
@@ -84,11 +84,7 @@ class ProfessionalLayout extends WatermarkLayout {
     final overlayHeight = metrics.stripHeight;
     final c = theme.accent.color;
 
-    final placement = WatermarkAlignment.resolve(
-      position: data.position,
-      photoHeight: photoHeight,
-      overlayHeight: overlayHeight,
-    );
+    final placement = _resolvePosition(data.position, photoHeight, overlayHeight);
     final overlayTop = placement.top;
     final textAlign = placement.textAlign;
     final overlayAtBottom = placement.atBottom;
@@ -371,6 +367,19 @@ class ProfessionalLayout extends WatermarkLayout {
     return label.split('').join('\u200a ');
   }
 
+  // ─── Helper posisi (menggantikan WatermarkAlignment) ──────
+  _Position _resolvePosition(WatermarkPosition position, double photoHeight, double overlayHeight) {
+    final atBottom = position == WatermarkPosition.bottomRight ||
+                     position == WatermarkPosition.bottomLeft ||
+                     (position != WatermarkPosition.topLeft &&
+                      position != WatermarkPosition.topRight);
+    final top = atBottom ? photoHeight - overlayHeight : 0.0;
+    final textAlign = (position == WatermarkPosition.bottomLeft || position == WatermarkPosition.topLeft)
+        ? TextAlign.left
+        : TextAlign.right;
+    return _Position(top: top, textAlign: textAlign, atBottom: atBottom);
+  }
+
   // ─── PREVIEW ──────────────────────────────────────────────────
   @override
   Widget buildPreview({
@@ -400,11 +409,6 @@ class ProfessionalLayout extends WatermarkLayout {
             logoPath: logoPath,
             metrics: metrics,
             theme: theme,
-            isBottom: previewData.position == WatermarkPosition.bottomRight ||
-                previewData.position == WatermarkPosition.bottomLeft ||
-                (previewData.position != WatermarkPosition.topLeft &&
-                    previewData.position != WatermarkPosition.topRight),
-            isLeftAligned: WatermarkAlignment.isLeftAligned(previewData.position),
           ),
           child: Container(),
         ),
@@ -420,8 +424,6 @@ class _ProfessionalPreviewPainter extends CustomPainter {
   final String? logoPath;
   final LayoutMetrics metrics;
   final WatermarkTheme theme;
-  final bool isBottom;
-  final bool isLeftAligned;
 
   _ProfessionalPreviewPainter({
     required this.previewData,
@@ -429,8 +431,6 @@ class _ProfessionalPreviewPainter extends CustomPainter {
     required this.logoPath,
     required this.metrics,
     required this.theme,
-    required this.isBottom,
-    required this.isLeftAligned,
   });
 
   @override
@@ -438,6 +438,12 @@ class _ProfessionalPreviewPainter extends CustomPainter {
     final photoWidth = size.width;
     final photoHeight = size.height;
     final overlayHeight = metrics.stripHeight;
+    final isBottom = previewData.position == WatermarkPosition.bottomRight ||
+                     previewData.position == WatermarkPosition.bottomLeft ||
+                     (previewData.position != WatermarkPosition.topLeft &&
+                      previewData.position != WatermarkPosition.topRight);
+    final isLeftAligned = previewData.position == WatermarkPosition.bottomLeft ||
+                          previewData.position == WatermarkPosition.topLeft;
     final overlayTop = isBottom ? photoHeight - overlayHeight : 0.0;
     final padding = metrics.padding;
     final textAlign = isLeftAligned ? TextAlign.left : TextAlign.right;
@@ -454,7 +460,7 @@ class _ProfessionalPreviewPainter extends CustomPainter {
     final iconPaint = Paint()..color = Colors.white12;
     canvas.drawCircle(Offset(photoWidth / 2, photoHeight / 2), 14, iconPaint);
 
-    // Panel (sama seperti paintOnCanvas)
+    // Panel
     final panelRect = Rect.fromLTWH(0, overlayTop, photoWidth, overlayHeight);
     canvas.drawRect(
       panelRect,
@@ -540,7 +546,7 @@ class _ProfessionalPreviewPainter extends CustomPainter {
       );
     }
 
-    // Fungsi teks (sama)
+    // Fungsi teks
     void drawLabelValue(String label, String value, Color valueColor,
         {bool emphasize = false, double? customFontSize}) {
       final valueFontSize = customFontSize ??
@@ -687,40 +693,51 @@ class _ProfessionalPreviewPainter extends CustomPainter {
 
       final iconPaint2 = Paint()..color = Colors.white38;
       canvas.drawRect(Rect.fromLTWH(logoX, logoY, drawW, drawH), iconPaint2);
-      final textStyle = ui.TextStyle(
-        color: Colors.white54,
+
+      // Teks "LOGO" menggunakan Paragraph yang benar
+      final style = ui.ParagraphStyle(
         fontSize: 10,
         fontWeight: FontWeight.w500,
+        color: Colors.white54,
+        textAlign: ui.TextAlign.center,
       );
-      final para = ui.ParagraphBuilder(textStyle)
-        ..addText('LOGO')
-        ..build()
-        ..layout(ui.ParagraphConstraints(width: drawW));
+      final builder = ui.ParagraphBuilder(style)
+        ..addText('LOGO');
+      final paragraph = builder.build();
+      paragraph.layout(ui.ParagraphConstraints(width: drawW));
       canvas.drawParagraph(
-        para,
-        Offset(logoX + (drawW - para.width) / 2, logoY + (drawH - para.height) / 2),
+        paragraph,
+        Offset(logoX + (drawW - paragraph.width) / 2, logoY + (drawH - paragraph.height) / 2),
       );
     }
 
-    // Label layout
+    // Label nama layout
     final labelPaint = Paint()..color = Colors.grey.withOpacity(0.85);
     canvas.drawRRect(
       RRect.fromRectAndRadius(const Rect.fromLTWH(6, 6, 70, 16), Radius.circular(4)),
       labelPaint,
     );
-    final labelStyle = ui.TextStyle(
-      color: Colors.grey,
+    final labelStyle = ui.ParagraphStyle(
       fontSize: 8,
       fontWeight: FontWeight.w700,
+      color: Colors.grey,
       letterSpacing: 0.5,
     );
-    final labelPara = ui.ParagraphBuilder(labelStyle)
-      ..addText('🏢 Professional')
-      ..build()
-      ..layout(ui.ParagraphConstraints(width: 70));
+    final labelBuilder = ui.ParagraphBuilder(labelStyle)
+      ..addText('🏢 Professional');
+    final labelPara = labelBuilder.build();
+    labelPara.layout(ui.ParagraphConstraints(width: 70));
     canvas.drawParagraph(labelPara, const Offset(8, 7));
   }
 
   @override
   bool shouldRepaint(covariant _ProfessionalPreviewPainter oldDelegate) => false;
+}
+
+// ─── Helper position ─────────────────────────────────────────────
+class _Position {
+  final double top;
+  final TextAlign textAlign;
+  final bool atBottom;
+  _Position({required this.top, required this.textAlign, required this.atBottom});
 }
