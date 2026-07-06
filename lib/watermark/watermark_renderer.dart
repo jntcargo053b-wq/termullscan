@@ -213,13 +213,11 @@ class WatermarkRenderer {
     required double photoWidth,
     required double photoHeight,
   }) {
-    // Ambil textStyle dari theme
-    // Karena WatermarkTheme mungkin tidak punya textStyle, kita buat sendiri dari theme
-    // Gunakan theme.textStyle jika ada, jika tidak buat dari theme.properties
-    final textStyle = theme.textStyle ?? const TextStyle(
-      color: ui.Color.fromARGB(255, 255, 255, 255),
-      fontSize: 14,
-      fontFamily: 'Roboto',
+    // Bangun TextStyle dari data yang ada
+    final textStyle = TextStyle(
+      color: ui.Color.fromARGB(255, 255, 255, 255), // default putih
+      fontSize: data.fontSize ?? 14.0,
+      fontFamily: data.fontFamily ?? 'Roboto',
       fontWeight: FontWeight.w500,
     );
 
@@ -242,7 +240,7 @@ class WatermarkRenderer {
       lines.add(data.companyName);
     }
 
-    // Barcode (data.barcodeValue mungkin nullable, gunakan ?? '')
+    // Barcode
     final barcodeVal = data.barcodeValue ?? '';
     if (barcodeVal.isNotEmpty) {
       lines.add('${data.barcodeFormat}: $barcodeVal');
@@ -435,13 +433,10 @@ class WatermarkRenderer {
         debugPrint('🎯 Content: ${contentW}x$contentH, Offset: ($offsetX, $offsetY)');
       }
 
-      // ─── Buat transparentSrc full size untuk layout ──────
-      // Karena layout mungkin membutuhkan srcImage untuk background,
-      // kita buat gambar transparan full size, tapi hanya digunakan
-      // untuk memenuhi parameter non-nullable.
+      // ─── Buat transparentSrc full size ──────────────────────
       transparentSrc = await _createTransparentImage(outW, outH);
 
-      // ─── Buat kanvas SESUAI UKURAN WATERMARK ──────────────
+      // ─── Kanvas ukuran watermark ────────────────────────────
       final recorder = ui.PictureRecorder();
       final canvas = ui.Canvas(recorder);
 
@@ -464,7 +459,7 @@ class WatermarkRenderer {
       layout.paintOnCanvas(
         canvas: canvas,
         metrics: metrics,
-        srcImage: transparentSrc, // berikan gambar transparan
+        srcImage: transparentSrc,
         photoWidth: photoWidth,
         photoHeight: photoHeight,
         logoImage: logoImage,
@@ -565,7 +560,7 @@ class WatermarkRenderer {
   // ─── BUAT GAMBAR TRANSPARAN ─────────────────────────────────
   static Future<ui.Image> _createTransparentImage(int width, int height) async {
     final recorder = ui.PictureRecorder();
-    ui.Canvas(recorder); // tidak menggambar apa pun → transparan
+    ui.Canvas(recorder);
     final picture = recorder.endRecording();
     final image = await picture.toImage(width, height);
     picture.dispose();
