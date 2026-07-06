@@ -1,10 +1,9 @@
-// ============================================================
-// lib/watermark/watermark_renderer.dart (FIXED)
-// ============================================================
+// lib/watermark/watermark_renderer.dart
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart'; // ← untuk debug
 import '../models/scan_entry.dart';
 import 'models/watermark_data.dart';
 import 'theme/watermark_theme.dart';
@@ -18,7 +17,13 @@ class _CachedOverlay {
   final int offsetY;
   final int width;
   final int height;
-  _CachedOverlay({required this.pngBytes, required this.offsetX, required this.offsetY, required this.width, required this.height});
+  _CachedOverlay({
+    required this.pngBytes,
+    required this.offsetX,
+    required this.offsetY,
+    required this.width,
+    required this.height,
+  });
 }
 
 class WatermarkRenderer {
@@ -26,7 +31,108 @@ class WatermarkRenderer {
   static final Map<String, _CachedOverlay> _overlayCache = {};
   static const int _maxCacheSize = 30;
 
-  // ... (render untuk foto tetap sama) ...
+  // ─── RENDER UNTUK FOTO ──────────────────────────────────────
+  static Future<String?> render({
+    required String imagePath,
+    required String outputPath,
+    required WatermarkSettings settings,
+    required ScanEntry entry,
+  }) async {
+    ui.Image? srcImage;
+    ui.Image? logoImage;
+    ui.Image? outputImage;
+    ui.Picture? picture;
+    ui.Codec? codec;
+
+    try {
+      final imageFile = File(imagePath);
+      if (!await imageFile.exists()) {
+        debugPrint('❌ WatermarkRenderer.render: file tidak ditemukan: $imagePath');
+        return null;
+      }
+
+      final imageBytes = await imageFile.readAsBytes();
+      codec = await ui.instantiateImageCodec(imageBytes);
+      final frame = await codec.getNextFrame();
+      srcImage = frame.image;
+
+      final photoWidth = srcImage.width.toDouble();
+      final photoHeight = srcImage.height.toDouble();
+
+      if (settings.hasLogo && settings.logoPath != null && settings.logoPath!.isNotEmpty) {
+        logoImage = await _loadLogoWithCache(settings.logoPath!, targetWidth: srcImage.width);
+      }
+
+      final data = WatermarkData(
+        timestamp: entry.timestamp,
+        operatorName: settings.operatorName,
+        companyName: settings.companyName,
+        barcodeValue: entry.value,
+        barcodeFormat: entry.barcodeFormat,
+        latitude: entry.latitude,
+        longitude: entry.longitude,
+        locationName: entry.locationName,
+        logoPath: settings.logoPath,
+        position: settings.position,
+        fontSize: settings.fontSize,
+        backgroundOpacity: settings.backgroundOpacity,
+        fontFamily: settings.fontFamily,
+      );
+
+      final baseSize = photoWidth < photoHeight ? photoWidth : photoHeight;
+      final theme = WatermarkTheme.of(style: settings.style, data: data, baseSize: baseSize);
+
+      final layout = WatermarkFactory.create(settings.style);
+      final metrics = layout.computeMetrics(
+        photoWidth: photoWidth,
+        photoHeight: photoHeight,
+        data: data,
+        theme: theme,
+      );
+
+      final recorder = ui.PictureRecorder();
+      final canvas = ui.Canvas(
+        recorder,
+        ui.Rect.fromLTWH(0, 0, photoWidth, photoHeight),
+      );
+
+      layout.paintOnCanvas(
+        canvas: canvas,
+        metrics: metrics,
+        srcImage: srcImage,
+        photoWidth: photoWidth,
+        photoHeight: photoHeight,
+        logoImage: logoImage,
+        data: data,
+        theme: theme,
+      );
+
+      picture = recorder.endRecording();
+      outputImage = await picture.toImage(photoWidth.round(), photoHeight.round());
+
+      final byteData = await outputImage.toByteData(format: ui.ImageByteFormat.png);
+      if (byteData == null) {
+        throw Exception('Gagal encode PNG hasil watermark');
+      }
+
+      final outFile = File(outputPath);
+      await outFile.writeAsBytes(byteData.buffer.asUint8List(), flush: true);
+
+      if (kDebugMode) {
+        debugPrint('✅ Watermark foto tersimpan: $outputPath (${photoWidth.toInt()}x${photoHeight.toInt()})');
+      }
+
+      return outputPath;
+    } catch (e, stack) {
+      if (kDebugMode) debugPrint('❌ Error WatermarkRenderer.render: $e\n$stack');
+      return null;
+    } finally {
+      srcImage?.dispose();
+      outputImage?.dispose();
+      picture?.dispose();
+      codec?.dispose();
+    }
+  }
 
   // ─── RENDER OVERLAY VIDEO (FULL-FRAME, CACHED) ──────────────
   static Future<(Uint8List?, int, int)?> renderVideoOverlaySmallPng({
@@ -35,7 +141,12 @@ class WatermarkRenderer {
     required WatermarkSettings settings,
     required ScanEntry entry,
   }) async {
-    final cacheKey = _buildCacheKey(outW: outW, outH: outH, settings: settings, entry: entry);
+    final cacheKey = _buildCacheKey(
+      outW: outW,
+      outH: outH,
+      settings: settings,
+      entry: entry,
+    );
 
     if (_overlayCache.containsKey(cacheKey)) {
       final cached = _overlayCache[cacheKey]!;
@@ -79,11 +190,14 @@ class WatermarkRenderer {
       final baseSize = photoWidth < photoHeight ? photoWidth : photoHeight;
       final theme = WatermarkTheme.of(style: settings.style, data: data, baseSize: baseSize);
 
-      // ✅ PERBAIKAN: gunakan placeholder abu-abu, bukan transparan
+      // Gunakan placeholder abu-abu, bukan transparan (agar layout seperti Polaroid terlihat)
       placeholderImage = await _createPlaceholderImage(outW, outH);
 
       final recorder = ui.PictureRecorder();
-      final canvas = ui.Canvas(recorder, ui.Rect.fromLTWH(0, 0, photoWidth, photoHeight));
+      final canvas = ui.Canvas(
+        recorder,
+        ui.Rect.fromLTWH(0, 0, photoWidth, photoHeight),
+      );
 
       final layout = WatermarkFactory.create(settings.style);
       final metrics = layout.computeMetrics(
@@ -112,7 +226,7 @@ class WatermarkRenderer {
 
       final pngBytes = byteData.buffer.asUint8List();
 
-      // ✅ DEBUG: simpan ke file sementara
+      // Debug: simpan ke file sementara
       if (kDebugMode) {
         try {
           final tempDir = await getTemporaryDirectory();
@@ -156,7 +270,7 @@ class WatermarkRenderer {
     }
   }
 
-  // ─── BUILD CACHE KEY (DENGAN FONT FAMILY) ──────────────────
+  // ─── BUILD CACHE KEY ──────────────────────────────────────
   static String _buildCacheKey({
     required int outW,
     required int outH,
@@ -175,10 +289,10 @@ class WatermarkRenderer {
       entry.locationName ?? '',
       settings.fontSize,
       settings.backgroundOpacity,
-      settings.fontFamily, // ← tambahkan
+      settings.fontFamily,
       settings.logoPath ?? '',
       settings.position.name,
-      settings.videoResolution.name, // ← tambahkan
+      settings.videoResolution.name,
     ];
     return parts.join('|');
   }
@@ -186,7 +300,10 @@ class WatermarkRenderer {
   // ─── BUAT GAMBAR PLACEHOLDER (ABU-ABU) ─────────────────────
   static Future<ui.Image> _createPlaceholderImage(int width, int height) async {
     final recorder = ui.PictureRecorder();
-    final canvas = ui.Canvas(recorder, Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()));
+    final canvas = ui.Canvas(
+      recorder,
+      Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+    );
     canvas.drawRect(
       Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
       Paint()..color = const Color(0xFF1A1A1A),
@@ -197,24 +314,37 @@ class WatermarkRenderer {
     return image;
   }
 
-  // ─── LOAD LOGO (sama seperti sebelumnya) ────────────────────
-  static Future<ui.Image?> _loadLogoWithCache(String logoPath, {required int targetWidth}) async {
+  // ─── LOAD LOGO DENGAN CACHE ─────────────────────────────────
+  static Future<ui.Image?> _loadLogoWithCache(
+    String logoPath, {
+    required int targetWidth,
+  }) async {
     final cacheKey = '${logoPath}_$targetWidth';
-    if (_logoCache.containsKey(cacheKey)) return _logoCache[cacheKey];
+    if (_logoCache.containsKey(cacheKey)) {
+      if (kDebugMode) debugPrint('♻️ Logo from cache');
+      return _logoCache[cacheKey];
+    }
+
     try {
       final logoFile = File(logoPath);
       if (!await logoFile.exists()) return null;
+
       final logoBytes = await logoFile.readAsBytes();
       final logoTargetWidth = (targetWidth * 0.15).round().clamp(40, 200);
-      final codec = await ui.instantiateImageCodec(logoBytes, targetWidth: logoTargetWidth);
+      final codec = await ui.instantiateImageCodec(
+        logoBytes,
+        targetWidth: logoTargetWidth,
+      );
       final frame = await codec.getNextFrame();
       codec.dispose();
+
       if (frame.image != null) {
         _logoCache[cacheKey] = frame.image;
+        if (kDebugMode) debugPrint('✅ Logo cached');
         return frame.image;
       }
     } catch (e) {
-      debugPrint('⚠️ Error memuat logo: $e');
+      if (kDebugMode) debugPrint('⚠️ Error memuat logo: $e');
     }
     return null;
   }
