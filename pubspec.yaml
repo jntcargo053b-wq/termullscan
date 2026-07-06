@@ -10,6 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
 
+  # ─── UTILITY ────────────────────────────────────────────────
   shared_preferences: ^2.2.2
   path_provider: ^2.1.1
   permission_handler: ^11.3.1
@@ -17,27 +18,34 @@ dependencies:
   intl: ^0.19.0
   uuid: ^4.3.1
   device_info_plus: ^9.1.0
-
   gap: ^3.0.1
   flutter_animate: ^4.5.0
+  collection: ^1.18.0
+  archive: ^3.6.1
+  file_picker: ^8.0.0
 
+  # ─── SCANNER & MEDIA ──────────────────────────────────────
   mobile_scanner: ^5.2.0
   saver_gallery: ^3.0.0
   share_plus: ^9.0.0
   image: ^4.1.7
-  sqflite: ^2.3.0
-  path: ^1.9.0
-
   camera: ^0.10.5+5
   video_player: ^2.8.5
   video_thumbnail: ^0.5.6
 
-  # ✅ Paket stabil – semua dependency ada di Maven Central
+  # ─── DATABASE ──────────────────────────────────────────────
+  sqflite: ^2.3.0
+  path: ^1.9.0
+
+  # ─── FFMPEG (STABIL) ──────────────────────────────────────
   ffmpeg_kit_flutter_new: ^4.1.0
 
-  archive: ^3.6.1
-  file_picker: ^8.0.0
-  collection: ^1.18.0
+  # ─── STATE MANAGEMENT ──────────────────────────────────────
+  provider: ^6.0.5
+
+  # ─── BACKGROUND & NOTIFICATIONS ──────────────────────────
+  flutter_foreground_task: ^7.0.0
+  flutter_local_notifications: ^15.1.0
 
 dev_dependencies:
   flutter_test:
