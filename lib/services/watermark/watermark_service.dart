@@ -9,6 +9,7 @@ import 'package:ffmpeg_kit_flutter_new/statistics.dart';
 import '../../models/scan_entry.dart';
 import '../../watermark/watermark_settings.dart';
 import '../../watermark/watermark_renderer.dart';
+import '../../watermark/watermark_style.dart'; // ← import untuk VideoResolution
 import 'watermark_cache.dart';
 
 /// Service untuk menambahkan watermark ke video
@@ -17,10 +18,6 @@ class VideoWatermarkService {
   static bool _warmedUp = false;
   static final WatermarkCache _cache = WatermarkCache();
 
-  // ─── CACHE OVERLAY PNG (di sisi service sebagai fallback) ──
-  // Sebenarnya cache utama ada di WatermarkRenderer, tapi kita
-  // tambahkan lapisan kedua untuk mencegah render ulang jika
-  // metadata sama persis.
   static final Map<String, String> _overlayFileCache = {};
   static const int _maxCacheSize = 20;
 
@@ -29,7 +26,6 @@ class VideoWatermarkService {
     if (_warmedUp) return;
     try {
       debugPrint('🔥 Memanaskan FFmpeg...');
-      // Gunakan -loglevel 0 untuk mengurangi output I/O
       final session = await FFmpegKit.execute('-loglevel 0 -version');
       final returnCode = await session.getReturnCode();
       if (ReturnCode.isSuccess(returnCode)) {
@@ -71,7 +67,9 @@ class VideoWatermarkService {
         throw Exception('Gagal membaca metadata video (mediaInfo null)');
       }
 
-      final double durationSeconds = mediaInfo.getDuration() ?? 0.0;
+      // Perbaiki: getDuration() mengembalikan Object?, cast ke double
+      final durationObj = mediaInfo.getDuration();
+      final double durationSeconds = (durationObj is double) ? durationObj : 0.0;
 
       int srcW = 720;
       int srcH = 1280;
@@ -79,15 +77,32 @@ class VideoWatermarkService {
 
       final streams = mediaInfo.getStreams();
       for (final stream in streams) {
-        if (stream.getCodecType() == 'video') {
-          srcW = stream.getWidth() ?? 720;
-          srcH = stream.getHeight() ?? 1280;
+        // Cari stream video: coba pakai getCodecName() dan cek apakah mengandung 'video'
+        // atau kita bisa gunakan getCodecName() dan lihat apakah bukan audio.
+        // Cara lebih aman: ambil stream pertama yang memiliki getCodecName() dan bukan audio.
+        // Di FFmpegKit, tidak ada getCodecType().
+        final codecName = stream.getCodecName()?.toLowerCase() ?? '';
+        // Stream audio biasanya 'aac', 'mp3', 'opus', dll.
+        // Kita anggap stream video jika bukan audio dan memiliki dimensi > 0.
+        if (codecName.contains('aac') || codecName.contains('mp3') ||
+            codecName.contains('opus') || codecName.contains('vorbis') ||
+            codecName.contains('flac')) {
+          continue; // skip audio
+        }
+
+        // Coba ambil dimensi
+        final w = stream.getWidth();
+        final h = stream.getHeight();
+        if (w != null && h != null && w > 0 && h > 0) {
+          srcW = w;
+          srcH = h;
+          // Ambil rotasi dari tags
           final tags = stream.getTags();
           if (tags != null && tags.containsKey('rotate')) {
             final rotStr = tags['rotate']?.toString() ?? '0';
             rotation = int.tryParse(rotStr) ?? 0;
           }
-          break;
+          break; // kita temukan stream video
         }
       }
 
@@ -155,14 +170,12 @@ class VideoWatermarkService {
         scaleFilter += 'pad=$outW:$outH:(ow-iw)/2:(oh-ih)/2,';
       }
       // ❌ Jika tidak perlu scale: TIDAK ADA filter scale=iw:ih
-      // (langsung setsar=1)
 
       scaleFilter += 'setsar=1';
 
       debugPrint('🔧 Scale filter: $scaleFilter');
 
       // ─── 5. Render overlay PNG (HANYA area watermark) ──────
-      // Kembali: (Uint8List bytes, int offsetX, int offsetY)
       final overlayResult = await WatermarkRenderer.renderVideoOverlaySmallPng(
         outW: outW,
         outH: outH,
@@ -178,13 +191,17 @@ class VideoWatermarkService {
       final offsetX = overlayResult.$2;
       final offsetY = overlayResult.$3;
 
+      // Periksa null
+      if (overlayBytes == null) {
+        throw Exception('Overlay PNG bytes null');
+      }
+
       overlayPngPath = '$outputPath.overlay.png';
       final overlayFile = File(overlayPngPath);
       await overlayFile.writeAsBytes(overlayBytes);
       debugPrint('🖼️ Overlay PNG watermark dibuat: ${overlayBytes.length} bytes, posisi: ($offsetX, $offsetY)');
 
       // ─── 6. Filter complex (format=yuv420p di akhir) ──────
-      // overlay dengan x,y dinamis
       final String filterComplex =
           '[0:v]$scaleFilter[base];'
           '[base][1:v]overlay=$offsetX:$offsetY:format=auto[outv];'
@@ -218,7 +235,7 @@ class VideoWatermarkService {
           '-crf', '$crf',
           '-maxrate', '${bitrate}k',
           '-bufsize', '${bitrate * 2}k',
-          '-threads', '2', // ← batasi thread agar RAM turun
+          '-threads', '2',
         ];
       }
 
@@ -325,7 +342,6 @@ class VideoWatermarkService {
   static Future<bool> _checkIsEmulator() async {
     if (_isEmulator != null) return _isEmulator!;
     try {
-      // Deteksi sederhana: cek property ro.kernel.qemu
       final session = await FFmpegKit.execute(
         '-loglevel 0 -hide_banner -f android_property -i ro.kernel.qemu -f null -',
       );
@@ -340,7 +356,6 @@ class VideoWatermarkService {
 
   /// Keputusan pakai hardware encoder atau tidak
   static Future<bool> _shouldUseHardwareEncoder() async {
-    // 1. Cek emulator -> langsung false (skip probe)
     if (Platform.isAndroid) {
       final isEmu = await _checkIsEmulator();
       if (isEmu) {
@@ -349,7 +364,6 @@ class VideoWatermarkService {
       }
     }
 
-    // 2. Cek ketersediaan mediacodec (cache)
     if (_hwEncoderAvailable != null) return _hwEncoderAvailable!;
     try {
       final session = await FFmpegKit.execute('-loglevel 0 -encoders');
