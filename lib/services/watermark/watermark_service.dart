@@ -1,4 +1,4 @@
-// lib/services/watermark_service.dart
+// lib/services/watermark/watermark_service.dart
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:convert';
@@ -8,6 +8,7 @@ import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit_config.dart';
 import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:ffmpeg_kit_flutter_new/statistics.dart';
+import 'package:path_provider/path_provider.dart'; // ⬅️ TAMBAHKAN
 import '../../models/scan_entry.dart';
 import '../../watermark/watermark_settings.dart';
 import '../../watermark/watermark_renderer.dart';
@@ -155,7 +156,8 @@ class VideoWatermarkService {
     if (mediaInfo == null) return null;
 
     final durationObj = mediaInfo.getDuration();
-    final double duration = (durationObj is double) ? durationObj : 0.0;
+    // ✅ PERBAIKAN: cast ke double? lalu ?? 0.0
+    final double duration = (durationObj as double?) ?? 0.0;
 
     int srcW = 720, srcH = 1280, rotation = 0;
     final streams = mediaInfo.getStreams();
