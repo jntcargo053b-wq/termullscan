@@ -45,7 +45,7 @@ dependencies:
 
   # ─── BACKGROUND & NOTIFICATIONS ──────────────────────────
   flutter_foreground_task: ^7.0.0
-  flutter_local_notifications: ^15.1.0
+  flutter_local_notifications: 15.0.0   # ← PIN ke versi stabil (bukan 15.1.3)
 
 dev_dependencies:
   flutter_test:
