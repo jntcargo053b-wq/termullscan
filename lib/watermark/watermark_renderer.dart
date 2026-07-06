@@ -53,9 +53,117 @@ class WatermarkRenderer {
     required WatermarkSettings settings,
     required ScanEntry entry,
   }) async {
-    // Kode ini tetap sama seperti sebelumnya – tidak diubah.
-    // (Silakan gunakan kode dari jawaban saya sebelumnya)
-    throw UnimplementedError('Gunakan kode render() dari versi sebelumnya');
+    ui.Image? srcImage;
+    ui.Image? logoImage;
+    ui.Image? outputImage;
+    ui.Picture? picture;
+    ui.Codec? codec;
+
+    try {
+      // ─── 1. Baca & decode foto asli ───────────────────────
+      final imageFile = File(imagePath);
+      if (!await imageFile.exists()) {
+        debugPrint('❌ WatermarkRenderer.render: file tidak ditemukan: $imagePath');
+        return null;
+      }
+
+      final imageBytes = await imageFile.readAsBytes();
+      codec = await ui.instantiateImageCodec(imageBytes);
+      final frame = await codec.getNextFrame();
+      srcImage = frame.image;
+
+      final photoWidth = srcImage.width.toDouble();
+      final photoHeight = srcImage.height.toDouble();
+
+      // ─── 2. Load logo (dengan cache) bila diaktifkan ──────
+      if (settings.hasLogo && settings.logoPath != null && settings.logoPath!.isNotEmpty) {
+        logoImage = await _loadLogoWithCache(settings.logoPath!, targetWidth: srcImage.width);
+      }
+
+      // ─── 3. Siapkan data & theme ───────────────────────────
+      final data = WatermarkData(
+        timestamp: entry.timestamp,
+        operatorName: settings.operatorName,
+        companyName: settings.companyName,
+        barcodeValue: entry.value,
+        barcodeFormat: entry.barcodeFormat,
+        latitude: entry.latitude,
+        longitude: entry.longitude,
+        locationName: entry.locationName,
+        logoPath: settings.logoPath,
+        position: settings.position,
+        fontSize: settings.fontSize,
+        backgroundOpacity: settings.backgroundOpacity,
+        fontFamily: settings.fontFamily,
+      );
+
+      final baseSize = photoWidth < photoHeight ? photoWidth : photoHeight;
+      final theme = WatermarkTheme.of(
+        style: settings.style,
+        data: data,
+        baseSize: baseSize,
+      );
+
+      // ─── 4. Hitung metrics layout ──────────────────────────
+      final layout = WatermarkFactory.create(settings.style);
+      final metrics = layout.computeMetrics(
+        photoWidth: photoWidth,
+        photoHeight: photoHeight,
+        data: data,
+        theme: theme,
+      );
+
+      // ─── 5. Gambar foto asli + watermark di kanvas full-size
+      final recorder = ui.PictureRecorder();
+      final canvas = ui.Canvas(
+        recorder,
+        ui.Rect.fromLTWH(0, 0, photoWidth, photoHeight),
+      );
+
+      layout.paintOnCanvas(
+        canvas: canvas,
+        metrics: metrics,
+        srcImage: srcImage,
+        photoWidth: photoWidth,
+        photoHeight: photoHeight,
+        logoImage: logoImage,
+        data: data,
+        theme: theme,
+      );
+
+      picture = recorder.endRecording();
+
+      // ─── 6. Render ke gambar akhir ──────────────────────────
+      outputImage = await picture.toImage(
+        photoWidth.round(),
+        photoHeight.round(),
+      );
+
+      final byteData = await outputImage.toByteData(format: ui.ImageByteFormat.png);
+      if (byteData == null) {
+        throw Exception('Gagal encode PNG hasil watermark');
+      }
+
+      // ─── 7. Simpan ke outputPath ────────────────────────────
+      final outFile = File(outputPath);
+      await outFile.writeAsBytes(byteData.buffer.asUint8List(), flush: true);
+
+      if (kDebugMode) {
+        debugPrint('✅ Watermark foto tersimpan: $outputPath (${photoWidth.toInt()}x${photoHeight.toInt()})');
+      }
+
+      return outputPath;
+    } catch (e, stack) {
+      if (kDebugMode) debugPrint('❌ Error WatermarkRenderer.render: $e\n$stack');
+      return null;
+    } finally {
+      // ⚠️ logoImage TIDAK di-dispose: gambar itu milik _logoCache dan
+      // dipakai ulang untuk foto/video berikutnya.
+      srcImage?.dispose();
+      outputImage?.dispose();
+      picture?.dispose();
+      codec?.dispose();
+    }
   }
 
   // ─── LOAD LOGO DENGAN CACHE ─────────────────────────────────
@@ -387,7 +495,8 @@ class WatermarkRenderer {
       if (kDebugMode) debugPrint('❌ Error renderVideoOverlaySmallPng: $e\n$stack');
       return null;
     } finally {
-      logoImage?.dispose();
+      // ⚠️ logoImage TIDAK di-dispose: gambar itu milik _logoCache dan
+      // dipakai ulang untuk frame/foto berikutnya.
       transparentSrc?.dispose();
       outputImage?.dispose();
       picture?.dispose();
