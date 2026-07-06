@@ -3,27 +3,34 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit_config.dart';
-import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart'; // ← TAMBAHKAN INI
+import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
+import 'package:ffmpeg_kit_flutter_new/statistics.dart';
 import '../../models/scan_entry.dart';
 import '../../watermark/watermark_settings.dart';
-import '../../watermark/watermark_style.dart';
-import 'watermark_utils.dart';
+import '../../watermark/watermark_renderer.dart';
 import 'watermark_cache.dart';
 
 /// Service untuk menambahkan watermark ke video
 class VideoWatermarkService {
   static String? lastError;
   static bool _warmedUp = false;
-
   static final WatermarkCache _cache = WatermarkCache();
 
-  /// Pemanasan FFmpeg (opsional)
+  // ─── CACHE OVERLAY PNG (di sisi service sebagai fallback) ──
+  // Sebenarnya cache utama ada di WatermarkRenderer, tapi kita
+  // tambahkan lapisan kedua untuk mencegah render ulang jika
+  // metadata sama persis.
+  static final Map<String, String> _overlayFileCache = {};
+  static const int _maxCacheSize = 20;
+
+  /// Pemanasan FFmpeg (ringan)
   static Future<void> warmUp() async {
     if (_warmedUp) return;
     try {
       debugPrint('🔥 Memanaskan FFmpeg...');
-      final session = await FFmpegKit.execute('-version');
+      // Gunakan -loglevel 0 untuk mengurangi output I/O
+      final session = await FFmpegKit.execute('-loglevel 0 -version');
       final returnCode = await session.getReturnCode();
       if (ReturnCode.isSuccess(returnCode)) {
         debugPrint('✅ FFmpeg warm-up berhasil.');
@@ -48,29 +55,53 @@ class VideoWatermarkService {
     required String outputPath,
     required ScanEntry entry,
     required WatermarkSettings settings,
-    bool keepAudio = false, // default: audio dimatikan untuk hemat ukuran
+    bool keepAudio = false,
     void Function(double progress)? onProgress,
   }) async {
     lastError = null;
+    String? overlayPngPath;
     try {
       await _cache.initialize(settings);
 
-      final durationSeconds = await probeVideoDuration(inputPath);
-      debugPrint('⏱️ Durasi video: ${durationSeconds}s');
+      // ─── 1. Baca SEMUA metadata dalam SATU panggilan FFprobe ──
+      final mediaInfoSession = await FFprobeKit.getMediaInformation(inputPath);
+      final mediaInfo = mediaInfoSession.getMediaInformation();
 
-      // ─── 1. Baca dimensi asli & rotasi ───────────────────────
-      final srcDim = await probeVideoDimensions(inputPath);
-      int outW = srcDim.width;
-      int outH = srcDim.height;
-      if (outW <= 0 || outH <= 0) {
-        outW = 720;
-        outH = 1280;
+      if (mediaInfo == null) {
+        throw Exception('Gagal membaca metadata video (mediaInfo null)');
       }
 
-      final int rotation = await _getVideoRotation(inputPath);
-      debugPrint('🔄 Rotasi video: $rotation°');
+      final double durationSeconds = mediaInfo.getDuration() ?? 0.0;
 
-      // Jika rotasi 90/270, tukar lebar/tinggi agar sesuai
+      int srcW = 720;
+      int srcH = 1280;
+      int rotation = 0;
+
+      final streams = mediaInfo.getStreams();
+      for (final stream in streams) {
+        if (stream.getCodecType() == 'video') {
+          srcW = stream.getWidth() ?? 720;
+          srcH = stream.getHeight() ?? 1280;
+          final tags = stream.getTags();
+          if (tags != null && tags.containsKey('rotate')) {
+            final rotStr = tags['rotate']?.toString() ?? '0';
+            rotation = int.tryParse(rotStr) ?? 0;
+          }
+          break;
+        }
+      }
+
+      if (srcW <= 0 || srcH <= 0) {
+        srcW = 720;
+        srcH = 1280;
+      }
+
+      debugPrint('⏱️ Durasi: ${durationSeconds}s | Dimensi asli: ${srcW}x$srcH | Rotasi: $rotation°');
+
+      // ─── 2. Tentukan dimensi output ──────────────────────────
+      int outW = srcW;
+      int outH = srcH;
+
       if (rotation == 90 || rotation == 270) {
         final temp = outW;
         outW = outH;
@@ -78,7 +109,7 @@ class VideoWatermarkService {
         debugPrint('↕️ Dimensi ditukar karena rotasi → ${outW}x$outH');
       }
 
-      // ─── 2. Batasi resolusi jika diperlukan ──────────────────
+      // ─── 3. Batasi resolusi jika diperlukan ──────────────────
       int? maxSide;
       switch (settings.videoResolution) {
         case VideoResolution.original:
@@ -103,188 +134,166 @@ class VideoWatermarkService {
       outW = (outW ~/ 2) * 2;
       outH = (outH ~/ 2) * 2;
 
-      final double scale = (math.min(outW, outH) / 720.0).clamp(0.6, 1.8);
-      debugPrint('📐 Output: ${outW}x$outH | Skala watermark: $scale');
+      debugPrint('📐 Output: ${outW}x$outH');
 
-      // ─── 3. Bangun filter scaling dengan handling rotasi ────
+      // ─── 4. Bangun filter scaling (tanpa scale=iw:ih) ──────
       String scaleFilter = '';
 
-      // a) Tangani rotasi dengan transpose
       if (rotation == 90) {
-        scaleFilter += 'transpose=1,'; // 90° clockwise
+        scaleFilter += 'transpose=1,';
       } else if (rotation == 270) {
-        scaleFilter += 'transpose=2,'; // 90° counter-clockwise
+        scaleFilter += 'transpose=2,';
       } else if (rotation == 180) {
-        scaleFilter += 'transpose=2,transpose=2,'; // 180°
+        scaleFilter += 'transpose=2,transpose=2,';
       }
 
-      // b) Scale (hanya jika resolusi diubah, atau jika bukan original)
       final bool needScale = (settings.videoResolution != VideoResolution.original) &&
-          (outW != srcDim.width || outH != srcDim.height);
+          (outW != srcW || outH != srcH);
 
       if (needScale) {
-        // Gunakan force_original_aspect_ratio=decrease + pad agar tidak melebar
         scaleFilter += 'scale=$outW:$outH:force_original_aspect_ratio=decrease,';
         scaleFilter += 'pad=$outW:$outH:(ow-iw)/2:(oh-ih)/2,';
-      } else {
-        // Mode original: tidak di-scale, tetap iw:ih
-        scaleFilter += 'scale=iw:ih,';
       }
+      // ❌ Jika tidak perlu scale: TIDAK ADA filter scale=iw:ih
+      // (langsung setsar=1)
 
-      // c) Setsar & pixel format
-      scaleFilter += 'setsar=1,format=yuv420p';
+      scaleFilter += 'setsar=1';
 
       debugPrint('🔧 Scale filter: $scaleFilter');
 
-      // ─── 4. Dapatkan watermark filters ──────────────────────────
-      // Sejak unifikasi engine hierarki info, KELIMA gaya punya
-      // implementasi video sendiri — tidak ada lagi fallback paksa ke
-      // 'timestamp' (lihat WatermarkStyleCapability.supportsVideo).
-      List<String> watermarkFilters;
-      XY logoXY;
+      // ─── 5. Render overlay PNG (HANYA area watermark) ──────
+      // Kembali: (Uint8List bytes, int offsetX, int offsetY)
+      final overlayResult = await WatermarkRenderer.renderVideoOverlaySmallPng(
+        outW: outW,
+        outH: outH,
+        settings: settings,
+        entry: entry,
+      );
 
-      if (settings.style == WatermarkStyle.fullInfo) {
-        final precomputed = _cache.getFullInfo(scale, maxHeight: outH);
-        final data = _cache.getFullInfoData(entry, settings);
-        watermarkFilters = precomputed.buildFilters(
-          barcode: data[0],
-          date: data[1],
-          time: data[2],
-          operator: data[3],
-          company: data[4],
-          gpsText: data[5],
-          location: data[6],
-          code: data[7],
-        );
-        logoXY = precomputed.logoXY;
-      } else if (settings.style == WatermarkStyle.timestamp) {
-        final maxLineLen = (outW * 0.06).round();
-        final precomputed = _cache.getTimestamp(scale, maxHeight: outH);
-        final dynamicData = _cache.getTimestampDynamicData(entry, settings, maxLineLen: maxLineLen);
-        debugPrint('📋 Timestamp dynamicData: $dynamicData');
-        watermarkFilters = precomputed.buildFilters(dynamicData);
-        logoXY = precomputed.logoXY;
-      } else if (settings.style == WatermarkStyle.professional) {
-        // Professional punya renderer khusus (label di atas value, meniru
-        // panel info kamera profesional di foto) — bukan engine generik.
-        final result = _cache.buildProfessionalVideoFilters(
-          settings: settings,
-          entry: entry,
-          scale: scale,
-          outW: outW,
-          outH: outH,
-        );
-        watermarkFilters = result.filters;
-        logoXY = result.logoXY;
-      } else if (settings.style == WatermarkStyle.stamp) {
-        // Stamp punya renderer khusus (badge VERIFIED/MANUAL berwarna),
-        // bukan engine generik.
-        final result = _cache.buildStampVideoFilters(
-          settings: settings,
-          entry: entry,
-          scale: scale,
-          outW: outW,
-          outH: outH,
-        );
-        watermarkFilters = result.filters;
-        logoXY = result.logoXY;
-      } else {
-        // minimal / polaroid → engine hierarki generik
-        final result = _cache.buildGeneralStyleFilters(
-          style: settings.style,
-          settings: settings,
-          entry: entry,
-          scale: scale,
-          outW: outW,
-          outH: outH,
-        );
-        watermarkFilters = result.filters;
-        logoXY = result.logoXY;
+      if (overlayResult == null) {
+        throw Exception('Gagal membuat overlay watermark PNG untuk video');
       }
 
-      // ─── 5. Gabungkan filter ─────────────────────────────────────
-      final String videoFilterChain =
-          '[0:v]$scaleFilter,${watermarkFilters.join(',')}';
+      final overlayBytes = overlayResult.$1;
+      final offsetX = overlayResult.$2;
+      final offsetY = overlayResult.$3;
 
-      // ─── 6. Logo ─────────────────────────────────────────────────
-      final logoPath = _cache.logoPath;
-      String filterComplex;
-      if (logoPath != null) {
-        final logoFile = File(logoPath);
-        if (await logoFile.exists()) {
-          final escapedLogoPath = escapeFFmpegPath(logoPath);
-          final logoHeightRatio = settings.style == WatermarkStyle.polaroid ? 0.055 : 0.08;
-          final logoHeight = (outH * logoHeightRatio).round();
-          filterComplex =
-              "movie='$escapedLogoPath',scale=-1:$logoHeight,format=rgba,colorchannelmixer=aa=0.85[logo]; "
-              "$videoFilterChain[base]; [base][logo]overlay=${logoXY.x}:${logoXY.y}:format=auto[outv]";
-        } else {
-          filterComplex = "$videoFilterChain[outv]";
-        }
-      } else {
-        filterComplex = "$videoFilterChain[outv]";
-      }
+      overlayPngPath = '$outputPath.overlay.png';
+      final overlayFile = File(overlayPngPath);
+      await overlayFile.writeAsBytes(overlayBytes);
+      debugPrint('🖼️ Overlay PNG watermark dibuat: ${overlayBytes.length} bytes, posisi: ($offsetX, $offsetY)');
+
+      // ─── 6. Filter complex (format=yuv420p di akhir) ──────
+      // overlay dengan x,y dinamis
+      final String filterComplex =
+          '[0:v]$scaleFilter[base];'
+          '[base][1:v]overlay=$offsetX:$offsetY:format=auto[outv];'
+          '[outv]format=yuv420p[out]';
 
       final List<String> filterArgs = [
         '-filter_complex', filterComplex,
-        '-map', '[outv]',
+        '-map', '[out]',
       ];
 
+      // ─── 7. Encoding (hardware + fallback + threads) ──────
       final int bitrate = settings.videoBitrateKbps;
+      final int crf = settings.videoCrf;
       final String preset = settings.x264Preset;
-      debugPrint('🎚️ Video bitrate: ${bitrate}kbps | Preset: $preset | Resolusi: ${settings.videoResolution}');
+      final bool useHwEncoder = await _shouldUseHardwareEncoder();
+      debugPrint('🎚️ CRF: $crf | Cap: ${bitrate}kbps | Preset: $preset | '
+          'Resolusi: ${settings.videoResolution} | HW encoder: $useHwEncoder');
+
+      final List<String> encoderArgs;
+      if (useHwEncoder) {
+        encoderArgs = [
+          '-c:v', 'h264_mediacodec',
+          '-b:v', '${bitrate}k',
+          '-maxrate', '${bitrate}k',
+          '-bufsize', '${bitrate * 2}k',
+        ];
+      } else {
+        encoderArgs = [
+          '-c:v', 'libx264',
+          '-preset', preset,
+          '-crf', '$crf',
+          '-maxrate', '${bitrate}k',
+          '-bufsize', '${bitrate * 2}k',
+          '-threads', '2', // ← batasi thread agar RAM turun
+        ];
+      }
 
       final arguments = <String>[
         '-i', inputPath,
+        '-i', overlayPngPath,
         ...filterArgs,
-        '-c:v', 'libx264',
-        '-preset', preset,
-        '-b:v', '${bitrate}k',
-        '-maxrate', '${bitrate}k',
-        '-bufsize', '${bitrate * 2}k',
+        ...encoderArgs,
         '-pix_fmt', 'yuv420p',
         '-movflags', '+faststart',
         '-y',
         outputPath,
       ];
 
-      // ─── 7. Audio ──────────────────────────────────────────────
+      // ─── 8. Audio ──────────────────────────────────────────────
       if (keepAudio) {
-        // Pertahankan audio asli (copy stream, tanpa re-encode)
         arguments.insertAll(arguments.length - 1, ['-map', '0:a?', '-c:a', 'copy']);
       } else {
-        // Buang audio (sesuai default)
         arguments.insertAll(arguments.length - 1, ['-an']);
       }
 
-      // ─── 8. Progress callback ──────────────────────────────────
+      // ─── 9. Progress callback (StatisticsCallback) ──────────
       if (onProgress != null && durationSeconds > 0) {
-        FFmpegKitConfig.enableLogCallback((log) {
-          final message = log.getMessage();
-          if (message.contains('out_time_ms=')) {
-            final regex = RegExp(r'out_time_ms=(\d+)');
-            final match = regex.firstMatch(message);
-            if (match != null) {
-              final outTimeMs = int.parse(match.group(1)!);
-              double progress = outTimeMs / (durationSeconds * 1000000);
-              if (progress > 1.0) progress = 1.0;
-              onProgress(progress);
-            }
+        FFmpegKitConfig.enableStatisticsCallback((statistics) {
+          final timeMicros = statistics.getTime(); // microseconds
+          if (timeMicros > 0) {
+            double progress = timeMicros / (durationSeconds * 1000000);
+            if (progress > 1.0) progress = 1.0;
+            onProgress(progress);
           }
         });
       }
 
       debugPrint('🎬 FFmpeg arguments: $arguments');
 
-      final session = await FFmpegKit.executeWithArguments(arguments);
-      final returnCode = await session.getReturnCode();
+      var session = await FFmpegKit.executeWithArguments(arguments);
+      var returnCode = await session.getReturnCode();
 
+      // Fallback jika hardware encoder gagal
+      if (useHwEncoder && !ReturnCode.isSuccess(returnCode)) {
+        debugPrint('⚠️ h264_mediacodec gagal (rc=${returnCode?.getValue()}), fallback ke libx264...');
+        final swEncoderArgs = [
+          '-c:v', 'libx264',
+          '-preset', preset,
+          '-crf', '$crf',
+          '-maxrate', '${bitrate}k',
+          '-bufsize', '${bitrate * 2}k',
+          '-threads', '2',
+        ];
+        final swArguments = <String>[
+          '-i', inputPath,
+          '-i', overlayPngPath,
+          ...filterArgs,
+          ...swEncoderArgs,
+          '-pix_fmt', 'yuv420p',
+          '-movflags', '+faststart',
+          '-y',
+          outputPath,
+        ];
+        if (keepAudio) {
+          swArguments.insertAll(swArguments.length - 1, ['-map', '0:a?', '-c:a', 'copy']);
+        } else {
+          swArguments.insertAll(swArguments.length - 1, ['-an']);
+        }
+        session = await FFmpegKit.executeWithArguments(swArguments);
+        returnCode = await session.getReturnCode();
+      }
+
+      // Matikan callback setelah selesai
+      FFmpegKitConfig.enableStatisticsCallback(null);
       FFmpegKitConfig.enableLogCallback(null);
 
       if (!ReturnCode.isSuccess(returnCode)) {
         final output = await session.getOutput();
         final logs = await session.getAllLogsAsString();
-        // Tampilkan log untuk debug jika timestamp hilang
         debugPrint('❌ FFmpeg error log:\n$logs');
         throw Exception('FFmpeg gagal (rc=${returnCode?.getValue()}): $output\n$logs');
       }
@@ -292,50 +301,81 @@ class VideoWatermarkService {
       debugPrint('✅ Video watermark berhasil: $outputPath');
       return outputPath;
     } catch (e) {
+      FFmpegKitConfig.enableStatisticsCallback(null);
       FFmpegKitConfig.enableLogCallback(null);
       debugPrint('❌ Error video watermark: $e');
       lastError = 'Exception: $e';
       return null;
+    } finally {
+      if (overlayPngPath != null) {
+        try {
+          final f = File(overlayPngPath);
+          if (await f.exists()) await f.delete();
+        } catch (e) {
+          debugPrint('⚠️ Gagal menghapus overlay PNG sementara: $e');
+        }
+      }
     }
   }
 
-  /// Ambil rotasi video dari metadata via FFprobe
-  static Future<int> _getVideoRotation(String inputPath) async {
+  static bool? _hwEncoderAvailable;
+  static bool? _isEmulator;
+
+  /// Cek apakah perangkat adalah Android Emulator
+  static Future<bool> _checkIsEmulator() async {
+    if (_isEmulator != null) return _isEmulator!;
     try {
-      final session = await FFprobeKit.getMediaInformation(inputPath);
-      final mediaInfo = session.getMediaInformation();
-      if (mediaInfo != null) {
-        final streams = mediaInfo.getStreams();
-        for (final stream in streams) {
-          final tags = stream.getTags();
-          if (tags != null && tags.containsKey('rotate')) {
-            final rotStr = tags['rotate']?.toString() ?? '0';
-            return int.tryParse(rotStr) ?? 0;
-          }
-        }
-      }
-    } catch (e) {
-      debugPrint('⚠️ Gagal membaca rotasi: $e');
+      // Deteksi sederhana: cek property ro.kernel.qemu
+      final session = await FFmpegKit.execute(
+        '-loglevel 0 -hide_banner -f android_property -i ro.kernel.qemu -f null -',
+      );
+      final output = await session.getOutput() ?? '';
+      _isEmulator = output.contains('1') || output.contains('true');
+      debugPrint(_isEmulator! ? '📱 Detected Android Emulator' : '📱 Detected Real Device');
+    } catch (_) {
+      _isEmulator = false;
     }
-    return 0;
+    return _isEmulator!;
+  }
+
+  /// Keputusan pakai hardware encoder atau tidak
+  static Future<bool> _shouldUseHardwareEncoder() async {
+    // 1. Cek emulator -> langsung false (skip probe)
+    if (Platform.isAndroid) {
+      final isEmu = await _checkIsEmulator();
+      if (isEmu) {
+        debugPrint('ℹ️ Emulator terdeteksi, skip hardware encoder');
+        return false;
+      }
+    }
+
+    // 2. Cek ketersediaan mediacodec (cache)
+    if (_hwEncoderAvailable != null) return _hwEncoderAvailable!;
+    try {
+      final session = await FFmpegKit.execute('-loglevel 0 -encoders');
+      final output = await session.getOutput() ?? '';
+      _hwEncoderAvailable = output.contains('h264_mediacodec');
+      debugPrint(_hwEncoderAvailable!
+          ? '✅ h264_mediacodec tersedia'
+          : 'ℹ️ h264_mediacodec tidak tersedia, pakai libx264');
+    } catch (e) {
+      debugPrint('⚠️ Gagal cek h264_mediacodec: $e');
+      _hwEncoderAvailable = false;
+    }
+    return _hwEncoderAvailable!;
   }
 
   static String diagnoseFailure(String logs) {
     final l = logs.toLowerCase();
-    if (l.contains('no such filter') && l.contains('drawtext')) {
-      return 'Filter drawtext TIDAK tersedia. Pastikan pubspec.yaml memakai '
-          'ffmpeg_kit_flutter (resmi) atau varian yang menyertakan freetype.';
-    }
-    if (l.contains('cannot find a valid font') ||
-        l.contains('could not load font') ||
-        l.contains('error loading freetype')) {
-      return 'Font gagal dimuat. Coba font statis (mis. Poppins-Regular.ttf).';
+    if (l.contains('overlay.png') &&
+        (l.contains('no such file') || l.contains('invalid data found'))) {
+      return 'Overlay PNG watermark gagal dibuat/dibaca. Cek WatermarkRenderer.';
     }
     if (l.contains('unknown encoder') || l.contains('encoder not found')) {
       return 'Encoder tidak tersedia. Ganti ke mpeg4.';
     }
-    if (l.contains('invalid argument') && l.contains('drawtext')) {
-      return 'Syntax filter drawtext tidak valid (karakter khusus belum di-escape).';
+    if (l.contains('invalid argument') && l.contains('overlay')) {
+      return 'Argumen filter overlay tidak valid (kemungkinan ukuran PNG tidak cocok).';
     }
     if (l.contains('permission denied')) {
       return 'Tidak ada izin baca/tulis ke file video.';
