@@ -5,7 +5,6 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
-import 'package:flutter/painting.dart';
 import '../models/scan_entry.dart';
 import 'models/watermark_data.dart';
 import 'theme/watermark_theme.dart';
@@ -201,133 +200,7 @@ class WatermarkRenderer {
     return null;
   }
 
-  // ─── HITUNG UKURAN WATERMARK ────────────────────────────────
-  static (int width, int height) _calculateContentSize({
-    required WatermarkData data,
-    required WatermarkTheme theme,
-    required ui.Image? logoImage,
-    required double photoWidth,
-    required double photoHeight,
-  }) {
-    // Buat TextStyle dari data (tidak bergantung pada theme.textStyle)
-    final textStyle = TextStyle(
-      color: ui.Color.fromARGB(255, 255, 255, 255),
-      fontSize: data.fontSize ?? 14.0,
-      fontFamily: data.fontFamily ?? 'Roboto',
-      fontWeight: FontWeight.w500,
-    );
-
-    final double padding = theme.padding;
-    final double spacing = 4.0;
-    final List<String> lines = [];
-
-    // Timestamp
-    lines.add(_formatTimestamp(data.timestamp));
-
-    // Operator
-    if (data.operatorName.isNotEmpty) {
-      lines.add('Operator: ${data.operatorName}');
-    }
-    // Company
-    if (data.companyName.isNotEmpty) {
-      lines.add(data.companyName);
-    }
-    // Barcode
-    final barcodeVal = data.barcodeValue ?? '';
-    if (barcodeVal.isNotEmpty) {
-      lines.add('${data.barcodeFormat}: $barcodeVal');
-    }
-    // Lokasi
-    if (data.locationName != null && data.locationName!.isNotEmpty) {
-      lines.add('📍 ${data.locationName}');
-    }
-    // GPS
-    if (data.latitude != null && data.longitude != null) {
-      final lat = data.latitude!.toStringAsFixed(6);
-      final lng = data.longitude!.toStringAsFixed(6);
-      lines.add('🌐 $lat, $lng');
-    }
-
-    double maxLineWidth = 0;
-    double totalTextHeight = 0;
-    final painter = TextPainter(textDirection: TextDirection.ltr, textAlign: TextAlign.left);
-
-    for (int i = 0; i < lines.length; i++) {
-      painter.text = TextSpan(text: lines[i], style: textStyle);
-      painter.layout(maxWidth: photoWidth * 0.9);
-      final lineWidth = painter.width;
-      if (lineWidth > maxLineWidth) maxLineWidth = lineWidth;
-      totalTextHeight += painter.height;
-      if (i < lines.length - 1) totalTextHeight += spacing;
-    }
-
-    double logoWidth = 0, logoHeight = 0;
-    if (logoImage != null) {
-      const logoMaxSize = 60.0;
-      final scale = logoMaxSize / (logoImage.width > logoImage.height ? logoImage.width : logoImage.height);
-      logoWidth = logoImage.width * scale;
-      logoHeight = logoImage.height * scale;
-    }
-
-    final double contentWidth = maxLineWidth + (padding * 2) + (logoImage != null ? logoWidth + 12 : 0);
-    final double contentHeight = (logoImage != null && logoHeight > totalTextHeight)
-        ? logoHeight + (padding * 2)
-        : totalTextHeight + (padding * 2);
-
-    final int finalWidth = (contentWidth < 80 ? 80 : contentWidth).ceil();
-    final int finalHeight = (contentHeight < 40 ? 40 : contentHeight).ceil();
-
-    if (kDebugMode) {
-      debugPrint('📐 Content size: ${finalWidth}x$finalHeight (lines: ${lines.length})');
-    }
-    return (finalWidth, finalHeight);
-  }
-
-  static String _formatTimestamp(DateTime dt) {
-    final y = dt.year.toString().padLeft(4, '0');
-    final m = dt.month.toString().padLeft(2, '0');
-    final d = dt.day.toString().padLeft(2, '0');
-    final h = dt.hour.toString().padLeft(2, '0');
-    final min = dt.minute.toString().padLeft(2, '0');
-    final s = dt.second.toString().padLeft(2, '0');
-    return '$y-$m-$d $h:$min:$s';
-  }
-
-  // ─── HITUNG POSISI ──────────────────────────────────────────
-  static (int x, int y) _calculatePosition({
-    required int contentWidth,
-    required int contentHeight,
-    required double photoWidth,
-    required double photoHeight,
-    required WatermarkPosition position,
-    required double padding,
-  }) {
-    final margin = (padding * 1.5).ceil();
-    int x, y;
-    switch (position) {
-      case WatermarkPosition.bottomRight:
-        x = photoWidth.toInt() - contentWidth - margin;
-        y = photoHeight.toInt() - contentHeight - margin;
-        break;
-      case WatermarkPosition.bottomLeft:
-        x = margin;
-        y = photoHeight.toInt() - contentHeight - margin;
-        break;
-      case WatermarkPosition.topRight:
-        x = photoWidth.toInt() - contentWidth - margin;
-        y = margin;
-        break;
-      case WatermarkPosition.topLeft:
-        x = margin;
-        y = margin;
-        break;
-    }
-    x = x.clamp(0, photoWidth.toInt() - contentWidth);
-    y = y.clamp(0, photoHeight.toInt() - contentHeight);
-    return (x, y);
-  }
-
-  // ─── RENDER OVERLAY VIDEO (SMALL, CACHED) ──────────────────
+  // ─── RENDER OVERLAY VIDEO (FULL-FRAME, CACHED) ──────────────
   static Future<(Uint8List?, int, int)?> renderVideoOverlaySmallPng({
     required int outW,
     required int outH,
@@ -391,44 +264,35 @@ class WatermarkRenderer {
         baseSize: baseSize,
       );
 
-      // ─── 5. Hitung ukuran konten & posisi ────────────────
-      final (contentW, contentH) = _calculateContentSize(
-        data: data,
-        theme: theme,
-        logoImage: logoImage,
-        photoWidth: photoWidth,
-        photoHeight: photoHeight,
-      );
-
-      final (offsetX, offsetY) = _calculatePosition(
-        contentWidth: contentW,
-        contentHeight: contentH,
-        photoWidth: photoWidth,
-        photoHeight: photoHeight,
-        position: settings.position,
-        padding: theme.padding,
-      );
-
-      if (kDebugMode) {
-        debugPrint('🎯 Content: ${contentW}x$contentH, Offset: ($offsetX, $offsetY)');
-      }
-
-      // ─── 6. Buat gambar transparan untuk srcImage ────────
+      // ─── 5. Buat gambar transparan untuk srcImage ────────
       // (Layout mungkin memerlukan srcImage untuk background, kita berikan
       //  gambar transparan ukuran penuh agar tidak mempengaruhi overlay)
       transparentSrc = await _createTransparentImage(outW, outH);
 
-      // ─── 7. Kanvas UKURAN KECIL (contentW x contentH) ────
+      // ─── 6. Kanvas UKURAN PENUH (outW x outH) ─────────────
+      // ⚠️ PENTING: sebelumnya di sini dipakai perkiraan "kotak konten
+      // kecil" (_calculateContentSize/_calculatePosition) yang HANYA
+      // cocok untuk layout berbentuk kartu kecil di pojok (mis.
+      // Timestamp). Layout lain (Minimal/Professional = pita
+      // full-width; Polaroid = bingkai foto; Stamp = badge melingkar)
+      // punya geometri sendiri yang dihitung oleh computeMetrics()
+      // masing-masing dan TIDAK sama dengan kotak kecil itu — akibatnya
+      // watermark digambar di luar area kanvas kecil yang direkam
+      // (ter-crop total) dan hasilnya transparan / tidak terlihat sama
+      // sekali di video untuk gaya selain Timestamp.
+      //
+      // Perbaikan: gambar overlay di kanvas SELEBAR FRAME VIDEO (persis
+      // seperti pipeline foto di WatermarkRenderer.render() di atas),
+      // supaya computeMetrics()/paintOnCanvas() tiap layout menghasilkan
+      // posisi & ukuran yang identik dengan hasil di foto. Offset overlay
+      // ke FFmpeg jadi selalu (0, 0) karena PNG sudah seukuran frame.
       final recorder = ui.PictureRecorder();
-      final canvas = ui.Canvas(recorder);
+      final canvas = ui.Canvas(
+        recorder,
+        ui.Rect.fromLTWH(0, 0, photoWidth, photoHeight),
+      );
 
-      // Translasi sehingga area watermark (offsetX, offsetY) menjadi (0,0)
-      canvas.translate(-offsetX.toDouble(), -offsetY.toDouble());
-
-      // Opsional: clip agar tidak ada yang meluber (tapi canvas sudah terbatas)
-      // Kita tidak perlu clip karena canvas size sudah tepat.
-
-      // ─── 8. Gambar layout ──────────────────────────────────
+      // ─── 7. Gambar layout (sama seperti pipeline foto) ────
       final layout = WatermarkFactory.create(settings.style);
       final metrics = layout.computeMetrics(
         photoWidth: photoWidth,
@@ -437,9 +301,6 @@ class WatermarkRenderer {
         theme: theme,
       );
 
-      // Di sini layout akan menggambar dengan koordinat global (0..photoWidth).
-      // Karena canvas sudah ditranslasi, hanya bagian yang berada dalam
-      // viewport (contentW x contentH) yang akan terekam.
       layout.paintOnCanvas(
         canvas: canvas,
         metrics: metrics,
@@ -453,11 +314,8 @@ class WatermarkRenderer {
 
       picture = recorder.endRecording();
 
-      // ─── 9. Render ke PNG ukuran kecil ────────────────────
-      outputImage = await picture.toImage(contentW, contentH);
-      if (outputImage == null) {
-        throw Exception('Gagal membuat ui.Image kecil');
-      }
+      // ─── 8. Render ke PNG seukuran frame ──────────────────
+      outputImage = await picture.toImage(outW, outH);
 
       final byteData = await outputImage.toByteData(format: ui.ImageByteFormat.png);
       if (byteData == null) {
@@ -465,14 +323,16 @@ class WatermarkRenderer {
       }
 
       final pngBytes = byteData.buffer.asUint8List();
+      const offsetX = 0;
+      const offsetY = 0;
 
-      // ─── 10. Simpan ke cache ──────────────────────────────
+      // ─── 9. Simpan ke cache ──────────────────────────────
       final cached = _CachedOverlay(
         pngBytes: pngBytes,
         offsetX: offsetX,
         offsetY: offsetY,
-        width: contentW,
-        height: contentH,
+        width: outW,
+        height: outH,
       );
 
       _overlayCache[cacheKey] = cached;
@@ -486,7 +346,7 @@ class WatermarkRenderer {
       }
 
       if (kDebugMode) {
-        debugPrint('✅ Overlay PNG small: ${contentW}x$contentH, pos=($offsetX,$offsetY), ${pngBytes.length} bytes');
+        debugPrint('✅ Overlay PNG full-frame: ${outW}x$outH, style=${settings.style.name}, ${pngBytes.length} bytes');
         debugPrint('   Cache size: ${_overlayCache.length} entries');
       }
 
