@@ -144,7 +144,6 @@ class StorageService {
         return false;
       }
 
-      // ✅ PERBAIKAN: pakai filePath (String), bukan File object
       final saved = await SaverGallery.saveFile(
         file: filePath,
         name: fileName ?? 'watermarked_${DateTime.now().millisecondsSinceEpoch}.mp4',
@@ -165,6 +164,7 @@ class StorageService {
     }
   }
 
+  // ✅ PERBAIKAN: pakai saveFile (bukan saveImage) untuk konsistensi
   Future<bool> savePhotoToGallery(String filePath, {String? fileName}) async {
     try {
       final file = File(filePath);
@@ -178,9 +178,8 @@ class StorageService {
       }
       if (!hasPermission) return false;
 
-      // saveImage menerima String path sebagai parameter pertama
-      final saved = await SaverGallery.saveImage(
-        filePath,
+      final saved = await SaverGallery.saveFile(
+        file: filePath,
         name: fileName ?? 'watermarked_${DateTime.now().millisecondsSinceEpoch}.jpg',
         androidRelativePath: 'Pictures/TermulScan',
         androidExistNotSave: false,
