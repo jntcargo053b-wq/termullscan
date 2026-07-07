@@ -22,7 +22,7 @@ class StampLayout extends WatermarkLayout {
   @override
   WatermarkStyle get style => WatermarkStyle.stamp;
 
-  // konstanta internal untuk stroke stempel (karena tidak ada di theme)
+  // konstanta internal untuk stroke stempel
   static const double _stampStroke = 2.0;
 
   @override
@@ -45,7 +45,8 @@ class StampLayout extends WatermarkLayout {
 
     final panelHeight = lineCount * lineH + barcodeBonus + padding * 1.4;
 
-    final logoMaxSize = theme.logo.maxSize;
+    // logo.maxSize sekarang rasio kecil, langsung dikalikan baseSize * scaleFactor
+    final logoMaxSize = baseSize * theme.logo.maxSize * theme.logo.scaleFactor;
     final panelWidth = baseSize * 0.50;
     final textW = panelWidth - padding * 0.8;
 
@@ -79,10 +80,10 @@ class StampLayout extends WatermarkLayout {
 
     canvas.drawImageRect(
       srcImage,
-      Rect.fromLTWH(0, 0, photoWidth, photoHeight),
-      Rect.fromLTWH(0, 0, photoWidth, photoHeight),
-      Paint()
-        ..filterQuality = FilterQuality.high
+      ui.Rect.fromLTWH(0, 0, photoWidth, photoHeight),
+      ui.Rect.fromLTWH(0, 0, photoWidth, photoHeight),
+      ui.Paint()
+        ..filterQuality = ui.FilterQuality.high
         ..isAntiAlias = true,
     );
 
@@ -119,27 +120,25 @@ class StampLayout extends WatermarkLayout {
     canvas.translate(stampCenterX, stampCenterY);
     canvas.rotate(-0.06);
 
-    final stampRect = Rect.fromCenter(center: Offset.zero, width: stampW, height: stampH);
+    final stampRect = ui.Rect.fromCenter(center: ui.Offset.zero, width: stampW, height: stampH);
 
     canvas.drawRRect(
-      RRect.fromRectAndRadius(stampRect, Radius.circular(stampH * 0.14)),
-      Paint()
+      ui.RRect.fromRectAndRadius(stampRect, ui.Radius.circular(stampH * 0.14)),
+      ui.Paint()
         ..color = stampColor.withOpacity(0.12)
-        ..style = PaintingStyle.fill,
+        ..style = ui.PaintingStyle.fill,
     );
     canvas.drawRRect(
-      RRect.fromRectAndRadius(stampRect, Radius.circular(stampH * 0.14)),
-      Paint()
+      ui.RRect.fromRectAndRadius(stampRect, ui.Radius.circular(stampH * 0.14)),
+      ui.Paint()
         ..color = stampColor
-        ..style = PaintingStyle.stroke
+        ..style = ui.PaintingStyle.stroke
         ..strokeWidth = _stampStroke,
     );
 
     // Ukuran font: clamp antara theme title/caption dan batas stempel
     final titleFontSize = _clampFontSize(theme.typography.titleFontSize, stampH * 0.32);
     final captionFontSize = _clampFontSize(theme.typography.captionFontSize, stampH * 0.18);
-    final titleLineH = math.max(titleFontSize * 1.7, stampH * 0.30);
-    final captionLineH = math.max(captionFontSize * 1.7, stampH * 0.24);
 
     double textY = -stampH * 0.20;
     TextHelper.paintText(
@@ -194,7 +193,6 @@ class StampLayout extends WatermarkLayout {
     if (data.hasOperator) infoLines.add(('OP: ${data.operatorName}', false));
     infoLines.add((data.displayLocation, false));
 
-    final fontSize = theme.typography.fontSize;
     final lineHeight = baseSize * theme.typography.lineHeight;
     final barcodeRowH = theme.typography.barcodeLineHeight;
     final panelPadding = 12.0;
@@ -229,25 +227,25 @@ class StampLayout extends WatermarkLayout {
     }
 
     canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(panelX, panelY, panelWidth, panelHeight),
-        Radius.circular(8),
+      ui.RRect.fromRectAndRadius(
+        ui.Rect.fromLTWH(panelX, panelY, panelWidth, panelHeight),
+        ui.Radius.circular(8),
       ),
-      Paint()
+      ui.Paint()
         ..color = Colors.black.withOpacity(data.backgroundOpacity * 1.2)
-        ..style = PaintingStyle.fill,
+        ..style = ui.PaintingStyle.fill,
     );
 
     final accentBarW = theme.accent.showBar ? theme.accent.barWidth : 0.0;
     if (accentBarW > 0) {
       canvas.drawRect(
-        Rect.fromLTWH(
+        ui.Rect.fromLTWH(
           panelX + 3,
           panelY + 6,
           accentBarW,
           panelHeight - 12,
         ),
-        Paint()..color = stampColor.withOpacity(0.7),
+        ui.Paint()..color = stampColor.withOpacity(0.7),
       );
     }
 
@@ -302,16 +300,16 @@ class StampLayout extends WatermarkLayout {
 
       final cardPad = theme.logoCardPadding(drawW);
       canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(
+        ui.RRect.fromRectAndRadius(
+          ui.Rect.fromLTWH(
             logoX - cardPad,
             logoY - cardPad,
             drawW + cardPad * 2,
             drawH + cardPad * 2,
           ),
-          Radius.circular(theme.logoCardRadius(cardPad)),
+          ui.Radius.circular(theme.logoCardRadius(cardPad)),
         ),
-        Paint()..color = Colors.black.withOpacity(0.35),
+        ui.Paint()..color = Colors.black.withOpacity(0.35),
       );
 
       LogoWidget.paint(
