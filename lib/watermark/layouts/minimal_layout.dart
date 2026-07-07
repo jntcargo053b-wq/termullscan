@@ -48,7 +48,9 @@ class MinimalLayout extends WatermarkLayout {
     final contentHeight = lineCount * lineH + barcodeBonus + effectivePadding * 1.2;
     final overlayHeight = math.max(minHeight, contentHeight);
 
-    final logoMaxSize = effectiveBaseSize * (theme.logo.maxSize / 10.0) * theme.logo.scaleFactor;
+    // logo.maxSize sekarang rasio kecil (mis. 0.20), bukan lagi konstanta
+    // px absolut / 10.0 — lihat WatermarkTheme.of() untuk penjelasan.
+    final logoMaxSize = effectiveBaseSize * theme.logo.maxSize * theme.logo.scaleFactor;
     final textW = photoWidth - effectivePadding * 2 - logoMaxSize - 12;
 
     return LayoutMetrics(
