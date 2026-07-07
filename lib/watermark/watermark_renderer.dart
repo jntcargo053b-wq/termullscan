@@ -289,6 +289,7 @@ class WatermarkRenderer {
     final parts = [
       outW,
       outH,
+      settings.revision, // singleton: isi bisa berubah tanpa instance berubah
       settings.style.name,
       settings.companyName,
       settings.operatorName,
@@ -296,9 +297,12 @@ class WatermarkRenderer {
       entry.value,
       entry.barcodeFormat,
       entry.locationName ?? '',
+      entry.latitude ?? '', // beda koordinat + locationName null harus beda key
+      entry.longitude ?? '',
       settings.fontSize,
       settings.backgroundOpacity,
       settings.fontFamily,
+      settings.hasLogo, // logo on/off harus beda key walau logoPath sama
       settings.logoPath ?? '',
       settings.position.name,
       settings.videoResolution.name,
