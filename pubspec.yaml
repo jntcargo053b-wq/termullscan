@@ -41,10 +41,11 @@ dependencies:
   ffmpeg_kit_flutter_new: ^4.1.0
 
   # ─── STATE MANAGEMENT ──────────────────────────────────────
+  provider: ^6.0.5   # ✅ TAMBAHKAN INI
 
   # ─── BACKGROUND & NOTIFICATIONS ──────────────────────────
   flutter_foreground_task: ^9.2.2
-  flutter_local_notifications: ^17.2.2   # 15.0.0 gagal build (bigLargeIcon ambigu di SDK baru), fixed di 17.2.1+
+  flutter_local_notifications: ^17.2.2
 
 dev_dependencies:
   flutter_test:
