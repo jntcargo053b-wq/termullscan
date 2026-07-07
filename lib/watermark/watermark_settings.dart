@@ -30,6 +30,8 @@ class WatermarkSettings extends ChangeNotifier {
   static const String _keyVideoQuality = 'watermark_video_quality'; // baru
   static const String _keyVideoResolution = 'watermark_video_resolution'; // baru
   static const String _keyProcessingMode = 'watermark_processing_mode'; // baru
+  static const String _keyDeleteLocalAfterGalleryExport =
+      'video_delete_local_after_gallery_export'; // baru
 
   // ========== PROPERTIES ==========
   String operatorName = '';
@@ -51,6 +53,12 @@ class WatermarkSettings extends ChangeNotifier {
   // kualitas yang sepadan dengan biaya waktu prosesnya untuk kasus
   // pemakaian lapangan (banyak video, perangkat menengah).
   ProcessingMode processingMode = ProcessingMode.fast;
+
+  // Default FALSE: pertahankan perilaku lama (simpan di internal + Gallery).
+  // Kalau TRUE, salinan lokal video akan dihapus otomatis setelah berhasil
+  // diekspor ke Galeri — menghemat storage, tapi video tidak lagi bisa
+  // diputar langsung dari riwayat TERMULScan (hanya lewat aplikasi Galeri).
+  bool deleteLocalVideoAfterGalleryExport = false;
 
   // Naik setiap kali ada perubahan settings (lihat save()).
   // WatermarkSettings adalah singleton, jadi cache lain TIDAK BOLEH
@@ -138,6 +146,8 @@ class WatermarkSettings extends ChangeNotifier {
       processingMode = (modeIndex >= 0 && modeIndex < modeValues.length)
           ? modeValues[modeIndex]
           : ProcessingMode.fast;
+      deleteLocalVideoAfterGalleryExport =
+          prefs.getBool(_keyDeleteLocalAfterGalleryExport) ?? false;
       _loaded = true;
       debugPrint('✅ Watermark settings loaded');
     } catch (e) {
@@ -169,6 +179,8 @@ class WatermarkSettings extends ChangeNotifier {
       await prefs.setInt(_keyVideoQuality, videoQuality.index);
       await prefs.setInt(_keyVideoResolution, videoResolution.index);
       await prefs.setInt(_keyProcessingMode, processingMode.index);
+      await prefs.setBool(
+          _keyDeleteLocalAfterGalleryExport, deleteLocalVideoAfterGalleryExport);
       debugPrint('✅ Watermark settings saved');
     } catch (e) {
       debugPrint('⚠️ Error saving watermark settings: $e');
@@ -259,6 +271,12 @@ class WatermarkSettings extends ChangeNotifier {
 
   Future<void> setProcessingMode(ProcessingMode mode) async {
     processingMode = mode;
+    notifyListeners();
+    await save();
+  }
+
+  Future<void> setDeleteLocalVideoAfterGalleryExport(bool value) async {
+    deleteLocalVideoAfterGalleryExport = value;
     notifyListeners();
     await save();
   }

@@ -41,10 +41,42 @@ class TaskQueue {
   // Persistence (opsional, untuk nanti)
   final TaskPersister? persister;
 
-  TaskQueue({this.maxWorkers = 2, this.persister});
+  // ─── Penghitung task aktif (pending + running) ───────────
+  // Dipisah sepenuhnya dari _statusController/_doneController di atas —
+  // keduanya berhenti mengirim event setelah dispose() (supaya tidak
+  // crash), tapi onActiveStart/onActiveEnd HARUS tetap bisa menyala
+  // walau widget pemilik TaskQueue sudah dispose, karena itulah tepatnya
+  // saat kita butuh tahu kapan proses background (mis. FFmpeg) benar-benar
+  // selesai — untuk mematikan foreground service.
+  bool _wasActive = false;
+  final void Function()? onActiveStart;
+  final void Function()? onActiveEnd;
+
+  TaskQueue({
+    this.maxWorkers = 2,
+    this.persister,
+    this.onActiveStart,
+    this.onActiveEnd,
+  });
 
   Stream<Task> get statusStream => _statusController.stream;
   Stream<void> get doneStream => _doneController.stream;
+
+  /// Total task yang masih perlu diselesaikan (menunggu + sedang berjalan).
+  int get activeCount => _queue.length + _running;
+
+  /// Dipanggil setiap kali _queue/_running berubah. TIDAK dijaga oleh
+  /// _disposed — harus tetap akurat sebelum maupun sesudah dispose().
+  void _notifyActivity() {
+    final active = activeCount > 0;
+    if (active && !_wasActive) {
+      _wasActive = true;
+      onActiveStart?.call();
+    } else if (!active && _wasActive) {
+      _wasActive = false;
+      onActiveEnd?.call();
+    }
+  }
 
   /// Emit status secara aman — no-op jika queue sudah di-dispose atau
   /// stream sudah ditutup, supaya task yang masih berjalan di background
@@ -89,6 +121,7 @@ class TaskQueue {
     _sortQueue();
     _emitStatus(task);
     _persistPending();
+    _notifyActivity();
     _processQueue();
     return id;
   }
@@ -117,6 +150,7 @@ class TaskQueue {
       _queue.remove(task);
       _emitStatus(task);
       _persistPending();
+      _notifyActivity();
       return true;
     }
     return false;
@@ -130,6 +164,7 @@ class TaskQueue {
       _emitStatus(task);
     }
     _persistPending();
+    _notifyActivity();
   }
 
   int get pendingCount => _queue.length;
@@ -172,6 +207,7 @@ class TaskQueue {
       _running--;
       _emitStatus(task);
       _persistPending();
+      _notifyActivity();
 
       if (_queue.isEmpty && _running == 0) {
         _emitDone();
@@ -210,6 +246,7 @@ class TaskQueue {
       _queue.add(task);
     }
     _sortQueue();
+    _notifyActivity();
     _processQueue();
   }
 
@@ -230,6 +267,10 @@ class TaskQueue {
         } catch (_) {}
       }
     }
+    // Kalau tidak ada task yang sedang berjalan, ini saat yang tepat untuk
+    // memicu onActiveEnd (mis. mematikan foreground service) — task yang
+    // masih running akan memicunya sendiri lewat _processQueue() di atas.
+    _notifyActivity();
 
     if (_running == 0) {
       // Tidak ada task yang sedang berjalan → aman ditutup sekarang.

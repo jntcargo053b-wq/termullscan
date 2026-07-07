@@ -213,8 +213,11 @@ class _LogScreenState extends State<LogScreen> {
   void _showVideoPreview(ScanEntry entry) {
     final path = entry.videoPath;
     if (path == null || path.isEmpty || !File(path).existsSync()) {
+      final message = entry.videoLocalDeleted
+          ? 'Video ini sudah dipindahkan ke Galeri untuk menghemat penyimpanan. Buka lewat aplikasi Galeri.'
+          : 'File video tidak ditemukan';
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('File video tidak ditemukan')),
+        SnackBar(content: Text(message)),
       );
       return;
     }
@@ -290,13 +293,13 @@ class _LogScreenState extends State<LogScreen> {
       if (files.length == 1) {
         await Share.shareXFiles(
           files,
-          text: '📸 Hasil scan dari WH Scanner\n'
+          text: '📸 Hasil scan dari TermulScan\n'
               'Waktu: ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now())}',
         );
       } else {
         await Share.shareXFiles(
           files,
-          text: '📸 ${files.length} foto hasil scan dari WH Scanner\n'
+          text: '📸 ${files.length} foto hasil scan dari TermulScan\n'
               'Waktu: ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now())}',
         );
       }
@@ -602,7 +605,7 @@ class _FilterChip extends StatelessWidget {
         selected: selected,
         onSelected: (_) => onSelected(),
         selectedColor: AppTheme.accentOrange,
-        backgroundColor: Colors.grey.shade800,
+        backgroundColor: AppTheme.surfaceLight,
         labelStyle: TextStyle(
           color: selected ? Colors.black : Colors.white70,
           fontSize: 12,
@@ -634,21 +637,26 @@ class _LogItem extends StatelessWidget {
     final isPhoto = entry.type == ScanType.photo;
     final isVideo = entry.type == ScanType.video;
     final icon = isVideo ? Icons.videocam : isPhoto ? Icons.photo_camera : Icons.qr_code;
-    final avatarColor = isVideo ? Colors.red.shade900 : isPhoto ? Colors.blue.shade900 : Colors.amber.shade900;
+    final avatarColor = isVideo ? AppTheme.error : isPhoto ? AppTheme.accentBlue : AppTheme.accent;
     final hasPhoto = entry.photoPaths != null && entry.photoPaths!.isNotEmpty;
     final hasVideo = entry.videoPath != null && entry.videoPath!.isNotEmpty;
 
-    return Container(
+    final typeLabel = isVideo ? 'Video' : isPhoto ? 'Foto' : 'Barcode';
+
+    return Semantics(
+      label: '$typeLabel, ${entry.value}${isSelected ? ", dipilih" : ""}',
+      child: Container(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
-        color: isSelected ? Colors.amber.withOpacity(0.1) : const Color(0xFF1E1E1E),
+        color: isSelected ? AppTheme.accent.withOpacity(0.1) : AppTheme.surface,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
-          color: isSelected ? Colors.amber : Colors.grey.shade800,
+          color: isSelected ? AppTheme.accent : AppTheme.surfaceLight,
           width: isSelected ? 2 : 1,
         ),
       ),
       child: ListTile(
+        selected: isSelected,
         onTap: onTap,
         leading: Row(
           mainAxisSize: MainAxisSize.min,
@@ -658,7 +666,7 @@ class _LogItem extends StatelessWidget {
                 padding: const EdgeInsets.only(right: 8),
                 child: Icon(
                   isSelected ? Icons.check_circle : Icons.circle_outlined,
-                  color: isSelected ? Colors.amber : Colors.grey,
+                  color: isSelected ? AppTheme.accent : Colors.grey,
                   size: 22,
                 ),
               ),
@@ -708,14 +716,14 @@ class _LogItem extends StatelessWidget {
             ],
             if (hasPhoto) ...[
               const Gap(6),
-              Icon(Icons.photo_library, size: 16, color: Colors.amber.shade400),
+              Icon(Icons.photo_library, size: 16, color: AppTheme.accent),
             ],
             if (entry.photoPaths != null && entry.photoPaths!.length > 1) ...[
               const Gap(2),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                decoration: BoxDecoration(color: Colors.amber.withOpacity(0.2), borderRadius: BorderRadius.circular(4)),
-                child: Text('${entry.photoPaths!.length}', style: const TextStyle(color: Colors.amber, fontSize: 9, fontWeight: FontWeight.w700)),
+                decoration: BoxDecoration(color: AppTheme.accent.withOpacity(0.2), borderRadius: BorderRadius.circular(4)),
+                child: Text('${entry.photoPaths!.length}', style: const TextStyle(color: AppTheme.accent, fontSize: 9, fontWeight: FontWeight.w700)),
               ),
             ],
           ],
@@ -735,13 +743,14 @@ class _LogItem extends StatelessWidget {
                   if (entry.barcodeFormat == 'MANUAL')
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(color: Colors.amber.withOpacity(0.2), borderRadius: BorderRadius.circular(4), border: Border.all(color: Colors.amber.withOpacity(0.4))),
-                      child: const Text('Manual', style: TextStyle(color: Colors.amber, fontSize: 9, fontWeight: FontWeight.w700)),
+                      decoration: BoxDecoration(color: AppTheme.accent.withOpacity(0.2), borderRadius: BorderRadius.circular(4), border: Border.all(color: AppTheme.accent.withOpacity(0.4))),
+                      child: const Text('Manual', style: TextStyle(color: AppTheme.accent, fontSize: 9, fontWeight: FontWeight.w700)),
                     ),
                   IconButton(icon: const Icon(Icons.delete_outline, color: Colors.grey, size: 18), onPressed: onDelete, tooltip: 'Hapus'),
                 ],
               )
             : null,
+      ),
       ),
     );
   }
@@ -786,7 +795,7 @@ class _PhotoPreviewDialogState extends State<_PhotoPreviewDialog> {
         children: [
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(color: Colors.black.withOpacity(0.8), border: Border(bottom: BorderSide(color: Colors.grey.shade800))),
+            decoration: BoxDecoration(color: Colors.black.withOpacity(0.8), border: Border(bottom: BorderSide(color: AppTheme.surfaceLight))),
             child: Row(
               children: [
                 Expanded(
@@ -825,13 +834,13 @@ class _PhotoPreviewDialogState extends State<_PhotoPreviewDialog> {
           ),
           Container(
             padding: const EdgeInsets.symmetric(vertical: 12),
-            decoration: BoxDecoration(color: Colors.black.withOpacity(0.8), border: Border(top: BorderSide(color: Colors.grey.shade800))),
+            decoration: BoxDecoration(color: Colors.black.withOpacity(0.8), border: Border(top: BorderSide(color: AppTheme.surfaceLight))),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 if (widget.paths.length > 1) ...[
                   IconButton(icon: const Icon(Icons.chevron_left, color: Colors.white), onPressed: _currentIndex > 0 ? () => _pageController.previousPage(duration: const Duration(milliseconds: 300), curve: Curves.easeInOut) : null),
-                  Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4), decoration: BoxDecoration(color: Colors.grey.shade800, borderRadius: BorderRadius.circular(12)), child: Text('${_currentIndex + 1} / ${widget.paths.length}', style: const TextStyle(color: Colors.white, fontSize: 12))),
+                  Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4), decoration: BoxDecoration(color: AppTheme.surfaceLight, borderRadius: BorderRadius.circular(12)), child: Text('${_currentIndex + 1} / ${widget.paths.length}', style: const TextStyle(color: Colors.white, fontSize: 12))),
                   IconButton(icon: const Icon(Icons.chevron_right, color: Colors.white), onPressed: _currentIndex < widget.paths.length - 1 ? () => _pageController.nextPage(duration: const Duration(milliseconds: 300), curve: Curves.easeInOut) : null),
                 ],
                 const Gap(16),
@@ -847,7 +856,7 @@ class _PhotoPreviewDialogState extends State<_PhotoPreviewDialog> {
                     }
                   },
                   icon: const Icon(Icons.share, size: 18), label: const Text('Share Foto'),
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.green.shade700, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
+                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
                 ),
                 const Gap(8),
                 if (widget.paths.length > 1)
@@ -867,7 +876,7 @@ class _PhotoPreviewDialogState extends State<_PhotoPreviewDialog> {
                       }
                     },
                     icon: const Icon(Icons.share, size: 18), label: const Text('Share Semua'),
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.blue.shade700, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
+                    style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accentBlue, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
                   ),
               ],
             ),
@@ -924,7 +933,7 @@ class _VideoPreviewDialogState extends State<_VideoPreviewDialog> {
         children: [
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(color: Colors.black.withOpacity(0.8), border: Border(bottom: BorderSide(color: Colors.grey.shade800))),
+            decoration: BoxDecoration(color: Colors.black.withOpacity(0.8), border: Border(bottom: BorderSide(color: AppTheme.surfaceLight))),
             child: Row(
               children: [
                 Expanded(
@@ -961,7 +970,7 @@ class _VideoPreviewDialogState extends State<_VideoPreviewDialog> {
           ),
           Container(
             padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-            decoration: BoxDecoration(color: Colors.black.withOpacity(0.8), border: Border(top: BorderSide(color: Colors.grey.shade800))),
+            decoration: BoxDecoration(color: Colors.black.withOpacity(0.8), border: Border(top: BorderSide(color: AppTheme.surfaceLight))),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
@@ -987,7 +996,7 @@ class _VideoPreviewDialogState extends State<_VideoPreviewDialog> {
                     }
                   },
                   icon: const Icon(Icons.share, size: 18), label: const Text('Share Video'),
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.blue.shade700, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
+                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accentBlue, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
                 ),
               ],
             ),

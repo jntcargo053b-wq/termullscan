@@ -177,13 +177,13 @@ class _PreviewScreenState extends State<PreviewScreen> {
                       Expanded(
                         child: OutlinedButton.icon(
                           onPressed: widget.onRetake,
-                          icon: const Icon(Icons.refresh, color: Colors.red),
+                          icon: const Icon(Icons.refresh, color: AppTheme.error),
                           label: const Text(
                             'Retake',
-                            style: TextStyle(color: Colors.red),
+                            style: TextStyle(color: AppTheme.error),
                           ),
                           style: OutlinedButton.styleFrom(
-                            side: const BorderSide(color: Colors.red),
+                            side: const BorderSide(color: AppTheme.error),
                             padding: const EdgeInsets.symmetric(vertical: 14),
                             textStyle: const TextStyle(fontWeight: FontWeight.w600),
                           ),

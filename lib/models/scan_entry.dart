@@ -22,6 +22,9 @@ class ScanEntry {
 
   // ─── GALLERY STATUS ────────────────────────────────
   final bool galleryExported; // apakah berhasil diekspor ke galeri
+  // Salinan lokal sengaja dihapus (bukan hilang/rusak) setelah berhasil
+  // diekspor ke Galeri — lihat WatermarkSettings.deleteLocalVideoAfterGalleryExport.
+  final bool videoLocalDeleted;
 
   ScanEntry({
     required this.id,
@@ -38,12 +41,18 @@ class ScanEntry {
     this.videoDuration,
     this.videoThumbnail,
     this.galleryExported = false,
+    this.videoLocalDeleted = false,
   });
 
   // ─── GETTERS ─────────────────────────────────────────
   bool get hasMultiplePhotos => photoPaths != null && photoPaths!.length > 1;
   bool get hasPhotos => photoPaths != null && photoPaths!.isNotEmpty;
   bool get hasVideo => videoPath != null && videoPath!.isNotEmpty;
+  // Beda dengan hasVideo: ini khusus menandakan file mentahnya masih ada
+  // secara lokal (belum sengaja dihapus setelah ekspor ke Galeri) — dipakai
+  // untuk memutuskan apakah preview di dalam app masih bisa memutar file-nya
+  // langsung, atau harus mengarahkan user membuka aplikasi Galeri.
+  bool get hasLocalVideoFile => hasVideo && !videoLocalDeleted;
   bool get isVideo => type == ScanType.video;
   bool get isBarcode => type == ScanType.barcode;
   bool get isPhoto => type == ScanType.photo;
@@ -70,8 +79,12 @@ class ScanEntry {
     return '${min.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}';
   }
 
-  String get galleryStatusText =>
-      galleryExported ? '✅ Tersimpan di Galeri' : '📁 Tersimpan internal';
+  String get galleryStatusText {
+    if (!galleryExported) return '📁 Tersimpan internal';
+    return videoLocalDeleted
+        ? '✅ Di Galeri (lokal dihapus)'
+        : '✅ Tersimpan di Galeri';
+  }
 
   // ─── JSON ──────────────────────────────────────────────
   Map<String, dynamic> toJson() => {
@@ -89,6 +102,7 @@ class ScanEntry {
     'videoDuration': videoDuration,
     'videoThumbnail': videoThumbnail,
     'galleryExported': galleryExported,
+    'videoLocalDeleted': videoLocalDeleted,
   };
 
   factory ScanEntry.fromJson(Map<String, dynamic> j) => ScanEntry(
@@ -106,6 +120,7 @@ class ScanEntry {
     videoDuration: j['videoDuration'] as int?,
     videoThumbnail: j['videoThumbnail'] as String?,
     galleryExported: j['galleryExported'] as bool? ?? false,
+    videoLocalDeleted: j['videoLocalDeleted'] as bool? ?? false,
   );
 
   // ─── SQLite ──────────────────────────────────────────────
@@ -124,6 +139,7 @@ class ScanEntry {
     'videoDuration': videoDuration,
     'videoThumbnail': videoThumbnail,
     'galleryExported': galleryExported ? 1 : 0,
+    'videoLocalDeleted': videoLocalDeleted ? 1 : 0,
   };
 
   factory ScanEntry.fromMap(Map<String, dynamic> map) => ScanEntry(
@@ -144,6 +160,7 @@ class ScanEntry {
     videoDuration: map['videoDuration'] as int?,
     videoThumbnail: map['videoThumbnail'] as String?,
     galleryExported: (map['galleryExported'] as int?) == 1,
+    videoLocalDeleted: (map['videoLocalDeleted'] as int?) == 1,
   );
 
   // ─── Copy ────────────────────────────────────────────────
@@ -162,6 +179,7 @@ class ScanEntry {
     int? videoDuration,
     String? videoThumbnail,
     bool? galleryExported,
+    bool? videoLocalDeleted,
   }) =>
       ScanEntry(
         id: id ?? this.id,
@@ -178,6 +196,7 @@ class ScanEntry {
         videoDuration: videoDuration ?? this.videoDuration,
         videoThumbnail: videoThumbnail ?? this.videoThumbnail,
         galleryExported: galleryExported ?? this.galleryExported,
+        videoLocalDeleted: videoLocalDeleted ?? this.videoLocalDeleted,
       );
 
   // ─── Helper ────────────────────────────────────────────

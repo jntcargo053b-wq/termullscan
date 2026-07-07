@@ -9,10 +9,15 @@ import 'screens/home_screen.dart';
 import 'watermark/watermark_settings.dart';
 import 'services/storage_service.dart';
 import 'services/watermark/watermark_service.dart';
+import 'services/background/video_processing_service.dart';
 import 'models/scan_entry.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Inisialisasi foreground service (harus sebelum runApp, sebelum service
+  // pertama kali di-start dari layar rekam video).
+  VideoProcessingService.init();
 
   // ─── 1. Muat watermark settings ──────────────────────────
   final watermarkSettings = WatermarkSettings();
@@ -62,16 +67,16 @@ void main() async {
   ));
 
   // ─── 7. Jalankan aplikasi ────────────────────────────────
-  runApp(const WHScannerApp());
+  runApp(const TermulScanApp());
 }
 
-class WHScannerApp extends StatelessWidget {
-  const WHScannerApp({super.key});
+class TermulScanApp extends StatelessWidget {
+  const TermulScanApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'WH Scanner',
+      title: 'TermulScan',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.dark,
       home: const HomeScreen(),

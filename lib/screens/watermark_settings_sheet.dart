@@ -60,7 +60,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 32),
       decoration: const BoxDecoration(
-        color: Color(0xFF1E1E1E),
+        color: AppTheme.surface,
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       child: ListenableBuilder(
@@ -156,7 +156,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                     underline: Container(),
                     icon: const Icon(Icons.arrow_drop_down,
                         color: AppTheme.accentOrange),
-                    dropdownColor: Colors.grey[900],
+                    dropdownColor: AppTheme.surface,
                     style: const TextStyle(color: Colors.white),
                   ),
                 ],
@@ -218,7 +218,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                     underline: Container(),
                     icon: const Icon(Icons.arrow_drop_down,
                         color: AppTheme.accentOrange),
-                    dropdownColor: Colors.grey[900],
+                    dropdownColor: AppTheme.surface,
                     style: const TextStyle(color: Colors.white),
                   ),
                 ],
@@ -245,7 +245,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                 max: 48,
                 divisions: 40,
                 activeColor: AppTheme.accentOrange,
-                inactiveColor: Colors.grey[700],
+                inactiveColor: AppTheme.border,
                 onChanged: (val) => _settings.setFontSize(val),
               ),
               const Gap(8),
@@ -273,7 +273,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                     underline: Container(),
                     icon: const Icon(Icons.arrow_drop_down,
                         color: AppTheme.accentOrange),
-                    dropdownColor: Colors.grey[900],
+                    dropdownColor: AppTheme.surface,
                     style: const TextStyle(color: Colors.white),
                   ),
                 ],
@@ -300,7 +300,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                 max: 1.0,
                 divisions: 9,
                 activeColor: AppTheme.accentOrange,
-                inactiveColor: Colors.grey[700],
+                inactiveColor: AppTheme.border,
                 onChanged: (val) => _settings.setBackgroundOpacity(val),
               ),
               const Gap(16),
@@ -332,7 +332,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                         IconButton(
                           onPressed: _clearLogo,
                           icon: const Icon(Icons.delete_outline,
-                              color: Colors.red, size: 20),
+                              color: AppTheme.error, size: 20),
                         ),
                       ],
                     )
@@ -423,7 +423,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                     underline: Container(),
                     icon: const Icon(Icons.arrow_drop_down,
                         color: AppTheme.accentOrange),
-                    dropdownColor: Colors.grey[900],
+                    dropdownColor: AppTheme.surface,
                     style: const TextStyle(color: Colors.white, fontSize: 13),
                   ),
                 ],
@@ -464,7 +464,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                     underline: Container(),
                     icon: const Icon(Icons.arrow_drop_down,
                         color: AppTheme.accentOrange),
-                    dropdownColor: Colors.grey[900],
+                    dropdownColor: AppTheme.surface,
                     style: const TextStyle(color: Colors.white, fontSize: 13),
                   ),
                 ],
@@ -506,7 +506,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                     underline: Container(),
                     icon: const Icon(Icons.arrow_drop_down,
                         color: AppTheme.accentOrange),
-                    dropdownColor: Colors.grey[900],
+                    dropdownColor: AppTheme.surface,
                     style: const TextStyle(color: Colors.white, fontSize: 13),
                   ),
                 ],
@@ -517,6 +517,39 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                 style: TextStyle(color: Colors.grey, fontSize: 11),
               ),
               const Gap(24),
+              const Divider(color: Colors.grey, thickness: 0.5),
+              const Gap(8),
+
+              // ─── Penyimpanan (hanya untuk video) ────────
+              const Text(
+                'Penyimpanan',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Gap(4),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text(
+                  'Hapus salinan lokal setelah ke Galeri',
+                  style: TextStyle(color: Colors.white),
+                ),
+                subtitle: const Text(
+                  'Menghemat storage. Video hanya bisa diputar lewat aplikasi '
+                  'Galeri, bukan lagi dari Riwayat TERMULScan. Hanya berlaku '
+                  'jika ekspor ke Galeri berhasil — jika gagal, salinan lokal '
+                  'tetap disimpan.',
+                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+                value: _settings.deleteLocalVideoAfterGalleryExport,
+                onChanged: (val) =>
+                    _settings.setDeleteLocalVideoAfterGalleryExport(val),
+                activeColor: AppTheme.accentOrange,
+                tileColor: Colors.transparent,
+              ),
+              const Gap(16),
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
@@ -562,7 +595,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
             hintText: hint,
             hintStyle: const TextStyle(color: Colors.grey),
             filled: true,
-            fillColor: Colors.grey[900],
+            fillColor: AppTheme.surface,
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
               borderSide: BorderSide.none,

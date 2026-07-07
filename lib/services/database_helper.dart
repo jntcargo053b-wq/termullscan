@@ -24,7 +24,7 @@ class DatabaseHelper {
     final path = join(dir.path, 'scan_log.db');
     return await openDatabase(
       path,
-      version: 4, // ⬆️ upgrade ke versi 4
+      version: 5, // ⬆️ upgrade ke versi 5
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -49,7 +49,8 @@ class DatabaseHelper {
         videoPath TEXT,
         videoDuration INTEGER,
         videoThumbnail TEXT,
-        galleryExported INTEGER DEFAULT 0
+        galleryExported INTEGER DEFAULT 0,
+        videoLocalDeleted INTEGER DEFAULT 0
       )
     ''');
     await db.execute('CREATE INDEX idx_value ON scan_entries(value)');
@@ -70,6 +71,11 @@ class DatabaseHelper {
     if (oldVersion < 4) {
       await db.execute('ALTER TABLE scan_entries ADD COLUMN galleryExported INTEGER DEFAULT 0');
       debugPrint('✅ Database migrated to version 4: added galleryExported column');
+    }
+    // ─── MIGRASI VERSI 4 → 5 ──────────────────────────────
+    if (oldVersion < 5) {
+      await db.execute('ALTER TABLE scan_entries ADD COLUMN videoLocalDeleted INTEGER DEFAULT 0');
+      debugPrint('✅ Database migrated to version 5: added videoLocalDeleted column');
     }
   }
 

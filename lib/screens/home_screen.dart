@@ -84,7 +84,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(success ? 'Restore berhasil' : 'Restore gagal'),
-            backgroundColor: success ? Colors.green : Colors.red,
+            backgroundColor: success ? AppTheme.success : AppTheme.error,
           ),
         );
       }
@@ -112,7 +112,7 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               const Gap(16),
               Text(
-                'WH Scanner',
+                'TermulScan',
                 style: Theme.of(context).textTheme.displayLarge?.copyWith(
                       fontWeight: FontWeight.bold,
                     ),
@@ -121,7 +121,7 @@ class _HomeScreenState extends State<HomeScreen> {
               Text(
                 'Scan barcode & foto dengan watermark',
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Colors.grey[400],
+                      color: AppTheme.textSecondary,
                     ),
               ).animate().fadeIn(delay: 100.ms),
               const Gap(8),
@@ -129,17 +129,17 @@ class _HomeScreenState extends State<HomeScreen> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
-                  color: Colors.grey.shade800,
+                  color: AppTheme.surfaceLight,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.sd_storage, size: 14, color: Colors.grey),
+                    const Icon(Icons.sd_storage, size: 14, color: AppTheme.textSecondary),
                     const Gap(6),
                     Text(
                       'Penyimpanan: ${_formatStorage(_storageUsedBytes)}',
-                      style: const TextStyle(color: Colors.grey, fontSize: 12),
+                      style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12),
                     ),
                   ],
                 ),
@@ -209,7 +209,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 : const Icon(Icons.backup, size: 18),
                             label: Text(_isBackupLoading ? 'Backup...' : 'Backup'),
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.blue.shade700,
+                              backgroundColor: AppTheme.accentBlue,
                               foregroundColor: Colors.white,
                               padding: const EdgeInsets.symmetric(vertical: 14),
                             ),
@@ -229,7 +229,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             label: Text(_isRestoreLoading ? 'Restore...' : 'Restore'),
                             style: OutlinedButton.styleFrom(
                               foregroundColor: Colors.white,
-                              side: const BorderSide(color: Colors.grey),
+                              side: const BorderSide(color: AppTheme.textSecondary),
                               padding: const EdgeInsets.symmetric(vertical: 14),
                             ),
                           ),
@@ -252,50 +252,55 @@ class _HomeScreenState extends State<HomeScreen> {
     required String subtitle,
     required VoidCallback onTap,
   }) {
-    return Material(
-      color: AppTheme.surface,
-      borderRadius: BorderRadius.circular(16),
-      child: InkWell(
-        onTap: onTap,
+    return Semantics(
+      button: true,
+      label: '$title. $subtitle',
+      excludeSemantics: true,
+      child: Material(
+        color: AppTheme.surface,
         borderRadius: BorderRadius.circular(16),
-        child: Container(
-          padding: const EdgeInsets.all(20),
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: AppTheme.accentOrange.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            padding: const EdgeInsets.all(20),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.accentOrange.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(icon, color: AppTheme.accentOrange, size: 28),
                 ),
-                child: Icon(icon, color: AppTheme.accentOrange, size: 28),
-              ),
-              const Gap(16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
+                const Gap(16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                    ),
-                    const Gap(2),
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        color: Colors.grey[400],
-                        fontSize: 13,
+                      const Gap(2),
+                      Text(
+                        subtitle,
+                        style: TextStyle(
+                          color: AppTheme.textSecondary,
+                          fontSize: 13,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-              Icon(Icons.chevron_right, color: Colors.grey[600]),
-            ],
+                Icon(Icons.chevron_right, color: AppTheme.textSecondary),
+              ],
+            ),
           ),
         ),
       ),

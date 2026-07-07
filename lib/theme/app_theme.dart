@@ -13,6 +13,20 @@ class AppTheme {
   static const Color error = Color(0xFFF85149);
   static const Color border = Color(0xFF30363D);
 
+  // Warna status (dipakai untuk snackbar/badge sukses-gagal)
+  static const Color success = Color(0xFF3FB950);
+
+  // Radius tokens — hindari magic number BorderRadius.circular(n) tersebar
+  static const double radiusSm = 8.0;
+  static const double radiusMd = 12.0;
+  static const double radiusLg = 20.0;
+
+  // Spacing tokens
+  static const double spaceXs = 4.0;
+  static const double spaceSm = 8.0;
+  static const double spaceMd = 16.0;
+  static const double spaceLg = 24.0;
+
   static ThemeData get dark {
     return ThemeData(
       brightness: Brightness.dark,

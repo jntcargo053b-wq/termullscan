@@ -10,6 +10,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
 import '../services/permission_service.dart';
+import '../theme/app_theme.dart';
 import '../watermark/watermark_settings.dart';
 import 'watermark_settings_sheet.dart';
 import 'photo_scan_screen.dart';
@@ -112,7 +113,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF1E1E1E),
+      backgroundColor: AppTheme.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -189,7 +190,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF1E1E1E),
+      backgroundColor: AppTheme.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -261,7 +262,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
                   if (_wmSettings.operatorName.isNotEmpty || _wmSettings.hasLogo)
                     const Positioned(
                       right: 0, top: 0,
-                      child: Icon(Icons.circle, size: 8, color: Colors.amber),
+                      child: Icon(Icons.circle, size: 8, color: AppTheme.accent),
                     ),
                 ],
               ),
@@ -273,6 +274,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       body: Stack(
         children: [
           MobileScanner(controller: _scannerController, onDetect: _onDetect),
+          if (_activeBarcode == null)
+            const Positioned.fill(child: IgnorePointer(child: _ScanFrameOverlay())),
           if (_activeBarcode != null)
             Positioned(
               top: 12, left: 0, right: 0,
@@ -282,12 +285,12 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
                 decoration: BoxDecoration(
                   color: Colors.black.withOpacity(0.75),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.amber.withOpacity(0.4)),
+                  border: Border.all(color: AppTheme.accent.withOpacity(0.4)),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.qr_code, color: Colors.amber, size: 18),
+                    const Icon(Icons.qr_code, color: AppTheme.accent, size: 18),
                     const Gap(8),
                     Expanded(
                       child: Text(
@@ -300,12 +303,12 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                       decoration: BoxDecoration(
-                        color: Colors.amber.withOpacity(0.2),
+                        color: AppTheme.accent.withOpacity(0.2),
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(
                         '$_batchPhotoCount foto',
-                        style: const TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.w700),
+                        style: const TextStyle(color: AppTheme.accent, fontSize: 12, fontWeight: FontWeight.w700),
                       ),
                     ),
                   ],
@@ -326,15 +329,15 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
                       decoration: BoxDecoration(
                         color: const Color(0xAA000000),
                         borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: Colors.amber.withOpacity(0.4)),
+                        border: Border.all(color: AppTheme.accent.withOpacity(0.4)),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           if (_wmSettings.operatorName.isNotEmpty) ...[
-                            const Icon(Icons.person, color: Colors.amber, size: 12),
+                            const Icon(Icons.person, color: AppTheme.accent, size: 12),
                             const Gap(5),
-                            Text(_wmSettings.operatorName, style: const TextStyle(color: Colors.amber, fontSize: 12, fontWeight: FontWeight.w600)),
+                            Text(_wmSettings.operatorName, style: const TextStyle(color: AppTheme.accent, fontSize: 12, fontWeight: FontWeight.w600)),
                           ],
                           if (_wmSettings.hasLogo) ...[
                             if (_wmSettings.operatorName.isNotEmpty) const Gap(8),
@@ -461,7 +464,7 @@ class _ManualInputDialogState extends State<_ManualInputDialog> {
           ),
           const Gap(16),
           const Row(children: [
-            Icon(Icons.keyboard, color: Colors.amber, size: 20), Gap(8),
+            Icon(Icons.keyboard, color: AppTheme.accent, size: 20), Gap(8),
             Text('Input Manual', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
           ]),
           const Gap(4),
@@ -477,7 +480,7 @@ class _ManualInputDialogState extends State<_ManualInputDialog> {
               filled: true,
               fillColor: const Color(0xFF2A2A2A),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
-              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.amber, width: 1.5)),
+              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppTheme.accent, width: 1.5)),
               prefixIcon: const Icon(Icons.qr_code, color: Colors.grey),
               suffixIcon: IconButton(icon: const Icon(Icons.clear, color: Colors.grey, size: 18), onPressed: () => _controller.clear()),
               contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -489,7 +492,7 @@ class _ManualInputDialogState extends State<_ManualInputDialog> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.amber, foregroundColor: Colors.black, padding: const EdgeInsets.symmetric(vertical: 14), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accent, foregroundColor: Colors.black, padding: const EdgeInsets.symmetric(vertical: 14), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
               onPressed: () {
                 final val = _controller.text.trim();
                 if (val.isNotEmpty) { Navigator.pop(context); widget.onSubmitted(val); }
@@ -502,4 +505,69 @@ class _ManualInputDialogState extends State<_ManualInputDialog> {
       ),
     );
   }
+}
+
+// ─── Viewfinder overlay: kotak area scan + bracket sudut ──────
+// Memberi panduan visual area barcode yang efektif dibaca kamera,
+// standar pada aplikasi scanner profesional.
+class _ScanFrameOverlay extends StatelessWidget {
+  const _ScanFrameOverlay();
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: 'Area bidik barcode. Posisikan barcode di dalam kotak.',
+      child: CustomPaint(
+        size: Size.infinite,
+        painter: _ScanFramePainter(color: AppTheme.accent),
+      ),
+    );
+  }
+}
+
+class _ScanFramePainter extends CustomPainter {
+  final Color color;
+  const _ScanFramePainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final boxWidth = size.width * 0.78;
+    final boxHeight = boxWidth * 0.62;
+    final rect = Rect.fromCenter(
+      center: Offset(size.width / 2, size.height * 0.42),
+      width: boxWidth,
+      height: boxHeight,
+    );
+    final rrect = RRect.fromRectAndRadius(rect, const Radius.circular(16));
+
+    // Area luar digelapkan, area dalam kotak tetap transparan (cutout).
+    final overlayPath = Path()
+      ..addRect(Rect.fromLTWH(0, 0, size.width, size.height))
+      ..addRRect(rrect)
+      ..fillType = PathFillType.evenOdd;
+    canvas.drawPath(overlayPath, Paint()..color = Colors.black.withOpacity(0.35));
+
+    // Bracket sudut
+    const bracketLen = 28.0;
+    const strokeW = 3.5;
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = strokeW
+      ..strokeCap = StrokeCap.round
+      ..style = PaintingStyle.stroke;
+    const r = 16.0;
+
+    void drawCorner(Offset pos, Offset dx, Offset dy) {
+      canvas.drawLine(pos + dy * r, pos + dy * bracketLen, paint);
+      canvas.drawLine(pos + dx * r, pos + dx * bracketLen, paint);
+    }
+
+    drawCorner(rect.topLeft, const Offset(1, 0), const Offset(0, 1));
+    drawCorner(rect.topRight, const Offset(-1, 0), const Offset(0, 1));
+    drawCorner(rect.bottomLeft, const Offset(1, 0), const Offset(0, -1));
+    drawCorner(rect.bottomRight, const Offset(-1, 0), const Offset(0, -1));
+  }
+
+  @override
+  bool shouldRepaint(covariant _ScanFramePainter oldDelegate) => false;
 }

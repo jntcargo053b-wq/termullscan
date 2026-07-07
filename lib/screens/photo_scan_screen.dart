@@ -242,7 +242,7 @@ class _BatchFinishButtonWidget extends StatelessWidget {
             icon: const Icon(Icons.done_all, size: 20),
             label: Text('Selesai Batch (${photoCount} foto)'),
             style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green.shade700,
+              backgroundColor: AppTheme.success,
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 14),
               textStyle: const TextStyle(
@@ -415,7 +415,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: const Color(0xFF1E1E1E),
+      backgroundColor: AppTheme.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -800,7 +800,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
           SnackBar(
             content: Text('📸 Foto $photoIndex berhasil (${widget.barcode ?? 'tanpa barcode'})'),
             duration: const Duration(seconds: 1),
-            backgroundColor: Colors.green.shade700,
+            backgroundColor: AppTheme.success,
           ),
         );
       }
@@ -901,7 +901,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        backgroundColor: Colors.green.shade700,
+        backgroundColor: AppTheme.success,
         duration: const Duration(seconds: 2),
         content: const Row(
           children: [
@@ -975,7 +975,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
             ),
           if (_pendingTasks > 0)
             IconButton(
-              icon: const Icon(Icons.cancel, color: Colors.red),
+              icon: const Icon(Icons.cancel, color: AppTheme.error),
               onPressed: () {
                 _taskQueue.cancelAllPending();
                 setState(() {});
@@ -994,7 +994,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                       const Positioned(
                         right: 0,
                         top: 0,
-                        child: Icon(Icons.circle, size: 8, color: Colors.amber),
+                        child: Icon(Icons.circle, size: 8, color: AppTheme.accent),
                       ),
                   ],
                 ),

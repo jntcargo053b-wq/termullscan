@@ -1,85 +1,202 @@
 // lib/services/background/video_processing_service.dart
+//
+// Wrapper tipis di atas flutter_foreground_task.
+//
+// Tujuannya BUKAN memindahkan eksekusi FFmpeg ke isolate terpisah — proses
+// native FFmpeg (via ffmpeg_kit) sudah berjalan di thread native-nya sendiri
+// terlepas dari isolate Dart mana yang memanggilnya. Tujuan service ini
+// murni untuk menjaga PROSES aplikasi tetap hidup (dengan notifikasi
+// foreground) selama TaskQueue sedang merender/mengekspor video, sehingga
+// Android tidak membekukan/mematikan proses saat aplikasi di-background.
+//
+// Dipanggil dari video_scan_screen.dart (dan bisa dipakai screen lain nanti):
+//   - VideoProcessingService.init()              -> sekali, saat app start
+//   - VideoProcessingService.requestPermissions() -> sekali, sebelum start pertama
+//   - VideoProcessingService.startService(...)    -> saat mulai memproses
+//   - VideoProcessingService.updateProgress(...)  -> tiap progress berubah
+//   - VideoProcessingService.stopService()        -> saat queue benar-benar kosong
+
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import '../queue/job_queue_manager.dart';
-import '../../watermark/watermark_service.dart';
-import '../../models/video_job.dart';
 
 class VideoProcessingService {
-  static final FlutterLocalNotificationsPlugin _notifications = FlutterLocalNotificationsPlugin();
+  VideoProcessingService._();
 
-  static Future<void> startService() async {
-    await FlutterForegroundTask.startService(
-      notificationTitle: 'TermullScan',
-      notificationText: 'Mempersiapkan rendering...',
-      callback: _startCallback,
+  static bool _initialized = false;
+
+  /// Panggil sekali di main(), sebelum runApp().
+  static void init() {
+    if (_initialized) return;
+    _initialized = true;
+
+    FlutterForegroundTask.initCommunicationPort();
+
+    FlutterForegroundTask.init(
+      androidNotificationOptions: AndroidNotificationOptions(
+        channelId: 'termulscan_video_export',
+        channelName: 'Ekspor Video',
+        channelDescription:
+            'Menampilkan progres saat TERMULScan sedang merender watermark video.',
+        onlyAlertOnce: true,
+      ),
+      iosNotificationOptions: const IOSNotificationOptions(
+        showNotification: false,
+        playSound: false,
+      ),
+      foregroundTaskOptions: ForegroundTaskOptions(
+        eventAction: ForegroundTaskEventAction.repeat(5000),
+        autoRunOnBoot: false,
+        autoRunOnMyPackageReplaced: false,
+        allowWakeLock: true,
+        allowWifiLock: false,
+      ),
     );
   }
 
-  static Future<void> stopService() async {
-    await FlutterForegroundTask.stopService();
+  /// Minta izin notifikasi (Android 13+) dan battery optimization exemption.
+  /// Aman dipanggil berkali-kali; sebaiknya dipanggil sebelum startService
+  /// pertama kali (mis. di initState layar rekam video).
+  static Future<void> requestPermissions() async {
+    final NotificationPermission notifPermission =
+        await FlutterForegroundTask.checkNotificationPermission();
+    if (notifPermission != NotificationPermission.granted) {
+      await FlutterForegroundTask.requestNotificationPermission();
+    }
+
+    if (Platform.isAndroid) {
+      // Supaya service tidak langsung dibunuh sistem di beberapa pabrikan
+      // (Xiaomi/MIUI, dll) saat aplikasi di-background dalam waktu lama.
+      if (!await FlutterForegroundTask.isIgnoringBatteryOptimizations) {
+        await FlutterForegroundTask.requestIgnoreBatteryOptimization();
+      }
+    }
   }
 
-  @pragma('vm:entry-point')
-  static void _startCallback() {
-    FlutterForegroundTask.setTaskHandler(_TaskHandler());
+  static Future<bool> get isRunning => FlutterForegroundTask.isRunningService;
+
+  // ─── Penghitung task aktif bersama (lintas TaskQueue/layar) ──────────
+  // TaskQueue di tiap layar hanya tahu status dirinya sendiri. Kalau dua
+  // TaskQueue (mis. video + foto) sama-sama memanggil startService/
+  // stopService langsung, salah satu bisa mematikan notifikasi padahal
+  // TaskQueue lain masih bekerja. Counter statis ini jadi satu-satunya
+  // sumber kebenaran: service hanya benar-benar berhenti saat counter-nya
+  // kembali ke 0.
+  static int _activeCount = 0;
+
+  /// Panggil dari TaskQueue.onActiveStart. Aman dipanggil dari beberapa
+  /// TaskQueue sekaligus.
+  static Future<void> markBusy({
+    String title = 'TERMULScan',
+    String text = 'Memproses...',
+  }) async {
+    _activeCount++;
+    if (_activeCount == 1) {
+      await startService(title: title, text: text);
+    }
+  }
+
+  /// Panggil dari TaskQueue.onActiveEnd. Service baru benar-benar dihentikan
+  /// saat semua TaskQueue yang memanggil markBusy() sudah selesai.
+  static Future<void> markIdle() async {
+    if (_activeCount > 0) _activeCount--;
+    if (_activeCount == 0) {
+      await stopService();
+    }
+  }
+
+  /// Mulai (atau lanjutkan) foreground service dengan notifikasi berjalan.
+  static Future<void> startService({
+    String title = 'TERMULScan',
+    String text = 'Memproses video...',
+  }) async {
+    try {
+      if (await FlutterForegroundTask.isRunningService) {
+        await FlutterForegroundTask.updateService(
+          notificationTitle: title,
+          notificationText: text,
+        );
+        return;
+      }
+
+      await FlutterForegroundTask.startService(
+        serviceId: 401,
+        notificationTitle: title,
+        notificationText: text,
+        callback: _startCallback,
+      );
+    } catch (e) {
+      // Foreground service gagal start tidak boleh menggagalkan proses
+      // rendering video itu sendiri — cukup catat, video tetap lanjut
+      // diproses tanpa perlindungan foreground service.
+      debugPrint('⚠️ Gagal memulai foreground service: $e');
+    }
+  }
+
+  /// Perbarui teks notifikasi (mis. persentase progres FFmpeg).
+  static Future<void> updateProgress({
+    required String title,
+    required String text,
+  }) async {
+    try {
+      if (await FlutterForegroundTask.isRunningService) {
+        await FlutterForegroundTask.updateService(
+          notificationTitle: title,
+          notificationText: text,
+        );
+      }
+    } catch (e) {
+      debugPrint('⚠️ Gagal update notifikasi foreground service: $e');
+    }
+  }
+
+  /// Hentikan service. Panggil hanya ketika TaskQueue benar-benar kosong
+  /// (tidak ada task pending/running lain yang masih butuh perlindungan ini).
+  static Future<void> stopService() async {
+    try {
+      if (await FlutterForegroundTask.isRunningService) {
+        await FlutterForegroundTask.stopService();
+      }
+    } catch (e) {
+      debugPrint('⚠️ Gagal menghentikan foreground service: $e');
+    }
   }
 }
 
-class _TaskHandler extends TaskHandler {
-  final JobQueueManager _queue = JobQueueManager();
-  bool _isRunning = false;
+// Callback top-level wajib untuk flutter_foreground_task (dijalankan di
+// isolate service saat pertama kali start).
+@pragma('vm:entry-point')
+void _startCallback() {
+  FlutterForegroundTask.setTaskHandler(_VideoExportTaskHandler());
+}
 
+/// TaskHandler ini sengaja minimal / pasif: pekerjaan FFmpeg yang sebenarnya
+/// tetap berjalan di isolate utama lewat TaskQueue seperti sebelumnya.
+/// Handler ini hanya menjaga siklus hidup notifikasi foreground service.
+class _VideoExportTaskHandler extends TaskHandler {
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
-    _isRunning = true;
-    await _processLoop();
+    debugPrint('🎬 Foreground service ekspor video dimulai (${starter.name})');
   }
 
   @override
-  Future<void> onEvent(DateTime timestamp, TaskStarter starter) async {
-    // Called every 15 seconds, check if we need to process
-    if (!_isRunning) {
-      _isRunning = true;
-      await _processLoop();
-    }
+  void onRepeatEvent(DateTime timestamp) {
+    // Tidak ada pekerjaan periodik yang perlu dilakukan di sini — teks
+    // notifikasi sudah diperbarui langsung dari isolate utama lewat
+    // VideoProcessingService.updateProgress().
   }
 
   @override
-  Future<void> onDestroy(DateTime timestamp, TaskStarter starter) async {
-    _isRunning = false;
-    // Stop service? 
-    FlutterForegroundTask.stopService();
+  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {
+    debugPrint('🛑 Foreground service ekspor video berhenti (timeout: $isTimeout)');
   }
 
   @override
-  void onButtonPressed(String id) {
-    // Handle pause/cancel button from notification
-    if (id == 'cancel') {
-      // Implement cancel logic
-    }
-  }
+  void onNotificationButtonPressed(String id) {}
 
-  Future<void> _processLoop() async {
-    while (_isRunning) {
-      // Ambil job pending dari DB (bukan dari manager UI agar tetap terpisah)
-      // Idealnya kita punya akses ke database langsung di sini.
-      // Untuk contoh sederhana, kita anggap ada static function getNextPending.
-      
-      // Simulasi proses:
-      // var job = await JobDatabase().getNextPending();
-      // if (job == null) break;
-      
-      // Update notification progress
-      await FlutterForegroundTask.updateService(
-        notificationTitle: 'Rendering Video',
-        notificationText: 'Memproses 1/5...',
-      );
+  @override
+  void onNotificationPressed() {}
 
-      // Panggil VideoWatermarkService.addWatermark dengan progress callback
-      // Update progress ke notifikasi setiap 5%.
-      
-      // Jika selesai, update DB status, kirim notifikasi lokal "Selesai".
-    }
-  }
+  @override
+  void onNotificationDismissed() {}
 }

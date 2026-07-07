@@ -17,6 +17,7 @@ import '../services/storage_service.dart';
 import '../services/watermark/watermark_service.dart';
 import '../services/permission_service.dart';
 import '../services/task_queue.dart';
+import '../services/background/video_processing_service.dart';
 import '../watermark/watermark_settings.dart';
 import '../watermark/watermark_style.dart';
 import '../theme/app_theme.dart';
@@ -37,7 +38,19 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
   final StorageService _storage = StorageService();
 
   // ─── TaskQueue ──────────────────────────────────────────────
-  final TaskQueue _taskQueue = TaskQueue(maxWorkers: 1);
+  // onActiveStart/onActiveEnd dipicu TaskQueue sendiri berdasarkan
+  // penghitung task aktif (pending + running) — bukan dari onSuccess/
+  // onError per-video — supaya foreground service selalu selaras dengan
+  // kondisi antrian yang sebenarnya, termasuk saat retry atau saat ada
+  // lebih dari satu video mengantre.
+  late final TaskQueue _taskQueue = TaskQueue(
+    maxWorkers: 1,
+    onActiveStart: () => unawaited(VideoProcessingService.markBusy(
+      title: 'TERMULScan',
+      text: 'Menyiapkan render video...',
+    )),
+    onActiveEnd: () => unawaited(VideoProcessingService.markIdle()),
+  );
   int _pendingTasks = 0;
   int _runningTasks = 0;
 
@@ -53,6 +66,9 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
   void initState() {
     super.initState();
     PermissionService.requestGalleryPermission();
+    // Minta izin notifikasi/battery-optimization untuk foreground service
+    // yang akan melindungi proses render FFmpeg saat aplikasi di-background.
+    unawaited(VideoProcessingService.requestPermissions());
     _taskQueue.statusStream.listen((task) {
       if (!mounted) return;
       setState(() {
@@ -188,7 +204,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
           _statusText = 'Gagal merekam';
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal merekam: $e'), backgroundColor: Colors.red),
+          SnackBar(content: Text('Gagal merekam: $e'), backgroundColor: AppTheme.error),
         );
       }
     }
@@ -196,11 +212,30 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
 
   // ─── Core Processing ────────────────────────────────────────
 
+  // ─── Hapus salinan lokal setelah sukses ke Galeri (opsional) ─────────
+  // Hanya menghapus jika: (a) setting diaktifkan, DAN (b) ekspor ke Galeri
+  // benar-benar sukses. Kalau ekspor gagal, salinan lokal WAJIB tetap ada
+  // — itu satu-satunya salinan video yang dimiliki user saat itu.
+  Future<bool> _maybeDeleteLocalCopy(String path, bool galleryOk) async {
+    if (!galleryOk) return false;
+    if (!WatermarkSettings().deleteLocalVideoAfterGalleryExport) return false;
+    try {
+      final f = File(path);
+      if (await f.exists()) await f.delete();
+      debugPrint('🗑️ Salinan lokal dihapus (sudah ada di Galeri): $path');
+      return true;
+    } catch (e) {
+      debugPrint('⚠️ Gagal menghapus salinan lokal: $e');
+      return false;
+    }
+  }
+
   Future<ScanEntry> _processVideo(XFile videoFile) async {
     String? finalPath;
     String? thumbnailPath;
     int durationSeconds = 0;
     bool galleryOk = false;
+    bool localCopyDeleted = false;
 
     try {
       final file = File(videoFile.path);
@@ -253,6 +288,10 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
             _progress = progress;
             _statusText = 'Menambahkan watermark... ${(progress * 100).toInt()}%';
           });
+          unawaited(VideoProcessingService.updateProgress(
+            title: 'TERMULScan — merender video',
+            text: '${(progress * 100).toInt()}% selesai',
+          ));
         },
       );
 
@@ -291,8 +330,16 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         // 7. Hapus video mentah
         await file.delete();
 
+        // 7b. Opsional: hapus salinan lokal (savedPath) jika sudah sukses
+        // ke Galeri dan user mengaktifkan setting-nya. finalPath TETAP
+        // diisi (untuk referensi historis di DB) — videoLocalDeleted-lah
+        // yang menandakan filenya sudah tidak ada secara fisik.
+        localCopyDeleted = await _maybeDeleteLocalCopy(savedPath, galleryOk);
+
         _safeSetState(() => _statusText = galleryOk
-            ? 'Video tersimpan di internal & Gallery'
+            ? (localCopyDeleted
+                ? 'Video tersimpan di Galeri (lokal dihapus)'
+                : 'Video tersimpan di internal & Gallery')
             : 'Video tersimpan di internal (gagal ekspor)');
       } else {
         // 8. Watermark gagal → simpan video mentah
@@ -320,9 +367,12 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         // dicoba diekspor supaya user selalu punya salinan di Gallery.
         _safeSetState(() => _statusText = 'Ekspor ke Gallery...');
         galleryOk = await _saveToGallery(savedPath);
+        localCopyDeleted = await _maybeDeleteLocalCopy(savedPath, galleryOk);
 
         _safeSetState(() => _statusText = galleryOk
-            ? 'Video tersimpan (tanpa watermark) & Gallery'
+            ? (localCopyDeleted
+                ? 'Video tersimpan di Galeri (lokal dihapus)'
+                : 'Video tersimpan (tanpa watermark) & Gallery')
             : 'Video tersimpan (tanpa watermark), gagal ekspor ke Gallery');
       }
 
@@ -338,6 +388,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         videoDuration: durationSeconds,
         videoThumbnail: thumbnailPath,
         galleryExported: galleryOk,
+        videoLocalDeleted: localCopyDeleted,
       );
       await _storage.add(entry);
 
@@ -469,7 +520,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
               showModalBottomSheet(
                 context: context,
                 isScrollControlled: true,
-                backgroundColor: const Color(0xFF1E1E1E),
+                backgroundColor: AppTheme.surface,
                 shape: const RoundedRectangleBorder(
                   borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
                 ),
@@ -479,7 +530,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
           ),
           if (_pendingTasks > 0)
             IconButton(
-              icon: const Icon(Icons.cancel, color: Colors.red),
+              icon: const Icon(Icons.cancel, color: AppTheme.error),
               onPressed: () {
                 _taskQueue.cancelAllPending();
                 setState(() {});
