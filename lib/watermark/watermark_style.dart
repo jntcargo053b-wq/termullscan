@@ -1,23 +1,35 @@
+// lib/watermark/watermark_style.dart
+
 enum WatermarkStyle {
   minimal,
   professional,
   polaroid,
   stamp,
   timestamp,
-  fullInfo, // ← tambahkan ini
+  fullInfo,
 }
 
 /// Kapabilitas tiap gaya watermark untuk pipeline VIDEO (FFmpeg drawtext/drawbox).
 ///
-/// Sejak unifikasi engine hierarki info (lokasi/tanggal/jam/koordinat),
-/// SEMUA gaya kini punya implementasi video (lihat
-/// `WatermarkCache.buildGeneralStyleFilters` untuk minimal/professional/
-/// polaroid/stamp, dan `getTimestamp`/`getFullInfo` untuk 2 gaya lainnya).
 /// Efek yang murni Canvas-only (rotasi teks, bingkai Polaroid yang
 /// memperluas kanvas, badge melingkar Stamp) disederhanakan jadi panel/box
 /// persegi di video, tapi kontennya sudah representatif dan konsisten.
 extension WatermarkStyleCapability on WatermarkStyle {
-  bool get supportsVideo => true;
+  /// Apakah gaya ini kompatibel dengan video.
+  /// 
+  /// [polaroid] menghasilkan bingkai full‑frame yang opaque dan menutupi
+  /// seluruh video, sehingga tidak cocok untuk video. Gaya ini akan
+  /// disembunyikan dari pilihan di layar video.
+  bool get supportsVideo {
+    switch (this) {
+      case WatermarkStyle.polaroid:
+        return false; // ❌ Tidak kompatibel video (bingkai full‑frame)
+      // case WatermarkStyle.fullInfo:
+      //   return false; // ❌ Jika fullInfo juga full‑frame
+      default:
+        return true; // ✅ Kompatibel video
+    }
+  }
 }
 
 enum VideoQuality {
@@ -36,4 +48,3 @@ enum ProcessingMode {
   fast,         // preset veryfast — proses cepat, ukuran/kompresi kurang optimal
   professional, // preset slow — proses lebih lama, kompresi & kualitas lebih baik
 }
-
