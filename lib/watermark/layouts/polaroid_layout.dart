@@ -44,7 +44,8 @@ class PolaroidLayout extends WatermarkLayout {
     final canvasW = photoWidth + padding * 2;
     final canvasH = photoHeight + padding + bottomStripHeight;
 
-    final logoMaxH = theme.logo.maxSize;
+    // logo.maxSize sekarang rasio kecil (mis. 0.20), langsung dikalikan baseSize * scaleFactor
+    final logoMaxH = baseSize * theme.logo.maxSize * theme.logo.scaleFactor;
     final isManual = data.isManual;
     final rightReserved = (isManual ? baseSize * 0.11 : 0.0) + logoMaxH;
     final textW = canvasW - padding * 2 - 14 - rightReserved;
@@ -90,15 +91,15 @@ class PolaroidLayout extends WatermarkLayout {
     final textSecondary = const Color(0xFF555555);
     final textMuted = const Color(0xFF9A9A92);
 
-    final paperRect = Rect.fromLTWH(0, 0, canvasWidth, canvasHeight);
+    final paperRect = ui.Rect.fromLTWH(0, 0, canvasWidth, canvasHeight);
     final paperShader = ui.Gradient.linear(
       paperRect.topLeft,
       paperRect.bottomRight,
       [surfaceColor, const Color(0xFFF0EFE9)],
     );
-    final cardRadius = Radius.circular(theme.panel.borderRadius);
-    final cardRRect = RRect.fromRectAndRadius(paperRect, cardRadius);
-    final cardPath = Path()..addRRect(cardRRect);
+    final cardRadius = ui.Radius.circular(theme.panel.borderRadius);
+    final cardRRect = ui.RRect.fromRectAndRadius(paperRect, cardRadius);
+    final cardPath = ui.Path()..addRRect(cardRRect);
 
     // Simple shadow without external shadow themes
     canvas.drawShadow(
@@ -110,32 +111,32 @@ class PolaroidLayout extends WatermarkLayout {
 
     canvas.save();
     canvas.clipRRect(cardRRect);
-    canvas.drawRect(paperRect, Paint()..shader = paperShader);
+    canvas.drawRect(paperRect, ui.Paint()..shader = paperShader);
 
-    final outerPhotoRect = Rect.fromLTWH(
+    final outerPhotoRect = ui.Rect.fromLTWH(
       padding - frameBorder,
       padding - frameBorder,
       photoWidth + frameBorder * 2,
       photoHeight + frameBorder * 2,
     );
-    canvas.drawRect(outerPhotoRect, Paint()..color = const Color(0xFFFFFFFF));
+    canvas.drawRect(outerPhotoRect, ui.Paint()..color = const Color(0xFFFFFFFF));
     canvas.drawRect(
       outerPhotoRect,
-      Paint()
+      ui.Paint()
         ..color = dividerColor
-        ..style = PaintingStyle.stroke
+        ..style = ui.PaintingStyle.stroke
         ..strokeWidth = 1.0, // hairlineStroke
     );
 
-    final photoRect = Rect.fromLTWH(padding, padding, photoWidth, photoHeight);
+    final photoRect = ui.Rect.fromLTWH(padding, padding, photoWidth, photoHeight);
     canvas.save();
-    canvas.clipRRect(RRect.fromRectAndRadius(photoRect, const Radius.circular(6)));
+    canvas.clipRRect(ui.RRect.fromRectAndRadius(photoRect, ui.Radius.circular(6)));
     canvas.drawImageRect(
       srcImage,
-      Rect.fromLTWH(0, 0, photoWidth, photoHeight),
+      ui.Rect.fromLTWH(0, 0, photoWidth, photoHeight),
       photoRect,
-      Paint()
-        ..filterQuality = FilterQuality.high
+      ui.Paint()
+        ..filterQuality = ui.FilterQuality.high
         ..isAntiAlias = true,
     );
 
@@ -148,20 +149,20 @@ class PolaroidLayout extends WatermarkLayout {
       ],
       [0.72, 1.0],
     );
-    canvas.drawRect(photoRect, Paint()..shader = vignette);
+    canvas.drawRect(photoRect, ui.Paint()..shader = vignette);
     canvas.drawRect(
       photoRect,
-      Paint()..color = const Color(0xFFE8A95B).withOpacity(0.05),
+      ui.Paint()..color = const Color(0xFFE8A95B).withOpacity(0.05),
     );
     canvas.restore();
 
     // Draw divider line (replacing WatermarkDivider)
-    final dividerPaint = Paint()
+    final dividerPaint = ui.Paint()
       ..color = dividerColor.withOpacity(0.6)
       ..strokeWidth = 1.0;
     canvas.drawLine(
-      Offset(padding, stripTop),
-      Offset(canvasWidth - padding, stripTop),
+      ui.Offset(padding, stripTop),
+      ui.Offset(canvasWidth - padding, stripTop),
       dividerPaint,
     );
 
@@ -213,16 +214,16 @@ class PolaroidLayout extends WatermarkLayout {
 
       final cardPad = theme.logoCardPadding(drawW);
       canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(
+        ui.RRect.fromRectAndRadius(
+          ui.Rect.fromLTWH(
             logoX - cardPad,
             logoY.clamp(stripTop, stripTop + stripHeight - drawH) - cardPad,
             drawW + cardPad * 2,
             drawH + cardPad * 2,
           ),
-          Radius.circular(theme.logoCardRadius(cardPad)),
+          ui.Radius.circular(theme.logoCardRadius(cardPad)),
         ),
-        Paint()..color = Colors.black.withOpacity(0.30),
+        ui.Paint()..color = Colors.black.withOpacity(0.30),
       );
 
       LogoWidget.paint(
@@ -480,16 +481,16 @@ class PolaroidLayout extends WatermarkLayout {
     canvas.rotate(-0.07);
     canvas.translate(-badgeW / 2, -badgeH / 2);
 
-    final rect = Rect.fromLTWH(0, 0, badgeW, badgeH);
+    final rect = ui.Rect.fromLTWH(0, 0, badgeW, badgeH);
     canvas.drawRRect(
-      RRect.fromRectAndRadius(rect, Radius.circular(badgeH * 0.22)),
-      Paint()..color = accentColor,
+      ui.RRect.fromRectAndRadius(rect, ui.Radius.circular(badgeH * 0.22)),
+      ui.Paint()..color = accentColor,
     );
     canvas.drawRRect(
-      RRect.fromRectAndRadius(rect, Radius.circular(badgeH * 0.22)),
-      Paint()
+      ui.RRect.fromRectAndRadius(rect, ui.Radius.circular(badgeH * 0.22)),
+      ui.Paint()
         ..color = Colors.white.withOpacity(0.55)
-        ..style = PaintingStyle.stroke
+        ..style = ui.PaintingStyle.stroke
         ..strokeWidth = math.max(1.0, badgeH * 0.06),
     );
     TextHelper.paintText(
