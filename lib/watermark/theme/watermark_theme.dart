@@ -148,27 +148,39 @@ class WatermarkTheme {
             borderRadius: 8.0,
             highlightOpacity: 0.06,
           ),
+          // ⚠️ `maxSize` di sini adalah RASIO kecil (bukan px absolut).
+          // MinimalLayout/ProfessionalLayout menghitung logo final dengan
+          // `effectiveBaseSize * logo.maxSize * logo.scaleFactor`, jadi
+          // hasilnya otomatis proporsional terhadap resolusi foto asli.
           logo: const LogoTheme(
-            maxSize: 40.0,
+            maxSize: 0.20,
             scaleFactor: 0.70,
             opacity: 0.80,
             cardOpacity: 0.15,
             centerVertically: true,
           ),
+          // ⚠️ SEMUA nilai di bawah adalah RASIO terhadap `baseSize`
+          // (dimensi pendek foto ASLI dalam piksel), BUKAN nilai piksel
+          // absolut. Sebelumnya nilai-nilai ini konstan absolut (mis.
+          // fontSize: 11.0) sementara `baseSize` di-scale keliru (*0.8 dari
+          // piksel foto asli) lalu dipakai sebagai `lineH = baseSize *
+          // lineHeight(1.4)` — hasilnya panel watermark membengkak sampai
+          // menutupi seluruh foto, sementara teks & logo tetap kecil/di
+          // luar kanvas karena skalanya tidak konsisten satu sama lain.
           typography: TypographyTheme(
-            baseSize: baseSize * 0.8,
-            padding: 10.0,
-            fontSize: 11.0,
-            lineHeight: 1.4,
-            captionFontSize: 8.0,
-            bodyFontSize: 10.0,
-            barcodeFontSize: 13.0,
-            titleFontSize: 13.0,
-            barcodeLineHeight: 16.0,
-            barcodeRowBonus: 2.0,
-            titleRowBonus: 4.0,
-            groupSpacing: 3.0,
-            coordSpacing: 4.0,
+            baseSize: baseSize,
+            padding: baseSize * 0.032,
+            fontSize: baseSize * 0.028,
+            lineHeight: 0.048, // rasio tinggi baris, BUKAN multiplier CSS
+            captionFontSize: baseSize * 0.020,
+            bodyFontSize: baseSize * 0.026,
+            barcodeFontSize: baseSize * 0.034,
+            titleFontSize: baseSize * 0.034,
+            barcodeLineHeight: baseSize * 0.044,
+            barcodeRowBonus: baseSize * 0.006,
+            titleRowBonus: baseSize * 0.010,
+            groupSpacing: baseSize * 0.007,
+            coordSpacing: baseSize * 0.009,
             useSpacedLabels: false,
             spacedLabelKeys: const {},
           ),
@@ -195,27 +207,28 @@ class WatermarkTheme {
             borderRadius: 12.0,
             highlightOpacity: 0.08,
           ),
+          // Lihat catatan rasio pada style `minimal` di atas.
           logo: const LogoTheme(
-            maxSize: 52.0,
+            maxSize: 0.20,
             scaleFactor: 0.75,
             opacity: 0.85,
             cardOpacity: 0.18,
             centerVertically: true,
           ),
           typography: TypographyTheme(
-            baseSize: baseSize * 0.9,
-            padding: 14.0,
-            fontSize: 12.0,
-            lineHeight: 1.6,
-            captionFontSize: 8.5,
-            bodyFontSize: 11.5,
-            barcodeFontSize: 15.0,
-            titleFontSize: 16.0,
-            barcodeLineHeight: 19.0,
-            barcodeRowBonus: 5.0,
-            titleRowBonus: 7.0,
-            groupSpacing: 5.0,
-            coordSpacing: 6.0,
+            baseSize: baseSize,
+            padding: baseSize * 0.038,
+            fontSize: baseSize * 0.030,
+            lineHeight: 0.054,
+            captionFontSize: baseSize * 0.022,
+            bodyFontSize: baseSize * 0.028,
+            barcodeFontSize: baseSize * 0.038,
+            titleFontSize: baseSize * 0.040,
+            barcodeLineHeight: baseSize * 0.050,
+            barcodeRowBonus: baseSize * 0.007,
+            titleRowBonus: baseSize * 0.011,
+            groupSpacing: baseSize * 0.008,
+            coordSpacing: baseSize * 0.010,
             useSpacedLabels: true,
             spacedLabelKeys: const {'TANGGAL', 'JAM', 'OPERATOR'},
           ),
@@ -231,12 +244,32 @@ class WatermarkTheme {
         );
 
       default:
-        // fallback
+        // Dipakai oleh Polaroid, Stamp, Timestamp, dan FullInfo.
+        // Layout-layout ini membaca `theme.typography.baseSize` /
+        // `theme.logo.maxSize` LANGSUNG sebagai basis rasio (baseSize di
+        // sini tetap dimensi asli foto dalam piksel), jadi field lain pun
+        // dibuat proporsional terhadap `baseSize`, bukan konstanta absolut
+        // seperti sebelumnya (yang membuat lineH = baseSize(asli, besar) *
+        // lineHeight(1.6, multiplier CSS) meledak menutupi foto).
         return WatermarkTheme(
           style: style,
           panel: const PanelTheme(),
-          logo: const LogoTheme(),
-          typography: TypographyTheme(baseSize: baseSize),
+          logo: LogoTheme(maxSize: baseSize * 0.14),
+          typography: TypographyTheme(
+            baseSize: baseSize,
+            padding: baseSize * 0.040,
+            fontSize: baseSize * 0.032,
+            lineHeight: 0.052,
+            captionFontSize: baseSize * 0.024,
+            bodyFontSize: baseSize * 0.030,
+            barcodeFontSize: baseSize * 0.038,
+            titleFontSize: baseSize * 0.042,
+            barcodeLineHeight: baseSize * 0.050,
+            barcodeRowBonus: baseSize * 0.007,
+            titleRowBonus: baseSize * 0.011,
+            groupSpacing: baseSize * 0.009,
+            coordSpacing: baseSize * 0.011,
+          ),
           accent: const AccentTheme(),
         );
     }
