@@ -90,10 +90,19 @@ class WatermarkRenderer {
         theme: theme,
       );
 
+      // Sebagian besar layout menyamakan canvasWidth/canvasHeight dengan
+      // photoWidth/photoHeight, tapi layout seperti Polaroid sengaja
+      // memperbesar kanvas untuk bingkai/frame putih di sekeliling foto.
+      // Sebelumnya kanvas SELALU dipaksa sebesar foto asli sehingga bingkai
+      // itu ikut terpotong — sekarang ukuran final mengikuti kebutuhan
+      // masing-masing layout.
+      final canvasWidth = metrics.canvasWidth;
+      final canvasHeight = metrics.canvasHeight;
+
       final recorder = ui.PictureRecorder();
       final canvas = ui.Canvas(
         recorder,
-        ui.Rect.fromLTWH(0, 0, photoWidth, photoHeight),
+        ui.Rect.fromLTWH(0, 0, canvasWidth, canvasHeight),
       );
 
       layout.paintOnCanvas(
@@ -108,7 +117,7 @@ class WatermarkRenderer {
       );
 
       picture = recorder.endRecording();
-      outputImage = await picture.toImage(photoWidth.round(), photoHeight.round());
+      outputImage = await picture.toImage(canvasWidth.round(), canvasHeight.round());
 
       final byteData = await outputImage.toByteData(format: ui.ImageByteFormat.png);
       if (byteData == null) {
@@ -119,7 +128,7 @@ class WatermarkRenderer {
       await outFile.writeAsBytes(byteData.buffer.asUint8List(), flush: true);
 
       if (kDebugMode) {
-        debugPrint('✅ Watermark foto tersimpan: $outputPath (${photoWidth.toInt()}x${photoHeight.toInt()})');
+        debugPrint('✅ Watermark foto tersimpan: $outputPath (${canvasWidth.toInt()}x${canvasHeight.toInt()})');
       }
 
       return outputPath;
@@ -330,7 +339,11 @@ class WatermarkRenderer {
       if (!await logoFile.exists()) return null;
 
       final logoBytes = await logoFile.readAsBytes();
-      final logoTargetWidth = (targetWidth * 0.15).round().clamp(40, 200);
+      // Cap dinaikkan dari 200 → 480: sekarang ukuran logo di layout benar2
+      // proporsional dengan resolusi foto asli (lihat WatermarkTheme.of()),
+      // jadi rasternya perlu cukup besar agar tidak buram saat di-upscale
+      // ke logoMaxSize pada foto beresolusi tinggi.
+      final logoTargetWidth = (targetWidth * 0.15).round().clamp(40, 480);
       final codec = await ui.instantiateImageCodec(
         logoBytes,
         targetWidth: logoTargetWidth,
