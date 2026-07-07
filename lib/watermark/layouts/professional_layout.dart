@@ -50,8 +50,7 @@ class ProfessionalLayout extends WatermarkLayout {
     final contentHeight = rowCount * lineH + barcodeBonus + titleBonus + effectivePadding * 2.0;
     final overlayHeight = math.max(minHeight, contentHeight);
 
-    // logo.maxSize sekarang rasio kecil (mis. 0.20), bukan lagi konstanta
-    // px absolut / 10.0 — lihat WatermarkTheme.of() untuk penjelasan.
+    // logo.maxSize sekarang rasio (mis. 0.20), langsung dikalikan baseSize * scaleFactor
     final logoMaxSize = effectiveBaseSize * theme.logo.maxSize * theme.logo.scaleFactor;
     final rightReserved = logoMaxSize + effectivePadding * 1.4;
     final accentBarSpace = (theme.accent.showBar ? theme.accent.barWidth : 0.0) + effectivePadding * 0.5;
@@ -94,20 +93,20 @@ class ProfessionalLayout extends WatermarkLayout {
     // Gambar background foto
     canvas.drawImageRect(
       srcImage,
-      Rect.fromLTWH(0, 0, photoWidth, photoHeight),
-      Rect.fromLTWH(0, 0, photoWidth, photoHeight),
-      Paint()
-        ..filterQuality = FilterQuality.high
+      ui.Rect.fromLTWH(0, 0, photoWidth, photoHeight),
+      ui.Rect.fromLTWH(0, 0, photoWidth, photoHeight),
+      ui.Paint()
+        ..filterQuality = ui.FilterQuality.high
         ..isAntiAlias = true,
     );
 
     // ─── PANEL BACKGROUND ─────────────────────────────────────
-    final panelRect = Rect.fromLTWH(0, overlayTop, photoWidth, overlayHeight);
+    final panelRect = ui.Rect.fromLTWH(0, overlayTop, photoWidth, overlayHeight);
 
     // Layer 1: solid
     canvas.drawRect(
       panelRect,
-      Paint()..color = theme.panel.backgroundColor.withOpacity(theme.panel.backgroundOpacity),
+      ui.Paint()..color = theme.panel.backgroundColor.withOpacity(theme.panel.backgroundOpacity),
     );
 
     // Layer 2: gradien
@@ -120,29 +119,29 @@ class ProfessionalLayout extends WatermarkLayout {
             theme.panel.backgroundColor.withOpacity(theme.panel.gradientEndOpacity),
             theme.panel.backgroundColor.withOpacity(theme.panel.gradientStartOpacity),
           ];
-    final gradientPaint = Paint()
+    final gradientPaint = ui.Paint()
       ..shader = ui.Gradient.linear(
-        Offset(0, overlayTop),
-        Offset(0, overlayTop + overlayHeight),
+        ui.Offset(0, overlayTop),
+        ui.Offset(0, overlayTop + overlayHeight),
         gradientColors,
       );
     canvas.drawRect(panelRect, gradientPaint);
 
     // Layer 3: border (jika aktif)
     if (theme.panel.showBorder) {
-      final borderPaint = Paint()
+      final borderPaint = ui.Paint()
         ..color = theme.panel.borderColor.withOpacity(theme.panel.borderOpacity)
-        ..style = PaintingStyle.stroke
+        ..style = ui.PaintingStyle.stroke
         ..strokeWidth = theme.panel.borderWidth;
       canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(
+        ui.RRect.fromRectAndRadius(
+          ui.Rect.fromLTWH(
             theme.panel.borderWidth / 2,
             overlayTop + theme.panel.borderWidth / 2,
             photoWidth - theme.panel.borderWidth,
             overlayHeight - theme.panel.borderWidth,
           ),
-          Radius.circular(theme.panel.borderRadius),
+          ui.Radius.circular(theme.panel.borderRadius),
         ),
         borderPaint,
       );
@@ -150,12 +149,12 @@ class ProfessionalLayout extends WatermarkLayout {
 
     // Layer 4: highlight (jika aktif)
     if (theme.panel.showHighlight && theme.panel.highlightOpacity > 0) {
-      final highlightPaint = Paint()
+      final highlightPaint = ui.Paint()
         ..color = theme.panel.highlightColor.withOpacity(theme.panel.highlightOpacity)
-        ..style = PaintingStyle.stroke
+        ..style = ui.PaintingStyle.stroke
         ..strokeWidth = 1.0;
       canvas.drawRect(
-        Rect.fromLTWH(
+        ui.Rect.fromLTWH(
           theme.panel.borderWidth + 2,
           overlayTop + theme.panel.borderWidth + 2,
           photoWidth - (theme.panel.borderWidth + 2) * 2,
@@ -172,25 +171,25 @@ class ProfessionalLayout extends WatermarkLayout {
     final logoReserve = (logoImage != null) ? logoMaxSize + padding * 1.4 : 0.0;
     final textContentWidth = photoWidth - padding * 2 - logoReserve - accentBarSpace;
 
-    final double textX = textAlign == TextAlign.left
+    final double textX = textAlign == ui.TextAlign.left
         ? padding + accentBarSpace
         : photoWidth - padding - textContentWidth;
     double textY = overlayTop + padding * 0.95;
 
     if (theme.accent.showBar && accentBarW > 0) {
-      final barX = textAlign == TextAlign.left ? padding : photoWidth - padding - accentBarW;
+      final barX = textAlign == ui.TextAlign.left ? padding : photoWidth - padding - accentBarW;
       final barcodeBonus = data.hasBarcode ? theme.typography.barcodeRowBonus : 0.0;
       final titleBonus = data.hasLocation ? theme.typography.titleRowBonus : 0.0;
       final textBlockHeight =
           metrics.textRowCount * metrics.lineHeight + barcodeBonus + titleBonus;
       canvas.drawRect(
-        Rect.fromLTWH(
+        ui.Rect.fromLTWH(
           barX,
           overlayTop + padding * 0.85,
           accentBarW,
           textBlockHeight,
         ),
-        Paint()..color = c.withOpacity(theme.accent.barOpacity),
+        ui.Paint()..color = c.withOpacity(theme.accent.barOpacity),
       );
     }
 
@@ -329,7 +328,7 @@ class ProfessionalLayout extends WatermarkLayout {
       final drawW = logoW * scale;
       final drawH = logoH * scale;
 
-      double logoX = textAlign == TextAlign.left
+      double logoX = textAlign == ui.TextAlign.left
           ? photoWidth - padding - drawW
           : padding;
       double logoY;
@@ -341,16 +340,16 @@ class ProfessionalLayout extends WatermarkLayout {
 
       final cardPad = theme.logoCardPadding(drawW);
       canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(
+        ui.RRect.fromRectAndRadius(
+          ui.Rect.fromLTWH(
             logoX - cardPad,
             logoY - cardPad,
             drawW + cardPad * 2,
             drawH + cardPad * 2,
           ),
-          Radius.circular(theme.logoCardRadius(cardPad)),
+          ui.Radius.circular(theme.logoCardRadius(cardPad)),
         ),
-        Paint()..color = Colors.black.withOpacity(theme.logo.cardOpacity),
+        ui.Paint()..color = Colors.black.withOpacity(theme.logo.cardOpacity),
       );
 
       LogoWidget.paint(
@@ -369,7 +368,7 @@ class ProfessionalLayout extends WatermarkLayout {
     return label.split('').join('\u200a ');
   }
 
-  // ─── Helper posisi (menggantikan WatermarkAlignment) ──────
+  // ─── Helper posisi ──────────────────────────────────────────
   _Position _resolvePosition(WatermarkPosition position, double photoHeight, double overlayHeight) {
     final atBottom = position == WatermarkPosition.bottomRight ||
                      position == WatermarkPosition.bottomLeft ||
@@ -377,8 +376,8 @@ class ProfessionalLayout extends WatermarkLayout {
                       position != WatermarkPosition.topRight);
     final top = atBottom ? photoHeight - overlayHeight : 0.0;
     final textAlign = (position == WatermarkPosition.bottomLeft || position == WatermarkPosition.topLeft)
-        ? TextAlign.left
-        : TextAlign.right;
+        ? ui.TextAlign.left
+        : ui.TextAlign.right;
     return _Position(top: top, textAlign: textAlign, atBottom: atBottom);
   }
 
@@ -448,25 +447,25 @@ class _ProfessionalPreviewPainter extends CustomPainter {
                           previewData.position == WatermarkPosition.topLeft;
     final overlayTop = isBottom ? photoHeight - overlayHeight : 0.0;
     final padding = metrics.padding;
-    final textAlign = isLeftAligned ? TextAlign.left : TextAlign.right;
+    final textAlign = isLeftAligned ? ui.TextAlign.left : ui.TextAlign.right;
     final c = theme.accent.color;
 
     // Background placeholder
-    final bgPaint = Paint()
+    final bgPaint = ui.Paint()
       ..shader = ui.Gradient.linear(
-        Offset(0, 0),
-        Offset(photoWidth, photoHeight),
+        ui.Offset(0, 0),
+        ui.Offset(photoWidth, photoHeight),
         [const Color(0xFF33373D), const Color(0xFF1B1E22)],
       );
-    canvas.drawRect(Rect.fromLTWH(0, 0, photoWidth, photoHeight), bgPaint);
-    final iconPaint = Paint()..color = Colors.white12;
-    canvas.drawCircle(Offset(photoWidth / 2, photoHeight / 2), 14, iconPaint);
+    canvas.drawRect(ui.Rect.fromLTWH(0, 0, photoWidth, photoHeight), bgPaint);
+    final iconPaint = ui.Paint()..color = Colors.white12;
+    canvas.drawCircle(ui.Offset(photoWidth / 2, photoHeight / 2), 14, iconPaint);
 
     // Panel
-    final panelRect = Rect.fromLTWH(0, overlayTop, photoWidth, overlayHeight);
+    final panelRect = ui.Rect.fromLTWH(0, overlayTop, photoWidth, overlayHeight);
     canvas.drawRect(
       panelRect,
-      Paint()..color = theme.panel.backgroundColor.withOpacity(theme.panel.backgroundOpacity),
+      ui.Paint()..color = theme.panel.backgroundColor.withOpacity(theme.panel.backgroundOpacity),
     );
     final gradientColors = isBottom
         ? [
@@ -477,40 +476,40 @@ class _ProfessionalPreviewPainter extends CustomPainter {
             theme.panel.backgroundColor.withOpacity(theme.panel.gradientEndOpacity),
             theme.panel.backgroundColor.withOpacity(theme.panel.gradientStartOpacity),
           ];
-    final gradientPaint = Paint()
+    final gradientPaint = ui.Paint()
       ..shader = ui.Gradient.linear(
-        Offset(0, overlayTop),
-        Offset(0, overlayTop + overlayHeight),
+        ui.Offset(0, overlayTop),
+        ui.Offset(0, overlayTop + overlayHeight),
         gradientColors,
       );
     canvas.drawRect(panelRect, gradientPaint);
 
     if (theme.panel.showBorder) {
-      final borderPaint = Paint()
+      final borderPaint = ui.Paint()
         ..color = theme.panel.borderColor.withOpacity(theme.panel.borderOpacity)
-        ..style = PaintingStyle.stroke
+        ..style = ui.PaintingStyle.stroke
         ..strokeWidth = theme.panel.borderWidth;
       canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(
+        ui.RRect.fromRectAndRadius(
+          ui.Rect.fromLTWH(
             theme.panel.borderWidth / 2,
             overlayTop + theme.panel.borderWidth / 2,
             photoWidth - theme.panel.borderWidth,
             overlayHeight - theme.panel.borderWidth,
           ),
-          Radius.circular(theme.panel.borderRadius),
+          ui.Radius.circular(theme.panel.borderRadius),
         ),
         borderPaint,
       );
     }
 
     if (theme.panel.showHighlight && theme.panel.highlightOpacity > 0) {
-      final highlightPaint = Paint()
+      final highlightPaint = ui.Paint()
         ..color = theme.panel.highlightColor.withOpacity(theme.panel.highlightOpacity)
-        ..style = PaintingStyle.stroke
+        ..style = ui.PaintingStyle.stroke
         ..strokeWidth = 1.0;
       canvas.drawRect(
-        Rect.fromLTWH(
+        ui.Rect.fromLTWH(
           theme.panel.borderWidth + 2,
           overlayTop + theme.panel.borderWidth + 2,
           photoWidth - (theme.panel.borderWidth + 2) * 2,
@@ -538,13 +537,13 @@ class _ProfessionalPreviewPainter extends CustomPainter {
       final textBlockHeight =
           metrics.textRowCount * metrics.lineHeight + barcodeBonus + titleBonus;
       canvas.drawRect(
-        Rect.fromLTWH(
+        ui.Rect.fromLTWH(
           barX,
           overlayTop + padding * 0.85,
           accentBarW,
           textBlockHeight,
         ),
-        Paint()..color = c.withOpacity(theme.accent.barOpacity),
+        ui.Paint()..color = c.withOpacity(theme.accent.barOpacity),
       );
     }
 
@@ -681,22 +680,21 @@ class _ProfessionalPreviewPainter extends CustomPainter {
 
       final cardPad = theme.logoCardPadding(drawW);
       canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(
+        ui.RRect.fromRectAndRadius(
+          ui.Rect.fromLTWH(
             logoX - cardPad,
             logoY - cardPad,
             drawW + cardPad * 2,
             drawH + cardPad * 2,
           ),
-          Radius.circular(theme.logoCardRadius(cardPad)),
+          ui.Radius.circular(theme.logoCardRadius(cardPad)),
         ),
-        Paint()..color = Colors.black.withOpacity(theme.logo.cardOpacity),
+        ui.Paint()..color = Colors.black.withOpacity(theme.logo.cardOpacity),
       );
 
-      final iconPaint2 = Paint()..color = Colors.white38;
-      canvas.drawRect(Rect.fromLTWH(logoX, logoY, drawW, drawH), iconPaint2);
+      final iconPaint2 = ui.Paint()..color = Colors.white38;
+      canvas.drawRect(ui.Rect.fromLTWH(logoX, logoY, drawW, drawH), iconPaint2);
 
-      // ✅ Perbaikan: ParagraphStyle tidak punya color/letterSpacing, gunakan pushStyle
       final paragraphStyle = ui.ParagraphStyle(
         fontSize: 10,
         fontWeight: FontWeight.w500,
@@ -710,17 +708,16 @@ class _ProfessionalPreviewPainter extends CustomPainter {
       paragraph.layout(ui.ParagraphConstraints(width: drawW));
       canvas.drawParagraph(
         paragraph,
-        Offset(logoX + (drawW - paragraph.width) / 2, logoY + (drawH - paragraph.height) / 2),
+        ui.Offset(logoX + (drawW - paragraph.width) / 2, logoY + (drawH - paragraph.height) / 2),
       );
     }
 
     // Label nama layout
-    final labelPaint = Paint()..color = Colors.grey.withOpacity(0.85);
+    final labelPaint = ui.Paint()..color = Colors.grey.withOpacity(0.85);
     canvas.drawRRect(
-      RRect.fromRectAndRadius(const Rect.fromLTWH(6, 6, 70, 16), Radius.circular(4)),
+      ui.RRect.fromRectAndRadius(const ui.Rect.fromLTWH(6, 6, 70, 16), ui.Radius.circular(4)),
       labelPaint,
     );
-    // ✅ Perbaikan: letterSpacing tidak bisa di ParagraphStyle, gunakan pushStyle
     final labelParagraphStyle = ui.ParagraphStyle(
       fontSize: 8,
       fontWeight: FontWeight.w700,
@@ -731,7 +728,7 @@ class _ProfessionalPreviewPainter extends CustomPainter {
       ..pop();
     final labelPara = labelBuilder.build();
     labelPara.layout(ui.ParagraphConstraints(width: 70));
-    canvas.drawParagraph(labelPara, const Offset(8, 7));
+    canvas.drawParagraph(labelPara, ui.Offset(8, 7));
   }
 
   @override
@@ -741,7 +738,7 @@ class _ProfessionalPreviewPainter extends CustomPainter {
 // ─── Helper position ─────────────────────────────────────────────
 class _Position {
   final double top;
-  final TextAlign textAlign;
+  final ui.TextAlign textAlign;
   final bool atBottom;
   _Position({required this.top, required this.textAlign, required this.atBottom});
 }
