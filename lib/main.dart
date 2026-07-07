@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:provider/provider.dart'; // ← TAMBAHKAN
 import 'theme/app_theme.dart';
 import 'screens/home_screen.dart';
 import 'watermark/watermark_settings.dart';
@@ -15,8 +16,7 @@ import 'models/scan_entry.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Inisialisasi foreground service (harus sebelum runApp, sebelum service
-  // pertama kali di-start dari layar rekam video).
+  // Inisialisasi foreground service
   VideoProcessingService.init();
 
   // ─── 1. Muat watermark settings ──────────────────────────
@@ -24,7 +24,6 @@ void main() async {
   await watermarkSettings.load();
 
   // ─── 2. Preload watermark (font, logo, layout) ──────────
-  // Memastikan cache siap sebelum digunakan
   await VideoWatermarkService.preload(watermarkSettings);
   debugPrint('✅ Watermark preload selesai');
 
@@ -66,8 +65,13 @@ void main() async {
     systemNavigationBarColor: AppTheme.bg,
   ));
 
-  // ─── 7. Jalankan aplikasi ────────────────────────────────
-  runApp(const TermulScanApp());
+  // ─── 7. Jalankan aplikasi dengan Provider ────────────────
+  runApp(
+    ChangeNotifierProvider<WatermarkSettings>(
+      create: (_) => watermarkSettings, // ← pakai instance yang sudah di-load
+      child: const TermulScanApp(),
+    ),
+  );
 }
 
 class TermulScanApp extends StatelessWidget {
