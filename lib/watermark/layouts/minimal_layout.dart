@@ -48,8 +48,7 @@ class MinimalLayout extends WatermarkLayout {
     final contentHeight = lineCount * lineH + barcodeBonus + effectivePadding * 1.2;
     final overlayHeight = math.max(minHeight, contentHeight);
 
-    // logo.maxSize sekarang rasio kecil (mis. 0.20), bukan lagi konstanta
-    // px absolut / 10.0 — lihat WatermarkTheme.of() untuk penjelasan.
+    // logo.maxSize sekarang rasio kecil (mis. 0.20), langsung dikalikan baseSize * scaleFactor
     final logoMaxSize = effectiveBaseSize * theme.logo.maxSize * theme.logo.scaleFactor;
     final textW = photoWidth - effectivePadding * 2 - logoMaxSize - 12;
 
@@ -88,35 +87,35 @@ class MinimalLayout extends WatermarkLayout {
 
     canvas.drawImageRect(
       srcImage,
-      Rect.fromLTWH(0, 0, photoWidth, photoHeight),
-      Rect.fromLTWH(0, 0, photoWidth, photoHeight),
-      Paint()
-        ..filterQuality = FilterQuality.high
+      ui.Rect.fromLTWH(0, 0, photoWidth, photoHeight),
+      ui.Rect.fromLTWH(0, 0, photoWidth, photoHeight),
+      ui.Paint()
+        ..filterQuality = ui.FilterQuality.high
         ..isAntiAlias = true,
     );
 
     // Panel background (solid + border)
-    final panelRect = Rect.fromLTWH(0, overlayTop, photoWidth, overlayHeight);
+    final panelRect = ui.Rect.fromLTWH(0, overlayTop, photoWidth, overlayHeight);
     canvas.drawRect(
       panelRect,
-      Paint()..color = theme.panel.backgroundColor.withOpacity(theme.panel.backgroundOpacity),
+      ui.Paint()..color = theme.panel.backgroundColor.withOpacity(theme.panel.backgroundOpacity),
     );
 
     // Border
     if (theme.panel.showBorder) {
-      final borderPaint = Paint()
+      final borderPaint = ui.Paint()
         ..color = theme.panel.borderColor.withOpacity(theme.panel.borderOpacity)
-        ..style = PaintingStyle.stroke
+        ..style = ui.PaintingStyle.stroke
         ..strokeWidth = theme.panel.borderWidth;
       canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(
+        ui.RRect.fromRectAndRadius(
+          ui.Rect.fromLTWH(
             theme.panel.borderWidth / 2,
             overlayTop + theme.panel.borderWidth / 2,
             photoWidth - theme.panel.borderWidth,
             overlayHeight - theme.panel.borderWidth,
           ),
-          Radius.circular(theme.panel.borderRadius),
+          ui.Radius.circular(theme.panel.borderRadius),
         ),
         borderPaint,
       );
@@ -124,7 +123,7 @@ class MinimalLayout extends WatermarkLayout {
 
     final c = theme.accent.color;
     final textContentWidth = metrics.textAvailableWidth;
-    final double textX = textAlign == TextAlign.left
+    final double textX = textAlign == ui.TextAlign.left
         ? padding
         : photoWidth - padding - textContentWidth;
     double textY = overlayTop + padding * 0.6;
@@ -134,7 +133,7 @@ class MinimalLayout extends WatermarkLayout {
           emphasize ? theme.typography.barcodeFontSize : theme.typography.bodyFontSize;
       final rowLineHeight =
           emphasize ? theme.typography.barcodeLineHeight : metrics.lineHeight;
-      final iconOffset = textAlign == TextAlign.left ? textX : textX + textContentWidth - valueFontSize * 2;
+      final iconOffset = textAlign == ui.TextAlign.left ? textX : textX + textContentWidth - valueFontSize * 2;
       TextHelper.paintText(
         canvas: canvas,
         text: icon,
@@ -148,7 +147,7 @@ class MinimalLayout extends WatermarkLayout {
         textAlign: textAlign,
         fontFamily: data.fontFamily,
       );
-      final textOffset = textAlign == TextAlign.left ? textX + 30 : textX;
+      final textOffset = textAlign == ui.TextAlign.left ? textX + 30 : textX;
       TextHelper.paintText(
         canvas: canvas,
         text: text,
@@ -194,7 +193,7 @@ class MinimalLayout extends WatermarkLayout {
       final scale = math.min(logoSize / logoW, logoSize / logoH);
       final drawW = logoW * scale;
       final drawH = logoH * scale;
-      double logoX = textAlign == TextAlign.left
+      double logoX = textAlign == ui.TextAlign.left
           ? photoWidth - padding - drawW
           : padding;
       double logoY = overlayAtBottom
@@ -208,16 +207,16 @@ class MinimalLayout extends WatermarkLayout {
 
       final cardPad = theme.logoCardPadding(drawW);
       canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(
+        ui.RRect.fromRectAndRadius(
+          ui.Rect.fromLTWH(
             logoX - cardPad,
             logoY - cardPad,
             drawW + cardPad * 2,
             drawH + cardPad * 2,
           ),
-          Radius.circular(theme.logoCardRadius(cardPad)),
+          ui.Radius.circular(theme.logoCardRadius(cardPad)),
         ),
-        Paint()..color = Colors.black.withOpacity(theme.logo.cardOpacity),
+        ui.Paint()..color = Colors.black.withOpacity(theme.logo.cardOpacity),
       );
 
       LogoWidget.paint(
@@ -240,8 +239,8 @@ class MinimalLayout extends WatermarkLayout {
                       position != WatermarkPosition.topRight);
     final top = atBottom ? photoHeight - overlayHeight : 0.0;
     final textAlign = (position == WatermarkPosition.bottomLeft || position == WatermarkPosition.topLeft)
-        ? TextAlign.left
-        : TextAlign.right;
+        ? ui.TextAlign.left
+        : ui.TextAlign.right;
     return _Position(top: top, textAlign: textAlign, atBottom: atBottom);
   }
 
@@ -402,7 +401,7 @@ class MinimalLayout extends WatermarkLayout {
 
 class _Position {
   final double top;
-  final TextAlign textAlign;
+  final ui.TextAlign textAlign;
   final bool atBottom;
   _Position({required this.top, required this.textAlign, required this.atBottom});
 }
