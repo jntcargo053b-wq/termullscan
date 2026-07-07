@@ -290,8 +290,38 @@ class VideoWatermarkService {
     return (filePath, offsetX, offsetY);
   }
 
+  // ⚠️ PENTING: WatermarkSettings adalah singleton — settings.hashCode SELALU
+  // sama walau isi setting (nama operator, logo, style, posisi, dst) berubah,
+  // karena hashCode default Dart berbasis identitas objek, bukan isinya.
+  // Begitu pula ScanEntry tidak meng-override hashCode/==, jadi entry.hashCode
+  // juga berbasis identitas (berisiko collision setelah GC memakai ulang
+  // identity hash). Kunci cache HARUS dibangun dari isi (content-based) +
+  // settings.revision (lihat WatermarkSettings.save()), bukan dari hashCode.
+  // Bug sebelumnya: cache file overlay terus dipakai ulang walau user sudah
+  // mengganti pengaturan watermark, karena key-nya tidak pernah berubah.
   static String _cacheKey(int outW, int outH, WatermarkSettings settings, ScanEntry entry) {
-    final hash = Object.hash(outW, outH, settings.hashCode, entry.hashCode);
+    final parts = [
+      outW,
+      outH,
+      settings.revision,
+      settings.style.name,
+      settings.companyName,
+      settings.operatorName,
+      settings.position.name,
+      settings.fontSize,
+      settings.backgroundOpacity,
+      settings.fontFamily,
+      settings.logoPath ?? '',
+      settings.hasLogo,
+      settings.videoResolution.name,
+      entry.timestamp.toIso8601String(),
+      entry.value,
+      entry.barcodeFormat ?? '',
+      entry.locationName ?? '',
+      entry.latitude ?? '',
+      entry.longitude ?? '',
+    ].join('|');
+    final hash = parts.hashCode.abs();
     return hash.toRadixString(16).padLeft(16, '0');
   }
 
