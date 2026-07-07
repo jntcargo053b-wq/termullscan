@@ -50,7 +50,9 @@ class ProfessionalLayout extends WatermarkLayout {
     final contentHeight = rowCount * lineH + barcodeBonus + titleBonus + effectivePadding * 2.0;
     final overlayHeight = math.max(minHeight, contentHeight);
 
-    final logoMaxSize = effectiveBaseSize * (theme.logo.maxSize / 10.0) * theme.logo.scaleFactor;
+    // logo.maxSize sekarang rasio kecil (mis. 0.20), bukan lagi konstanta
+    // px absolut / 10.0 — lihat WatermarkTheme.of() untuk penjelasan.
+    final logoMaxSize = effectiveBaseSize * theme.logo.maxSize * theme.logo.scaleFactor;
     final rightReserved = logoMaxSize + effectivePadding * 1.4;
     final accentBarSpace = (theme.accent.showBar ? theme.accent.barWidth : 0.0) + effectivePadding * 0.5;
     final textW = photoWidth - effectivePadding * 2 - rightReserved - accentBarSpace;
