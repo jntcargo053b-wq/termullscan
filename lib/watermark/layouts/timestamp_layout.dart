@@ -57,13 +57,16 @@ class TimestampLayout extends WatermarkLayout {
         addressLineH * 2 +
         padding * 1.6;
 
+    // logo.maxSize sekarang rasio kecil, langsung dikalikan baseSize * scaleFactor
+    final logoMaxSize = baseSize * theme.logo.maxSize * theme.logo.scaleFactor;
+
     return LayoutMetrics(
       baseSize: baseSize,
       padding: padding,
       fontSize: timeFontSize,
       lineHeight: addressLineH,
       stripHeight: barHeight,
-      logoMaxSize: theme.logo.maxSize,
+      logoMaxSize: logoMaxSize,
       textRowCount: metaLines + 3,
       canvasWidth: photoWidth,
       canvasHeight: photoHeight,
@@ -84,10 +87,10 @@ class TimestampLayout extends WatermarkLayout {
   }) {
     canvas.drawImageRect(
       srcImage,
-      Rect.fromLTWH(0, 0, photoWidth, photoHeight),
-      Rect.fromLTWH(0, 0, photoWidth, photoHeight),
-      Paint()
-        ..filterQuality = FilterQuality.high
+      ui.Rect.fromLTWH(0, 0, photoWidth, photoHeight),
+      ui.Rect.fromLTWH(0, 0, photoWidth, photoHeight),
+      ui.Paint()
+        ..filterQuality = ui.FilterQuality.high
         ..isAntiAlias = true,
     );
 
@@ -99,8 +102,8 @@ class TimestampLayout extends WatermarkLayout {
 
     // ── Bar bawah solid ──
     canvas.drawRect(
-      Rect.fromLTWH(0, barTop, photoWidth, barHeight),
-      Paint()..color = Colors.black.withOpacity(bgOpacity),
+      ui.Rect.fromLTWH(0, barTop, photoWidth, barHeight),
+      ui.Paint()..color = Colors.black.withOpacity(bgOpacity),
     );
 
     double cursorY = barTop + padding * 0.7;
@@ -155,13 +158,13 @@ class TimestampLayout extends WatermarkLayout {
       ),
       textDirection: TextDirection.ltr,
     )..layout();
-    timeTp.paint(canvas, Offset(padding, rowTop));
+    timeTp.paint(canvas, ui.Offset(padding, rowTop));
 
     final dividerX = padding + timeTp.width + padding * 0.5;
     final dividerH = timeFontSize * 0.95;
     canvas.drawRect(
-      Rect.fromLTWH(dividerX, rowTop + (timeTp.height - dividerH) / 2, baseSize * 0.006, dividerH),
-      Paint()..color = theme.accent.color,
+      ui.Rect.fromLTWH(dividerX, rowTop + (timeTp.height - dividerH) / 2, baseSize * 0.006, dividerH),
+      ui.Paint()..color = theme.accent.color,
     );
 
     final dateColX = dividerX + baseSize * 0.02;
@@ -179,7 +182,7 @@ class TimestampLayout extends WatermarkLayout {
       ),
       textDirection: TextDirection.ltr,
     )..layout();
-    dateTp.paint(canvas, Offset(dateColX, rowTop));
+    dateTp.paint(canvas, ui.Offset(dateColX, rowTop));
 
     final dayTp = TextPainter(
       text: TextSpan(
@@ -193,7 +196,7 @@ class TimestampLayout extends WatermarkLayout {
       ),
       textDirection: TextDirection.ltr,
     )..layout();
-    dayTp.paint(canvas, Offset(dateColX, rowTop + dateTp.height));
+    dayTp.paint(canvas, ui.Offset(dateColX, rowTop + dateTp.height));
 
     cursorY = rowTop + timeTp.height + padding * 0.5;
 
@@ -227,7 +230,7 @@ class TimestampLayout extends WatermarkLayout {
         ),
         textDirection: TextDirection.ltr,
       )..layout();
-      manualTp.paint(canvas, Offset(photoWidth - padding - manualTp.width, barTop + padding * 0.4));
+      manualTp.paint(canvas, ui.Offset(photoWidth - padding - manualTp.width, barTop + padding * 0.4));
     }
 
     // ── Logo ──
@@ -269,7 +272,7 @@ class TimestampLayout extends WatermarkLayout {
       textDirection: TextDirection.ltr,
       textAlign: TextAlign.right,
     )..layout(maxWidth: photoWidth - padding * 2);
-    brandTp.paint(canvas, Offset(photoWidth - padding - brandTp.width, padding * 0.7));
+    brandTp.paint(canvas, ui.Offset(photoWidth - padding - brandTp.width, padding * 0.7));
 
     final taglineTp = TextPainter(
       text: TextSpan(
@@ -285,7 +288,7 @@ class TimestampLayout extends WatermarkLayout {
       textDirection: TextDirection.ltr,
       textAlign: TextAlign.right,
     )..layout(maxWidth: photoWidth - padding * 2);
-    taglineTp.paint(canvas, Offset(photoWidth - padding - taglineTp.width, padding * 0.7 + brandTp.height + 2));
+    taglineTp.paint(canvas, ui.Offset(photoWidth - padding - taglineTp.width, padding * 0.7 + brandTp.height + 2));
 
     // ── Kode verifikasi vertikal ──
     final code = _generateCode(data);
@@ -309,7 +312,7 @@ class TimestampLayout extends WatermarkLayout {
     final vertYBottom = barTop - padding * 0.6;
     canvas.translate(vertX, vertYBottom);
     canvas.rotate(-math.pi / 2);
-    vertTp.paint(canvas, Offset(0, -vertTp.height / 2));
+    vertTp.paint(canvas, ui.Offset(0, -vertTp.height / 2));
     canvas.restore();
   }
 
