@@ -1,18 +1,15 @@
+// lib/watermark/watermark_settings_sheet.dart
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:gap/gap.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:provider/provider.dart';
 import '../watermark/watermark_settings.dart';
 import '../watermark/watermark_style.dart';
 import '../theme/app_theme.dart';
 
 class WatermarkSettingsSheet extends StatefulWidget {
-  /// Jika true, dropdown gaya hanya menampilkan gaya yang benar-benar
-  /// didukung penuh oleh pipeline VIDEO (lihat [WatermarkStyleCapability]).
-  /// Dipakai saat sheet dibuka dari layar rekam video, agar pengguna tidak
-  /// memilih gaya foto yang hasilnya akan berbeda/rusak di video.
   final bool videoMode;
-
   const WatermarkSettingsSheet({super.key, this.videoMode = false});
 
   @override
@@ -26,13 +23,10 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
   @override
   void initState() {
     super.initState();
-    _settings = WatermarkSettings();
-    // Jika dibuka dalam mode video dan gaya yang tersimpan saat ini tidak
-    // video-safe, koreksi SEKARANG (synchronous), sebelum build pertama.
-    // Kalau ini ditunda ke postFrameCallback, DropdownButton akan sempat
-    // build sekali dengan `value` yang tidak ada di daftar item yang sudah
-    // difilter → Flutter melempar assertion error ("There should be
-    // exactly one item with [DropdownButton]'s value").
+    // ✅ Ambil instance dari Provider (BUKAN buat baru)
+    _settings = context.read<WatermarkSettings>();
+
+    // Koreksi gaya jika videoMode dan gaya tidak support video
     if (widget.videoMode && !_settings.style.supportsVideo) {
       _settings.style = WatermarkStyle.timestamp;
       _settings.save();
@@ -119,9 +113,6 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                   DropdownButton<WatermarkStyle>(
                     value: _settings.style,
                     items: WatermarkStyle.values
-                        // Di mode video, sembunyikan gaya yang tidak
-                        // didukung penuh oleh pipeline FFmpeg agar
-                        // pengguna tidak salah pilih.
                         .where((style) => !widget.videoMode || style.supportsVideo)
                         .map((style) {
                       String label;
@@ -354,7 +345,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
               ),
               const Gap(16),
 
-              // ─── Full Info Toggles (hanya jika style fullInfo) ─
+              // ─── Full Info Toggles ──────────────────────
               if (_settings.style == WatermarkStyle.fullInfo) ...[
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
@@ -389,7 +380,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                 const Gap(8),
               ],
 
-              // ─── Video Quality (hanya untuk video) ──────
+              // ─── Video Quality ──────────────────────────
               Row(
                 children: [
                   const Text(
@@ -428,9 +419,9 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                   ),
                 ],
               ),
-              const Gap(24),
+              const Gap(16),
 
-              // ─── Resolusi Output (hanya untuk video) ────
+              // ─── Resolusi Output ────────────────────────
               Row(
                 children: [
                   const Text(
@@ -474,8 +465,9 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                 'Asli = kualitas terbaik, ukuran file lebih besar & proses lebih lama.',
                 style: TextStyle(color: Colors.grey, fontSize: 11),
               ),
+              const Gap(16),
 
-              // ─── Mode Proses (hanya untuk video) ────────
+              // ─── Mode Proses ─────────────────────────────
               Row(
                 children: [
                   const Text(
@@ -520,7 +512,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
               const Divider(color: Colors.grey, thickness: 0.5),
               const Gap(8),
 
-              // ─── Penyimpanan (hanya untuk video) ────────
+              // ─── Penyimpanan ─────────────────────────────
               const Text(
                 'Penyimpanan',
                 style: TextStyle(
