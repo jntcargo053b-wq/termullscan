@@ -11,7 +11,6 @@ import 'package:saver_gallery/saver_gallery.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../models/scan_entry.dart';
 import 'database_helper.dart';
-import 'backup_service.dart'; // jika ada, atau kita buat sendiri backup di sini
 
 class StorageService {
   static final StorageService _instance = StorageService._internal();
@@ -119,6 +118,7 @@ class StorageService {
   }
 
   // ─── Save to Gallery (PUBLIC) ──────────────────────────────
+
   Future<bool> saveVideoToGallery(String filePath, {String? fileName}) async {
     try {
       final file = File(filePath);
@@ -144,8 +144,9 @@ class StorageService {
         return false;
       }
 
+      // ✅ PERBAIKAN: pakai filePath (String), bukan File object
       final saved = await SaverGallery.saveFile(
-        file: file,
+        file: filePath,
         name: fileName ?? 'watermarked_${DateTime.now().millisecondsSinceEpoch}.mp4',
         androidRelativePath: 'Movies/TermulScan',
         androidExistNotSave: false,
@@ -177,6 +178,7 @@ class StorageService {
       }
       if (!hasPermission) return false;
 
+      // saveImage menerima String path sebagai parameter pertama
       final saved = await SaverGallery.saveImage(
         filePath,
         name: fileName ?? 'watermarked_${DateTime.now().millisecondsSinceEpoch}.jpg',
