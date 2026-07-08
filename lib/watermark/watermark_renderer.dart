@@ -1,6 +1,4 @@
-// ============================================================
-// lib/watermark/watermark_renderer.dart (dart:ui – stabil + companyName)
-// ============================================================
+// lib/watermark/watermark_renderer.dart
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -19,9 +17,7 @@ class WatermarkRenderer {
     WatermarkStyle.stamp,
   };
 
-  /// Render watermark ke file output.
-  /// Masih di UI thread, namun dengan single decode & dispose dini
-  /// performa tetap ringan untuk gambar yang sudah di‑resize ke 1600px.
+  /// Render watermark ke file output (FOTO)
   static Future<String?> render({
     required String imagePath,
     required String outputPath,
@@ -48,7 +44,6 @@ class WatermarkRenderer {
 
       final imageBytes = await file.readAsBytes();
 
-      // ✅ Single decode
       codec = await ui.instantiateImageCodec(
         imageBytes,
         targetWidth: 1600,
@@ -74,7 +69,7 @@ class WatermarkRenderer {
       final data = WatermarkData(
         timestamp: entry.timestamp,
         operatorName: settings.operatorName,
-        companyName: settings.companyName, // ← DITAMBAHKAN
+        companyName: settings.companyName,
         barcodeValue: entry.value,
         barcodeFormat: entry.barcodeFormat,
         latitude: entry.latitude,
@@ -143,6 +138,79 @@ class WatermarkRenderer {
     }
   }
 
+  // ─── RENDER OVERLAY PNG UNTUK VIDEO ────────────────────
+  /// Generate overlay PNG (full-frame, transparan) untuk video.
+  static Future<Uint8List?> renderOverlayPng({
+    required int canvasWidth,
+    required int canvasHeight,
+    required WatermarkSettings settings,
+    required ScanEntry entry,
+  }) async {
+    try {
+      ui.Image? logoImage;
+      ui.Codec? logoCodec;
+
+      if (settings.hasLogo && settings.logoPath != null && settings.logoPath!.isNotEmpty) {
+        logoCodec = await _loadLogoCodec(settings.logoPath!, targetWidth: canvasWidth);
+        if (logoCodec != null) {
+          final logoFrame = await logoCodec.getNextFrame();
+          logoImage = logoFrame.image;
+          logoCodec.dispose();
+          logoCodec = null;
+        }
+      }
+
+      final data = WatermarkData(
+        timestamp: entry.timestamp,
+        operatorName: settings.operatorName,
+        companyName: settings.companyName,
+        barcodeValue: entry.value,
+        barcodeFormat: entry.barcodeFormat,
+        latitude: entry.latitude,
+        longitude: entry.longitude,
+        locationName: entry.locationName,
+        logoPath: settings.logoPath,
+        position: settings.position,
+        fontSize: settings.fontSize,
+        backgroundOpacity: settings.backgroundOpacity,
+        fontFamily: settings.fontFamily,
+      );
+
+      final layout = WatermarkFactory.create(settings.style);
+      final metrics = layout.computeMetrics(
+        photoWidth: canvasWidth.toDouble(),
+        photoHeight: canvasHeight.toDouble(),
+        data: data,
+      );
+
+      final recorder = ui.PictureRecorder();
+      final canvas = ui.Canvas(recorder);
+
+      // HANYA GAMBAR ELEMEN WATERMARK TANPA FOTO LATAR
+      // Setiap layout harus punya method paintWatermarkOnly
+      layout.paintWatermarkOnly(
+        canvas: canvas,
+        metrics: metrics,
+        logoImage: logoImage,
+        data: data,
+      );
+
+      final picture = recorder.endRecording();
+      final outputImage = await picture.toImage(
+        metrics.canvasWidth.round(),
+        metrics.canvasHeight.round(),
+      );
+      final byteData = await outputImage.toByteData(format: ui.ImageByteFormat.png);
+      outputImage.dispose();
+      logoImage?.dispose();
+      return byteData?.buffer.asUint8List();
+    } catch (e) {
+      debugPrint('❌ Gagal render overlay PNG: $e');
+      return null;
+    }
+  }
+
+  // ─── LOAD LOGO ──────────────────────────────────────────
   static Future<ui.Codec?> _loadLogoCodec(
     String logoPath, {
     required int targetWidth,
