@@ -1,4 +1,3 @@
-// lib/watermark/watermark_renderer.dart
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -187,7 +186,6 @@ class WatermarkRenderer {
       final canvas = ui.Canvas(recorder);
 
       // HANYA GAMBAR ELEMEN WATERMARK TANPA FOTO LATAR
-      // Setiap layout harus punya method paintWatermarkOnly
       layout.paintWatermarkOnly(
         canvas: canvas,
         metrics: metrics,
