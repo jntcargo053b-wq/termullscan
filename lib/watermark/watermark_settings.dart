@@ -1,3 +1,4 @@
+// lib/watermark/watermark_settings.dart
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'watermark_style.dart';
@@ -17,7 +18,7 @@ class WatermarkSettings extends ChangeNotifier {
 
   // ========== KEYS ==========
   static const String _keyOperatorName = 'watermark_operator_name';
-  static const String _keyCompanyName = 'watermark_company_name'; // BARU
+  static const String _keyCompanyName = 'watermark_company_name';
   static const String _keyStyle = 'watermark_style';
   static const String _keyLogoPath = 'watermark_logo_path';
   static const String _keyHasLogo = 'watermark_has_logo';
@@ -26,9 +27,14 @@ class WatermarkSettings extends ChangeNotifier {
   static const String _keyBgOpacity = 'watermark_bg_opacity';
   static const String _keyFontFamily = 'watermark_font_family';
 
+  // ─── VIDEO ENCODING KEYS ──────────────────────────────
+  static const String _keyVideoBitrate = 'watermark_video_bitrate';
+  static const String _keyVideoCrf = 'watermark_video_crf';
+  static const String _keyX264Preset = 'watermark_x264_preset';
+
   // ========== PROPERTIES ==========
   String operatorName = '';
-  String companyName = ''; // BARU
+  String companyName = '';
   WatermarkStyle style = WatermarkStyle.professional;
   String? logoPath;
   bool hasLogo = false;
@@ -37,6 +43,11 @@ class WatermarkSettings extends ChangeNotifier {
   double backgroundOpacity = 0.85;
   String fontFamily = 'Roboto';
 
+  // ─── VIDEO ENCODING ────────────────────────────────────
+  int videoBitrateKbps = 2000;      // 2 Mbps
+  int videoCrf = 23;                // 18–28
+  String x264Preset = 'medium';     // ultrafast … veryslow
+
   bool _loaded = false;
 
   Future<void> load() async {
@@ -44,7 +55,7 @@ class WatermarkSettings extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       operatorName = prefs.getString(_keyOperatorName) ?? '';
-      companyName = prefs.getString(_keyCompanyName) ?? ''; // BARU
+      companyName = prefs.getString(_keyCompanyName) ?? '';
       final styleIndex = prefs.getInt(_keyStyle) ?? WatermarkStyle.professional.index;
       final values = WatermarkStyle.values;
       style = (styleIndex >= 0 && styleIndex < values.length)
@@ -60,6 +71,12 @@ class WatermarkSettings extends ChangeNotifier {
       fontSize = prefs.getDouble(_keyFontSize) ?? 14.0;
       backgroundOpacity = prefs.getDouble(_keyBgOpacity) ?? 0.85;
       fontFamily = prefs.getString(_keyFontFamily) ?? 'Roboto';
+
+      // ─── VIDEO ENCODING ──────────────────────────────
+      videoBitrateKbps = prefs.getInt(_keyVideoBitrate) ?? 2000;
+      videoCrf = prefs.getInt(_keyVideoCrf) ?? 23;
+      x264Preset = prefs.getString(_keyX264Preset) ?? 'medium';
+
       _loaded = true;
       debugPrint('✅ Watermark settings loaded');
     } catch (e) {
@@ -72,7 +89,7 @@ class WatermarkSettings extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_keyOperatorName, operatorName);
-      await prefs.setString(_keyCompanyName, companyName); // BARU
+      await prefs.setString(_keyCompanyName, companyName);
       await prefs.setInt(_keyStyle, style.index);
       if (logoPath != null) {
         await prefs.setString(_keyLogoPath, logoPath!);
@@ -84,6 +101,12 @@ class WatermarkSettings extends ChangeNotifier {
       await prefs.setDouble(_keyFontSize, fontSize);
       await prefs.setDouble(_keyBgOpacity, backgroundOpacity);
       await prefs.setString(_keyFontFamily, fontFamily);
+
+      // ─── VIDEO ENCODING ──────────────────────────────
+      await prefs.setInt(_keyVideoBitrate, videoBitrateKbps);
+      await prefs.setInt(_keyVideoCrf, videoCrf);
+      await prefs.setString(_keyX264Preset, x264Preset);
+
       debugPrint('✅ Watermark settings saved');
     } catch (e) {
       debugPrint('⚠️ Error saving watermark settings: $e');
@@ -97,7 +120,7 @@ class WatermarkSettings extends ChangeNotifier {
     await save();
   }
 
-  Future<void> setCompanyName(String name) async {  // BARU
+  Future<void> setCompanyName(String name) async {
     companyName = name;
     notifyListeners();
     await save();
@@ -145,5 +168,27 @@ class WatermarkSettings extends ChangeNotifier {
     hasLogo = false;
     notifyListeners();
     await save();
+  }
+
+  // ─── VIDEO ENCODING SETTERS ──────────────────────────
+  Future<void> setVideoBitrate(int bitrate) async {
+    videoBitrateKbps = bitrate.clamp(500, 50000);
+    notifyListeners();
+    await save();
+  }
+
+  Future<void> setVideoCrf(int crf) async {
+    videoCrf = crf.clamp(18, 30);
+    notifyListeners();
+    await save();
+  }
+
+  Future<void> setX264Preset(String preset) async {
+    final allowed = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'];
+    if (allowed.contains(preset)) {
+      x264Preset = preset;
+      notifyListeners();
+      await save();
+    }
   }
 }
