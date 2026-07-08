@@ -1,6 +1,8 @@
 // lib/services/watermark/watermark_service.dart
+// VERSI PERBAIKAN – kompatibel dengan WatermarkSettings baru
+
 import 'dart:io';
-import 'dart:math' as math;
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit_config.dart';
@@ -11,7 +13,6 @@ import 'package:path_provider/path_provider.dart';
 import '../../models/scan_entry.dart';
 import '../../watermark/watermark_settings.dart';
 import '../../watermark/watermark_renderer.dart';
-import '../../watermark/watermark_style.dart';
 import 'watermark_cache.dart';
 
 /// Service untuk menambahkan watermark ke video dengan efisiensi tinggi.
@@ -20,7 +21,7 @@ class VideoWatermarkService {
   static bool _warmedUp = false;
   static final WatermarkCache _cache = WatermarkCache();
 
-  // Cache overlay: key -> path file PNG (untuk file)
+  // Cache overlay: key -> path file PNG
   static final Map<String, String> _overlayFileCache = {};
   static const int _maxCacheSize = 50;
 
@@ -60,7 +61,7 @@ class VideoWatermarkService {
     required String outputPath,
     required ScanEntry entry,
     required WatermarkSettings settings,
-    bool keepAudio = false, // ← default false = audio dimatikan
+    bool keepAudio = false, // default false = audio dimatikan
     void Function(double progress)? onProgress,
   }) async {
     lastError = null;
@@ -77,11 +78,11 @@ class VideoWatermarkService {
         throw Exception('Gagal membaca metadata video');
       }
 
-      // 2. Hitung dimensi output & scale filter
-      final dims = _computeDimensions(videoInfo, settings);
+      // 2. Hitung dimensi output & scale filter (resolusi selalu original)
+      final dims = _computeDimensions(videoInfo);
       _log('info', '📐 Output: ${dims.outW}x${dims.outH} | Rotasi: ${dims.rotation}°');
 
-      // 3. Render overlay PNG (dengan cache) – kembalikan (path, offsetX, offsetY)
+      // 3. Render overlay PNG (dengan cache) – menggunakan WatermarkRenderer.renderOverlayPng
       final overlayResult = await _renderOverlay(
         outW: dims.outW,
         outH: dims.outH,
@@ -182,8 +183,8 @@ class VideoWatermarkService {
     );
   }
 
-  // ─── 2. HITUNG DIMENSI & FILTER SCALE ──────────────────────
-  static _Dimensions _computeDimensions(_VideoInfo info, WatermarkSettings settings) {
+  // ─── 2. HITUNG DIMENSI (selalu original) ──────────────────────
+  static _Dimensions _computeDimensions(_VideoInfo info) {
     int outW = info.width;
     int outH = info.height;
     int rotation = info.rotation;
@@ -194,41 +195,13 @@ class VideoWatermarkService {
       outH = temp;
     }
 
-    int? maxSide;
-    switch (settings.videoResolution) {
-      case VideoResolution.original:
-        maxSide = null;
-        break;
-      case VideoResolution.res1080p:
-        maxSide = 1920;
-        break;
-      case VideoResolution.res720p:
-        maxSide = 1280;
-        break;
-    }
-    if (maxSide != null && (outW > maxSide || outH > maxSide)) {
-      if (outW >= outH) {
-        outH = (outH * maxSide / outW).round();
-        outW = maxSide;
-      } else {
-        outW = (outW * maxSide / outH).round();
-        outH = maxSide;
-      }
-    }
-    outW = (outW ~/ 2) * 2;
-    outH = (outH ~/ 2) * 2;
-
+    // Tidak ada scaling resolusi lagi → selalu original
     String scaleFilter = '';
     if (rotation == 90) scaleFilter += 'transpose=1,';
     else if (rotation == 270) scaleFilter += 'transpose=2,';
     else if (rotation == 180) scaleFilter += 'transpose=2,transpose=2,';
 
-    final bool needScale = (settings.videoResolution != VideoResolution.original) &&
-        (outW != info.width || outH != info.height);
-    if (needScale) {
-      scaleFilter += 'scale=$outW:$outH:force_original_aspect_ratio=decrease,';
-      scaleFilter += 'pad=$outW:$outH:(ow-iw)/2:(oh-ih)/2,';
-    }
+    // Pertahankan resolusi asli (tanpa scaling)
     scaleFilter += 'setsar=1';
 
     return _Dimensions(
@@ -236,7 +209,7 @@ class VideoWatermarkService {
       outH: outH,
       rotation: rotation,
       scaleFilter: scaleFilter,
-      needScale: needScale,
+      needScale: false,
     );
   }
 
@@ -247,31 +220,26 @@ class VideoWatermarkService {
     required WatermarkSettings settings,
     required ScanEntry entry,
   }) async {
+    // Gunakan content-based key, bukan hashCode
     final key = _cacheKey(outW, outH, settings, entry);
     // Cek cache file
     if (_overlayFileCache.containsKey(key)) {
       final cachedPath = _overlayFileCache[key]!;
       if (await File(cachedPath).exists()) {
         _log('info', '🔄 Menggunakan overlay dari cache: $cachedPath');
-        // Offset selalu (0,0) karena PNG full-frame
         return (cachedPath, 0, 0);
       } else {
         _overlayFileCache.remove(key);
       }
     }
 
-    // Render PNG
-    final overlayResult = await WatermarkRenderer.renderVideoOverlaySmallPng(
-      outW: outW,
-      outH: outH,
+    // Generate overlay PNG via WatermarkRenderer
+    final Uint8List? overlayBytes = await WatermarkRenderer.renderOverlayPng(
+      canvasWidth: outW,
+      canvasHeight: outH,
       settings: settings,
       entry: entry,
     );
-    if (overlayResult == null) return null;
-
-    final overlayBytes = overlayResult.$1;
-    final offsetX = overlayResult.$2;
-    final offsetY = overlayResult.$3;
     if (overlayBytes == null || overlayBytes.isEmpty) return null;
 
     // Simpan ke file cache
@@ -286,24 +254,16 @@ class VideoWatermarkService {
       _trimCache();
     }
 
-    _log('info', '🖼️ Overlay PNG dibuat & di-cache: $filePath (${overlayBytes.length} bytes), posisi: ($offsetX, $offsetY)');
-    return (filePath, offsetX, offsetY);
+    _log('info', '🖼️ Overlay PNG dibuat & di-cache: $filePath (${overlayBytes.length} bytes)');
+    // Offset selalu (0,0) karena overlay full-frame
+    return (filePath, 0, 0);
   }
 
-  // ⚠️ PENTING: WatermarkSettings adalah singleton — settings.hashCode SELALU
-  // sama walau isi setting (nama operator, logo, style, posisi, dst) berubah,
-  // karena hashCode default Dart berbasis identitas objek, bukan isinya.
-  // Begitu pula ScanEntry tidak meng-override hashCode/==, jadi entry.hashCode
-  // juga berbasis identitas (berisiko collision setelah GC memakai ulang
-  // identity hash). Kunci cache HARUS dibangun dari isi (content-based) +
-  // settings.revision (lihat WatermarkSettings.save()), bukan dari hashCode.
-  // Bug sebelumnya: cache file overlay terus dipakai ulang walau user sudah
-  // mengganti pengaturan watermark, karena key-nya tidak pernah berubah.
+  // ─── CACHE KEY (CONTENT-BASED) ─────────────────────────────
   static String _cacheKey(int outW, int outH, WatermarkSettings settings, ScanEntry entry) {
     final parts = [
       outW,
       outH,
-      settings.revision,
       settings.style.name,
       settings.companyName,
       settings.operatorName,
@@ -313,7 +273,6 @@ class VideoWatermarkService {
       settings.fontFamily,
       settings.logoPath ?? '',
       settings.hasLogo,
-      settings.videoResolution.name,
       entry.timestamp.toIso8601String(),
       entry.value,
       entry.barcodeFormat ?? '',
@@ -321,6 +280,7 @@ class VideoWatermarkService {
       entry.latitude ?? '',
       entry.longitude ?? '',
     ].join('|');
+    // Gunakan hash dari gabungan string
     final hash = parts.hashCode.abs();
     return hash.toRadixString(16).padLeft(16, '0');
   }
@@ -370,10 +330,10 @@ class VideoWatermarkService {
       '-map', '[out]',
     ];
 
-    final bitrate = settings.videoBitrateKbps;
-    final crf = settings.videoCrf;
-    final preset = settings.x264Preset;
-    final useHw = _shouldUseHardwareEncoder();
+    final int bitrate = settings.videoBitrateKbps;
+    final int crf = settings.videoCrf;
+    final String preset = settings.x264Preset;
+    final bool useHw = _shouldUseHardwareEncoder();
 
     final List<String> encoderArgs;
     if (useHw) {
@@ -404,13 +364,11 @@ class VideoWatermarkService {
       outputPath,
     ];
 
-    // ─── AUDIO: matikan kecuali keepAudio = true ─────────────
+    // ─── AUDIO ─────────────────────────────
     if (keepAudio) {
-      // Salin audio
       arguments.insertAll(arguments.length - 1, ['-map', '0:a?', '-c:a', 'copy']);
       _log('info', '🔊 Audio akan disalin dari input');
     } else {
-      // Matikan audio
       arguments.insertAll(arguments.length - 1, ['-an']);
       _log('info', '🔇 Audio akan dihilangkan');
     }
@@ -551,8 +509,8 @@ class VideoWatermarkService {
   }
 
   static bool _shouldUseHardwareEncoder() {
+    // Sederhana: selalu false untuk stabilitas, bisa diubah nanti
     if (_hwEncoderAvailable != null) return _hwEncoderAvailable!;
-    // default false, akan di-set async nanti
     return false;
   }
 
