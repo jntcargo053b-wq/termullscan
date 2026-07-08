@@ -52,8 +52,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       BarcodeFormat.code39,
       BarcodeFormat.ean13,
       BarcodeFormat.qrCode,
-      BarcodeFormat.upca,
-      BarcodeFormat.upce,
+      BarcodeFormat.upcA,   // ✅ perbaikan: upcA (bukan upca)
+      BarcodeFormat.upcE,   // ✅ perbaikan: upcE (bukan upce)
     ],
   );
 
