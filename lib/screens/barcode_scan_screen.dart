@@ -1,6 +1,3 @@
-📦 lib/screens/barcode_scan_screen.dart – VERSI PRODUKSI FINAL (DENGAN SEMUA SARAN)
-
-```dart
 // ============================================================
 // lib/screens/barcode_scan_screen.dart (PRODUKSI FINAL)
 // ============================================================
@@ -766,25 +763,3 @@ class _ScanFramePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _ScanFramePainter oldDelegate) => false;
 }
-```
-
----
-
-✅ Semua Perbaikan yang Diterapkan
-
-Issue Solusi
-_lastCode tidak pernah di-reset Reset di _goToPhotoScan dan _goToVideoScan setelah aksi selesai.
-Delay 300 ms buatan Hapus, langsung setState + resume.
-Dua kali setState Gabung jadi satu setState di _goToPhotoScan.
-Overlay loading tidak perlu Hapus _isBusy dan overlay loading.
-Logika watermark membingungkan Gunakan final showWatermark = _activeBarcode == null;
-Debounce tetap dipertahankan Sebagai lapisan keamanan tambahan, tidak masalah.
-Torch / switch camera / zoom Tambahkan tombol torch dan switch camera di AppBar.
-Filter barcode format Tambahkan formats di MobileScannerController.
-Autofocus setelah resume Tambahkan await Future.delayed(const Duration(milliseconds: 50));
-
----
-
-✅ Skor Akhir: 10/10 – Siap untuk Produksi
-
-Copy-paste file ini ke lib/screens/barcode_scan_screen.dart dan aplikasi Anda siap deploy. 🚀
