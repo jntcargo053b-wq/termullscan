@@ -1,7 +1,7 @@
 // ============================================================
 // lib/watermark/layouts/minimal_layout.dart (FINAL – ELEGAN)
 // ============================================================
-import 'dart:io';                         // ← untuk File
+import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -40,11 +40,9 @@ class MinimalLayout extends WatermarkLayout {
     if (data.hasLocation) lineCount++;
 
     final fontSz = data.fontSize;
-    final lineH = WatermarkTypography.lineHeight(fontSz); // ✅ konsisten di semua layout
+    final lineH = WatermarkTypography.lineHeight(fontSz);
     final spacing = 6.0;
 
-    // Baris "Kode" dirender lebih besar (WatermarkTypography.barcode), jadi
-    // butuh tinggi baris ekstra dibanding baris normal.
     final barcodeLineH =
         WatermarkTypography.lineHeight(WatermarkTypography.barcode(fontSz));
     final barcodeBonus = data.hasBarcode ? (barcodeLineH - lineH) : 0.0;
@@ -53,7 +51,7 @@ class MinimalLayout extends WatermarkLayout {
         barcodeBonus +
         padding * 1.2;
 
-    final logoMaxSize = WatermarkTypography.logo(baseSize); // ✅ konsisten di semua layout
+    final logoMaxSize = WatermarkTypography.logo(baseSize);
     final textW = photoWidth - padding * 2 - logoMaxSize - 12;
 
     return LayoutMetrics(
@@ -242,6 +240,164 @@ class MinimalLayout extends WatermarkLayout {
     }
   }
 
+  // ========== PAINT WATERMARK ONLY (UNTUK VIDEO OVERLAY) ==========
+  @override
+  void paintWatermarkOnly({
+    required ui.Canvas canvas,
+    required LayoutMetrics metrics,
+    required ui.Image? logoImage,
+    required WatermarkData data,
+  }) {
+    final padding = metrics.padding;
+    final overlayHeight = metrics.stripHeight;
+    final photoWidth = metrics.canvasWidth;
+    final photoHeight = metrics.canvasHeight;
+    double overlayTop;
+    TextAlign textAlign;
+    final bool overlayAtBottom;
+
+    switch (data.position) {
+      case WatermarkPosition.bottomRight:
+        overlayTop = photoHeight - overlayHeight;
+        textAlign = TextAlign.right;
+        overlayAtBottom = true;
+        break;
+      case WatermarkPosition.bottomLeft:
+        overlayTop = photoHeight - overlayHeight;
+        textAlign = TextAlign.left;
+        overlayAtBottom = true;
+        break;
+      case WatermarkPosition.topRight:
+        overlayTop = 0;
+        textAlign = TextAlign.right;
+        overlayAtBottom = false;
+        break;
+      case WatermarkPosition.topLeft:
+        overlayTop = 0;
+        textAlign = TextAlign.left;
+        overlayAtBottom = false;
+        break;
+      default:
+        overlayTop = photoHeight - overlayHeight;
+        textAlign = TextAlign.right;
+        overlayAtBottom = true;
+    }
+
+    // Background gelap (tanpa foto)
+    final bgOpacity = data.backgroundOpacity.clamp(0.0, 1.0);
+    final gradientPaint = Paint()
+      ..shader = ui.Gradient.linear(
+        Offset(0, overlayTop),
+        Offset(0, overlayTop + overlayHeight),
+        overlayAtBottom
+            ? [Colors.black.withOpacity(0.0), Colors.black.withOpacity(bgOpacity)]
+            : [Colors.black.withOpacity(bgOpacity), Colors.black.withOpacity(0.0)],
+        [0.0, 1.0],
+      );
+    canvas.drawRect(
+      Rect.fromLTWH(0, overlayTop, photoWidth, overlayHeight),
+      gradientPaint,
+    );
+
+    final textContentWidth = metrics.textAvailableWidth;
+    final double textX = textAlign == TextAlign.left
+        ? padding
+        : photoWidth - padding - textContentWidth;
+    final double lineHeight = metrics.lineHeight;
+    double textY = overlayTop + padding * 0.6;
+
+    void drawIconLine(String icon, String text, Color color, {bool emphasize = false}) {
+      final valueFontSize = emphasize
+          ? WatermarkTypography.barcode(metrics.fontSize)
+          : WatermarkTypography.body(metrics.fontSize);
+      final rowLineHeight = emphasize
+          ? WatermarkTypography.lineHeight(valueFontSize)
+          : lineHeight;
+      final iconOffset = textAlign == TextAlign.left ? textX : textX + textContentWidth - valueFontSize * 2;
+      TextHelper.paintText(
+        canvas: canvas,
+        text: icon,
+        x: iconOffset,
+        y: textY,
+        maxWidth: 30,
+        color: color,
+        fontSize: valueFontSize,
+        fontWeight: FontWeight.normal,
+        maxLines: 1,
+        textAlign: textAlign,
+        fontFamily: data.fontFamily,
+      );
+      final textOffset = textAlign == TextAlign.left ? textX + 30 : textX;
+      TextHelper.paintText(
+        canvas: canvas,
+        text: text,
+        x: textOffset,
+        y: textY,
+        maxWidth: textContentWidth - 30,
+        color: color,
+        fontSize: valueFontSize,
+        fontWeight: emphasize ? FontWeight.w800 : FontWeight.w500,
+        maxLines: 1,
+        textAlign: textAlign,
+        fontFamily: data.fontFamily,
+      );
+      textY += rowLineHeight;
+    }
+
+    if (data.hasBarcode) {
+      drawIconLine('📦', data.barcodeValue ?? '', Colors.white, emphasize: true);
+    }
+    if (data.hasOperator) {
+      drawIconLine('👤', data.operatorName, Colors.white.withOpacity(0.92));
+    }
+    drawIconLine('🕒', data.formattedTimestamp, Colors.white.withOpacity(0.85));
+    if (data.hasLocation) {
+      drawIconLine('📍', data.displayLocation, Colors.white.withOpacity(0.85));
+    }
+    if (data.isManual) {
+      drawIconLine('⚡', 'MANUAL ENTRY', const Color(0xFFFFB74D));
+    }
+
+    if (logoImage != null) {
+      final logoSize = metrics.logoMaxSize;
+      final logoW = logoImage.width.toDouble();
+      final logoH = logoImage.height.toDouble();
+      final scale = math.min(logoSize / logoW, logoSize / logoH);
+      final drawW = logoW * scale;
+      final drawH = logoH * scale;
+      double logoX = textAlign == TextAlign.left
+          ? photoWidth - padding - drawW
+          : padding;
+      double logoY = overlayAtBottom
+          ? photoHeight - padding - drawH
+          : padding;
+
+      final cardPad = drawW * 0.25;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(
+            logoX - cardPad,
+            logoY - cardPad,
+            drawW + cardPad * 2,
+            drawH + cardPad * 2,
+          ),
+          Radius.circular(cardPad * 0.8),
+        ),
+        Paint()..color = Colors.black.withOpacity(0.35),
+      );
+      LogoWidget.paint(
+        canvas: canvas,
+        logoImage: logoImage,
+        x: logoX,
+        y: logoY,
+        maxWidth: drawW,
+        maxHeight: drawH,
+        opacity: 1.0,
+      );
+    }
+  }
+
+  // ========== PREVIEW ==========
   @override
   Widget buildPreview({
     required WatermarkData previewData,
@@ -308,7 +464,7 @@ class MinimalLayout extends WatermarkLayout {
                         child: _buildPreviewText(previewData, isLeftAligned),
                       ),
                       if (hasLogo && logoPath != null && logoPath.isNotEmpty) ...[
-                        const SizedBox(width: 8),   // pengganti Gap(8)
+                        const SizedBox(width: 8),
                         Container(
                           padding: const EdgeInsets.all(4),
                           decoration: BoxDecoration(
