@@ -31,25 +31,50 @@ class PreviewScreen extends StatefulWidget {
 class _PreviewScreenState extends State<PreviewScreen> {
   VideoPlayerController? _videoController;
   bool _isVideoInitialized = false;
+  bool _isVideoLoading = true;
+  String? _videoError;
 
   @override
   void initState() {
     super.initState();
     if (widget.mediaType == MediaType.video) {
       _initVideo();
+    } else {
+      _isVideoLoading = false;
     }
   }
 
   Future<void> _initVideo() async {
+    if (!mounted) return;
+    setState(() {
+      _isVideoLoading = true;
+      _videoError = null;
+    });
+
     try {
-      _videoController = VideoPlayerController.file(File(widget.file.path));
+      final file = File(widget.file.path);
+      if (!await file.exists()) {
+        throw Exception('File video tidak ditemukan');
+      }
+
+      _videoController = VideoPlayerController.file(file);
       await _videoController!.initialize();
+
+      if (!mounted) return;
+
       setState(() {
         _isVideoInitialized = true;
+        _isVideoLoading = false;
       });
+
       _videoController!.play();
     } catch (e) {
       debugPrint('❌ Gagal init video preview: $e');
+      if (!mounted) return;
+      setState(() {
+        _videoError = 'Gagal memuat video: $e';
+        _isVideoLoading = false;
+      });
     }
   }
 
@@ -57,6 +82,22 @@ class _PreviewScreenState extends State<PreviewScreen> {
   void dispose() {
     _videoController?.dispose();
     super.dispose();
+  }
+
+  void _togglePlayPause() {
+    if (_videoController == null || !_isVideoInitialized) return;
+    setState(() {
+      _videoController!.value.isPlaying
+          ? _videoController!.pause()
+          : _videoController!.play();
+    });
+  }
+
+  String _formatDuration(Duration duration) {
+    final seconds = duration.inSeconds;
+    final minutes = seconds ~/ 60;
+    final remainingSeconds = seconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
   }
 
   @override
@@ -96,26 +137,7 @@ class _PreviewScreenState extends State<PreviewScreen> {
             // ── Media Preview ──
             Expanded(
               child: Center(
-                child: widget.mediaType == MediaType.photo
-                    ? Image.file(
-                        file,
-                        fit: BoxFit.contain,
-                        errorBuilder: (_, __, ___) => const Icon(
-                          Icons.broken_image,
-                          color: Colors.grey,
-                          size: 64,
-                        ),
-                      )
-                    : _isVideoInitialized
-                        ? AspectRatio(
-                            aspectRatio: _videoController!.value.aspectRatio,
-                            child: VideoPlayer(_videoController!),
-                          )
-                        : const Center(
-                            child: CircularProgressIndicator(
-                              color: Colors.white,
-                            ),
-                          ),
+                child: _buildMediaPreview(file),
               ),
             ),
             // ── Info & Tombol ──
@@ -143,10 +165,18 @@ class _PreviewScreenState extends State<PreviewScreen> {
                           if (widget.mediaType == MediaType.video &&
                               _isVideoInitialized)
                             Text(
-                              'Durasi: ${_videoController!.value.duration.inSeconds}s',
+                              'Durasi: ${_formatDuration(_videoController!.value.duration)}',
                               style: const TextStyle(
                                 color: Colors.grey,
                                 fontSize: 14,
+                              ),
+                            ),
+                          if (_videoError != null)
+                            Text(
+                              '⚠️ $_videoError',
+                              style: const TextStyle(
+                                color: AppTheme.error,
+                                fontSize: 12,
                               ),
                             ),
                         ],
@@ -161,13 +191,7 @@ class _PreviewScreenState extends State<PreviewScreen> {
                             color: Colors.white,
                             size: 32,
                           ),
-                          onPressed: () {
-                            setState(() {
-                              _videoController!.value.isPlaying
-                                  ? _videoController!.pause()
-                                  : _videoController!.play();
-                            });
-                          },
+                          onPressed: _togglePlayPause,
                         ),
                     ],
                   ),
@@ -217,5 +241,72 @@ class _PreviewScreenState extends State<PreviewScreen> {
         ),
       ),
     );
+  }
+
+  Widget _buildMediaPreview(File file) {
+    if (widget.mediaType == MediaType.photo) {
+      return Image.file(
+        file,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => const Icon(
+          Icons.broken_image,
+          color: Colors.grey,
+          size: 64,
+        ),
+      );
+    } else {
+      // Video
+      if (_isVideoLoading) {
+        return const Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(color: Colors.white),
+            Gap(16),
+            Text(
+              'Memuat video...',
+              style: TextStyle(color: Colors.grey, fontSize: 14),
+            ),
+          ],
+        );
+      }
+
+      if (_videoError != null) {
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, color: Colors.red, size: 48),
+            const Gap(16),
+            Text(
+              'Gagal memuat video',
+              style: const TextStyle(color: Colors.grey, fontSize: 16),
+            ),
+            const Gap(8),
+            Text(
+              _videoError!,
+              style: const TextStyle(color: Colors.grey, fontSize: 12),
+              textAlign: TextAlign.center,
+            ),
+            const Gap(16),
+            ElevatedButton(
+              onPressed: _initVideo,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.accentOrange,
+                foregroundColor: Colors.black,
+              ),
+              child: const Text('Coba Lagi'),
+            ),
+          ],
+        );
+      }
+
+      if (_isVideoInitialized) {
+        return AspectRatio(
+          aspectRatio: _videoController!.value.aspectRatio,
+          child: VideoPlayer(_videoController!),
+        );
+      }
+
+      return const SizedBox.shrink();
+    }
   }
 }
