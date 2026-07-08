@@ -1,7 +1,7 @@
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../models/watermark_data.dart';
-import '../watermark_style.dart'; // ✅ import yang benar
+import '../watermark_style.dart';
 import 'layout_metrics.dart';
 
 abstract class WatermarkLayout {
@@ -32,6 +32,19 @@ abstract class WatermarkLayout {
   }) {
     throw UnimplementedError(
       '$runtimeType belum mengimplementasikan paintOnCanvas()',
+    );
+  }
+
+  /// Gambar hanya elemen watermark (teks, logo, barcode) tanpa foto latar.
+  /// Digunakan untuk menghasilkan overlay PNG transparan pada video.
+  void paintWatermarkOnly({
+    required ui.Canvas canvas,
+    required LayoutMetrics metrics,
+    required ui.Image? logoImage,
+    required WatermarkData data,
+  }) {
+    throw UnimplementedError(
+      '$runtimeType belum mengimplementasikan paintWatermarkOnly()',
     );
   }
 
