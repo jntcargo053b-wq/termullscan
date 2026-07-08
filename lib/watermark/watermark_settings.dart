@@ -31,6 +31,9 @@ class WatermarkSettings extends ChangeNotifier {
   static const String _keyVideoCrf = 'watermark_video_crf';
   static const String _keyX264Preset = 'watermark_x264_preset';
 
+  // ─── DELETE LOCAL COPY ────────────────────────────────
+  static const String _keyDeleteLocalVideo = 'watermark_delete_local_video';
+
   // ========== PROPERTIES ==========
   String operatorName = '';
   String companyName = '';
@@ -46,6 +49,9 @@ class WatermarkSettings extends ChangeNotifier {
   int videoBitrateKbps = 2000;      // 2 Mbps
   int videoCrf = 23;                // 18–28
   String x264Preset = 'medium';     // ultrafast … veryslow
+
+  // ─── DELETE LOCAL COPY AFTER GALLERY EXPORT ──────────
+  bool deleteLocalVideoAfterGalleryExport = true;
 
   bool _loaded = false;
 
@@ -76,6 +82,9 @@ class WatermarkSettings extends ChangeNotifier {
       videoCrf = prefs.getInt(_keyVideoCrf) ?? 23;
       x264Preset = prefs.getString(_keyX264Preset) ?? 'medium';
 
+      // ─── DELETE LOCAL COPY ────────────────────────────
+      deleteLocalVideoAfterGalleryExport = prefs.getBool(_keyDeleteLocalVideo) ?? true;
+
       _loaded = true;
       debugPrint('✅ Watermark settings loaded');
     } catch (e) {
@@ -105,6 +114,9 @@ class WatermarkSettings extends ChangeNotifier {
       await prefs.setInt(_keyVideoBitrate, videoBitrateKbps);
       await prefs.setInt(_keyVideoCrf, videoCrf);
       await prefs.setString(_keyX264Preset, x264Preset);
+
+      // ─── DELETE LOCAL COPY ────────────────────────────
+      await prefs.setBool(_keyDeleteLocalVideo, deleteLocalVideoAfterGalleryExport);
 
       debugPrint('✅ Watermark settings saved');
     } catch (e) {
@@ -189,5 +201,12 @@ class WatermarkSettings extends ChangeNotifier {
       notifyListeners();
       await save();
     }
+  }
+
+  // ─── DELETE LOCAL COPY SETTER ────────────────────────
+  Future<void> setDeleteLocalVideoAfterGalleryExport(bool value) async {
+    deleteLocalVideoAfterGalleryExport = value;
+    notifyListeners();
+    await save();
   }
 }
