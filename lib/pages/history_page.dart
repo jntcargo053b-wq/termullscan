@@ -15,7 +15,16 @@ class _HistoryPageState extends State<HistoryPage> {
   final ScrollController _scrollController = ScrollController();
   final int _pageSize = 50;
 
+  // ─── STATE ────────────────────────────────────────────────
   HistoryState _state = HistoryState();
+
+  // ─── GENERATION (untuk membatalkan request filter lama) ──
+  int _generation = 0;
+
+  // ─── LOADING GUARD (untuk pagination) ────────────────────
+  bool _loadingMore = false;
+
+  // ─── LIFECYCLE ────────────────────────────────────────────
 
   @override
   void initState() {
@@ -30,9 +39,10 @@ class _HistoryPageState extends State<HistoryPage> {
     super.dispose();
   }
 
-  // ─── Lazy Load Logic ────────────────────────────────────
+  // ─── SCROLL LISTENER ──────────────────────────────────────
 
   void _onScroll() {
+    if (!mounted) return;
     if (_scrollController.position.pixels >=
         _scrollController.position.maxScrollExtent - 200) {
       if (!_state.isLoading && _state.hasMore) {
@@ -41,21 +51,36 @@ class _HistoryPageState extends State<HistoryPage> {
     }
   }
 
+  // ─── LOAD FIRST PAGE ──────────────────────────────────────
+
   Future<void> _loadFirstPage() async {
+    // Ambil filter saat ini dan generation
+    final searchQuery = _state.searchQuery;
+    final period = _state.period;
+    final sortField = _state.sortField;
+    final sortDir = _state.sortDir;
+    final int generation = _generation;
+
     setState(() => _state = _state.copyWith(isLoading: true, items: []));
+
     try {
       final total = await _db.getCount(
-        searchQuery: _state.searchQuery,
-        period: _state.period,
+        searchQuery: searchQuery,
+        period: period,
       );
       final items = await _db.getEntries(
         limit: _pageSize,
         offset: 0,
-        searchQuery: _state.searchQuery,
-        period: _state.period,
-        sortField: _state.sortField,
-        sortDir: _state.sortDir,
+        searchQuery: searchQuery,
+        period: period,
+        sortField: sortField,
+        sortDir: sortDir,
       );
+
+      if (!mounted) return;
+      // Abaikan jika filter sudah berubah (generation berubah)
+      if (generation != _generation) return;
+
       setState(() {
         _state = _state.copyWith(
           items: items,
@@ -65,42 +90,75 @@ class _HistoryPageState extends State<HistoryPage> {
           isLoading: false,
         );
       });
-    } catch (e) {
+    } catch (e, stackTrace) {
+      debugPrintStack(stackTrace: stackTrace);
+      if (!mounted) return;
+      if (generation != _generation) return; // abaikan error dari request usang
       setState(() => _state = _state.copyWith(isLoading: false));
       _showError('Gagal memuat data: $e');
     }
   }
 
+  // ─── LOAD MORE (PAGINATION) ──────────────────────────────
+
   Future<void> _loadMore() async {
-    if (_state.isLoading || !_state.hasMore) return;
+    // Cegah pagination ganda
+    if (_loadingMore || _state.isLoading || !_state.hasMore) return;
+
+    // Ambil parameter dan generation saat ini
+    final searchQuery = _state.searchQuery;
+    final period = _state.period;
+    final sortField = _state.sortField;
+    final sortDir = _state.sortDir;
+    final currentPage = _state.currentPage;
+    final int generation = _generation;
+
+    _loadingMore = true;
     setState(() => _state = _state.copyWith(isLoading: true));
+
     try {
-      final offset = (_state.currentPage + 1) * _pageSize;
+      final offset = (currentPage + 1) * _pageSize;
       final moreItems = await _db.getEntries(
         limit: _pageSize,
         offset: offset,
-        searchQuery: _state.searchQuery,
-        period: _state.period,
-        sortField: _state.sortField,
-        sortDir: _state.sortDir,
+        searchQuery: searchQuery,
+        period: period,
+        sortField: sortField,
+        sortDir: sortDir,
       );
-      final newItems = List<ScanEntry>.from(_state.items)..addAll(moreItems);
+
+      if (!mounted) return;
+      // Abaikan jika filter sudah berubah
+      if (generation != _generation) return;
+
+      final newItems = [..._state.items, ...moreItems];
       final hasMore = newItems.length < _state.totalItems;
+
       setState(() {
         _state = _state.copyWith(
           items: newItems,
-          currentPage: _state.currentPage + 1,
+          currentPage: currentPage + 1,
           hasMore: hasMore,
           isLoading: false,
         );
       });
-    } catch (e) {
+    } catch (e, stackTrace) {
+      debugPrintStack(stackTrace: stackTrace);
+      if (!mounted) return;
+      if (generation != _generation) return;
       setState(() => _state = _state.copyWith(isLoading: false));
       _showError('Gagal memuat lebih banyak: $e');
+    } finally {
+      // Guard selalu dilepas, apapun yang terjadi (return, error, dsb.)
+      _loadingMore = false;
     }
   }
 
+  // ─── REFRESH & FILTER ─────────────────────────────────────
+
   Future<void> _refresh() async {
+    // Refresh dianggap sebagai permintaan filter baru (generation naik)
+    _generation++;
     await _loadFirstPage();
   }
 
@@ -110,6 +168,8 @@ class _HistoryPageState extends State<HistoryPage> {
     String? sortField,
     String? sortDir,
   }) {
+    // Filter berubah → generation naik
+    _generation++;
     setState(() {
       _state = _state.copyWith(
         searchQuery: searchQuery ?? _state.searchQuery,
@@ -166,9 +226,12 @@ class _HistoryPageState extends State<HistoryPage> {
   }
 
   Widget _buildEntryTile(ScanEntry entry) {
+    final String typeLabel = entry.type.name;
+    final String initial = typeLabel.isNotEmpty ? typeLabel[0].toUpperCase() : '?';
+
     return ListTile(
       leading: CircleAvatar(
-        child: Text(entry.type?.substring(0, 1) ?? '?'),
+        child: Text(initial),
       ),
       title: Text(
         entry.value,
@@ -192,7 +255,7 @@ class _HistoryPageState extends State<HistoryPage> {
     );
   }
 
-  // ─── Filter Dialog ──────────────────────────────────────
+  // ─── FILTER DIALOG ────────────────────────────────────────
 
   void _showFilterDialog() {
     final searchController = TextEditingController(text: _state.searchQuery);
@@ -265,6 +328,7 @@ class _HistoryPageState extends State<HistoryPage> {
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context);
+              if (!mounted) return;
               _applyFilter(
                 searchQuery: searchController.text.trim().isEmpty
                     ? null
@@ -281,7 +345,7 @@ class _HistoryPageState extends State<HistoryPage> {
     );
   }
 
-  // ─── Delete ──────────────────────────────────────────────
+  // ─── DELETE ────────────────────────────────────────────────
 
   Future<void> _confirmDelete(String id) async {
     final confirm = await showDialog<bool>(
@@ -304,27 +368,34 @@ class _HistoryPageState extends State<HistoryPage> {
     if (confirm == true) {
       try {
         await _db.delete(id);
-        // Hapus dari list lokal
+        if (!mounted) return;
         setState(() {
           _state = _state.copyWith(
             items: _state.items.where((e) => e.id != id).toList(),
-            totalItems: _state.totalItems - 1,
+            totalItems: _state.totalItems > 0 ? _state.totalItems - 1 : 0,
           );
         });
-      } catch (e) {
+      } catch (e, stackTrace) {
+        debugPrintStack(stackTrace: stackTrace);
+        if (!mounted) return;
         _showError('Gagal menghapus: $e');
       }
     }
   }
 
-  // ─── Helpers ─────────────────────────────────────────────
+  // ─── HELPERS ──────────────────────────────────────────────
 
   String _formatDate(DateTime dt) {
     return '${dt.day}/${dt.month}/${dt.year} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
   }
 
   void _showError(String msg) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: Colors.red,
+      ),
+    );
   }
 }
