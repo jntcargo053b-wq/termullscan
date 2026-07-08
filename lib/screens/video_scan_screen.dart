@@ -1,4 +1,3 @@
-// lib/screens/video_scan_screen.dart
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -476,7 +475,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
                 shape: const RoundedRectangleBorder(
                   borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
                 ),
-                builder: (_) => const WatermarkSettingsSheet(videoMode: true),
+                builder: (_) => const WatermarkSettingsSheet(), // ← PERUBAHAN: hapus videoMode
               );
             },
           ),
