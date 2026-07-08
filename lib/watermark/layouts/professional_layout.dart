@@ -1,4 +1,6 @@
-// lib/watermark/layouts/professional_layout.dart
+// ============================================================
+// lib/watermark/layouts/professional_layout.dart (FINAL)
+// ============================================================
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -11,7 +13,7 @@ import '../watermark_style.dart';
 import '../watermark_settings.dart';
 import '../helpers/layout_helper.dart';
 import '../helpers/text_helper.dart';
-import '../theme/watermark_theme.dart';
+import '../helpers/watermark_typography.dart';
 import '../widgets/logo_widget.dart';
 
 class ProfessionalLayout extends WatermarkLayout {
@@ -21,45 +23,46 @@ class ProfessionalLayout extends WatermarkLayout {
   @override
   WatermarkStyle get style => WatermarkStyle.professional;
 
+  static const Color _accentColor = Color(0xFF4FA8E8);
+
   @override
   LayoutMetrics computeMetrics({
     required double photoWidth,
     required double photoHeight,
     required WatermarkData data,
-    required WatermarkTheme theme,
   }) {
-    final isPortrait = photoHeight > photoWidth;
-    double effectiveBaseSize = theme.typography.baseSize;
-    double effectivePadding = theme.typography.padding;
-    if (theme.usePortraitScaling && isPortrait) {
-      effectiveBaseSize *= theme.portraitScaleFactor;
-      effectivePadding *= theme.portraitScaleFactor;
-    }
+    final baseSize = LayoutHelper.getBaseSize(photoWidth, photoHeight);
+    final padding = LayoutHelper.padding(baseSize);
 
-    int rowCount = 2; // tanggal, jam
+    int rowCount = 1; // timestamp
     if (data.hasBarcode) rowCount++;
     if (data.hasOperator) rowCount++;
-    if (data.hasLocation) rowCount++;
-    if (data.hasCoordinates) rowCount += 2;
+    rowCount++; // location
 
-    final lineH = effectiveBaseSize * theme.typography.lineHeight;
-    final barcodeBonus = data.hasBarcode ? theme.typography.barcodeRowBonus : 0.0;
-    final titleBonus = data.hasLocation ? theme.typography.titleRowBonus : 0.0;
+    final fontSz = data.fontSize;
+    // ✅ lineHeight konsisten di semua layout
+    final lineH = WatermarkTypography.lineHeight(fontSz);
 
-    final minHeight = photoHeight * theme.minPanelHeightFraction;
-    final contentHeight = rowCount * lineH + barcodeBonus + titleBonus + effectivePadding * 2.0;
-    final overlayHeight = math.max(minHeight, contentHeight);
+    // Baris "Kode Barang" dirender lebih besar (WatermarkTypography.barcode),
+    // jadi butuh tinggi baris ekstra dibanding baris normal.
+    final barcodeLineH =
+        WatermarkTypography.lineHeight(WatermarkTypography.barcode(fontSz));
+    final barcodeBonus = data.hasBarcode ? (barcodeLineH - lineH) : 0.0;
 
-    // logo.maxSize sekarang rasio (mis. 0.20), langsung dikalikan baseSize * scaleFactor
-    final logoMaxSize = effectiveBaseSize * theme.logo.maxSize * theme.logo.scaleFactor;
-    final rightReserved = logoMaxSize + effectivePadding * 1.4;
-    final accentBarSpace = (theme.accent.showBar ? theme.accent.barWidth : 0.0) + effectivePadding * 0.5;
-    final textW = photoWidth - effectivePadding * 2 - rightReserved - accentBarSpace;
+    final overlayHeight = math.max(
+      photoHeight * 0.14,
+      rowCount * lineH + barcodeBonus + padding * 2.0,
+    );
+
+    final logoMaxSize = WatermarkTypography.logo(baseSize); // ✅ konsisten di semua layout
+    final rightReserved = logoMaxSize + padding * 1.4;
+    final accentBarSpace = baseSize * 0.006 + padding * 0.5;
+    final textW = photoWidth - padding * 2 - rightReserved - accentBarSpace;
 
     return LayoutMetrics(
-      baseSize: effectiveBaseSize,
-      padding: effectivePadding,
-      fontSize: effectiveBaseSize * 0.12,
+      baseSize: baseSize,
+      padding: padding,
+      fontSize: fontSz,
       lineHeight: lineH,
       stripHeight: overlayHeight,
       logoMaxSize: logoMaxSize,
@@ -79,148 +82,132 @@ class ProfessionalLayout extends WatermarkLayout {
     required double photoHeight,
     required ui.Image? logoImage,
     required WatermarkData data,
-    required WatermarkTheme theme,
   }) {
     final padding = metrics.padding;
+    final baseSize = metrics.baseSize;
     final overlayHeight = metrics.stripHeight;
-    final c = theme.accent.color;
+    double overlayTop;
+    TextAlign textAlign;
+    final bool overlayAtBottom;
 
-    final placement = _resolvePosition(data.position, photoHeight, overlayHeight);
-    final overlayTop = placement.top;
-    final textAlign = placement.textAlign;
-    final overlayAtBottom = placement.atBottom;
+    switch (data.position) {
+      case WatermarkPosition.bottomRight:
+        overlayTop = photoHeight - overlayHeight;
+        textAlign = TextAlign.right;
+        overlayAtBottom = true;
+        break;
+      case WatermarkPosition.bottomLeft:
+        overlayTop = photoHeight - overlayHeight;
+        textAlign = TextAlign.left;
+        overlayAtBottom = true;
+        break;
+      case WatermarkPosition.topRight:
+        overlayTop = 0;
+        textAlign = TextAlign.right;
+        overlayAtBottom = false;
+        break;
+      case WatermarkPosition.topLeft:
+        overlayTop = 0;
+        textAlign = TextAlign.left;
+        overlayAtBottom = false;
+        break;
+      default:
+        overlayTop = photoHeight - overlayHeight;
+        textAlign = TextAlign.right;
+        overlayAtBottom = true;
+    }
 
-    // Gambar background foto
     canvas.drawImageRect(
       srcImage,
-      ui.Rect.fromLTWH(0, 0, photoWidth, photoHeight),
-      ui.Rect.fromLTWH(0, 0, photoWidth, photoHeight),
-      ui.Paint()
-        ..filterQuality = ui.FilterQuality.high
+      Rect.fromLTWH(0, 0, photoWidth, photoHeight),
+      Rect.fromLTWH(0, 0, photoWidth, photoHeight),
+      Paint()
+        ..filterQuality = FilterQuality.high
         ..isAntiAlias = true,
     );
 
-    // ─── PANEL BACKGROUND ─────────────────────────────────────
-    final panelRect = ui.Rect.fromLTWH(0, overlayTop, photoWidth, overlayHeight);
-
-    // Layer 1: solid
+    final gradientPaint = Paint()
+      ..shader = ui.Gradient.linear(
+        Offset(0, overlayTop),
+        Offset(0, overlayTop + overlayHeight),
+        overlayAtBottom
+            ? [
+                Colors.black.withOpacity(0.0),
+                Colors.black.withOpacity(data.backgroundOpacity * 0.55),
+                Colors.black.withOpacity(data.backgroundOpacity),
+              ]
+            : [
+                Colors.black.withOpacity(data.backgroundOpacity),
+                Colors.black.withOpacity(data.backgroundOpacity * 0.55),
+                Colors.black.withOpacity(0.0),
+              ],
+        overlayAtBottom ? [0.0, 0.45, 1.0] : [0.0, 0.55, 1.0],
+      );
     canvas.drawRect(
-      panelRect,
-      ui.Paint()..color = theme.panel.backgroundColor.withOpacity(theme.panel.backgroundOpacity),
+      Rect.fromLTWH(0, overlayTop, photoWidth, overlayHeight),
+      gradientPaint,
     );
 
-    // Layer 2: gradien
-    final gradientColors = overlayAtBottom
-        ? [
-            theme.panel.backgroundColor.withOpacity(theme.panel.gradientStartOpacity),
-            theme.panel.backgroundColor.withOpacity(theme.panel.gradientEndOpacity),
-          ]
-        : [
-            theme.panel.backgroundColor.withOpacity(theme.panel.gradientEndOpacity),
-            theme.panel.backgroundColor.withOpacity(theme.panel.gradientStartOpacity),
-          ];
-    final gradientPaint = ui.Paint()
-      ..shader = ui.Gradient.linear(
-        ui.Offset(0, overlayTop),
-        ui.Offset(0, overlayTop + overlayHeight),
-        gradientColors,
-      );
-    canvas.drawRect(panelRect, gradientPaint);
+    final dividerY = overlayAtBottom ? overlayTop : overlayTop + overlayHeight;
+    canvas.drawLine(
+      Offset(0, dividerY),
+      Offset(photoWidth, dividerY),
+      Paint()
+        ..color = Colors.white.withOpacity(0.10)
+        ..strokeWidth = 1,
+    );
 
-    // Layer 3: border (jika aktif)
-    if (theme.panel.showBorder) {
-      final borderPaint = ui.Paint()
-        ..color = theme.panel.borderColor.withOpacity(theme.panel.borderOpacity)
-        ..style = ui.PaintingStyle.stroke
-        ..strokeWidth = theme.panel.borderWidth;
-      canvas.drawRRect(
-        ui.RRect.fromRectAndRadius(
-          ui.Rect.fromLTWH(
-            theme.panel.borderWidth / 2,
-            overlayTop + theme.panel.borderWidth / 2,
-            photoWidth - theme.panel.borderWidth,
-            overlayHeight - theme.panel.borderWidth,
-          ),
-          ui.Radius.circular(theme.panel.borderRadius),
-        ),
-        borderPaint,
-      );
-    }
-
-    // Layer 4: highlight (jika aktif)
-    if (theme.panel.showHighlight && theme.panel.highlightOpacity > 0) {
-      final highlightPaint = ui.Paint()
-        ..color = theme.panel.highlightColor.withOpacity(theme.panel.highlightOpacity)
-        ..style = ui.PaintingStyle.stroke
-        ..strokeWidth = 1.0;
-      canvas.drawRect(
-        ui.Rect.fromLTWH(
-          theme.panel.borderWidth + 2,
-          overlayTop + theme.panel.borderWidth + 2,
-          photoWidth - (theme.panel.borderWidth + 2) * 2,
-          1.0,
-        ),
-        highlightPaint,
-      );
-    }
-
-    // ─── ACCENT BAR ────────────────────────────────────────────
-    final accentBarW = theme.accent.showBar ? theme.accent.barWidth : 0.0;
-    final accentBarSpace = accentBarW + padding * 0.5;
     final logoMaxSize = metrics.logoMaxSize;
+    final accentBarW = math.max(2.0, baseSize * 0.004);
+    final accentBarSpace = accentBarW + padding * 0.5;
     final logoReserve = (logoImage != null) ? logoMaxSize + padding * 1.4 : 0.0;
     final textContentWidth = photoWidth - padding * 2 - logoReserve - accentBarSpace;
 
-    final double textX = textAlign == ui.TextAlign.left
+    final double textX = textAlign == TextAlign.left
         ? padding + accentBarSpace
         : photoWidth - padding - textContentWidth;
     double textY = overlayTop + padding * 0.95;
 
-    if (theme.accent.showBar && accentBarW > 0) {
-      final barX = textAlign == ui.TextAlign.left ? padding : photoWidth - padding - accentBarW;
-      final barcodeBonus = data.hasBarcode ? theme.typography.barcodeRowBonus : 0.0;
-      final titleBonus = data.hasLocation ? theme.typography.titleRowBonus : 0.0;
-      final textBlockHeight =
-          metrics.textRowCount * metrics.lineHeight + barcodeBonus + titleBonus;
-      canvas.drawRect(
-        ui.Rect.fromLTWH(
-          barX,
-          overlayTop + padding * 0.85,
-          accentBarW,
-          textBlockHeight,
-        ),
-        ui.Paint()..color = c.withOpacity(theme.accent.barOpacity),
-      );
-    }
+    final barX = textAlign == TextAlign.left
+        ? padding
+        : photoWidth - padding - accentBarW;
+    final barcodeBonus = data.hasBarcode
+        ? (WatermarkTypography.lineHeight(WatermarkTypography.barcode(data.fontSize)) -
+            metrics.lineHeight)
+        : 0.0;
+    final textBlockHeight =
+        metrics.textRowCount * metrics.lineHeight + barcodeBonus;
+    canvas.drawRect(
+      Rect.fromLTWH(
+        barX,
+        overlayTop + padding * 0.85,
+        accentBarW,
+        textBlockHeight,
+      ),
+      Paint()..color = _accentColor.withOpacity(0.9),
+    );
 
-    // ─── FUNGSI MENGGAMBAR TEKS ──────────────────────────────
     void drawLabelValue(
       String label,
       String value,
       Color valueColor, {
       bool emphasize = false,
-      double? customFontSize,
     }) {
-      final valueFontSize = customFontSize ??
-          (emphasize ? theme.typography.barcodeFontSize : theme.typography.bodyFontSize);
+      final valueFontSize = emphasize
+          ? WatermarkTypography.barcode(data.fontSize)
+          : WatermarkTypography.body(data.fontSize);
       final rowLineHeight = emphasize
-          ? theme.typography.barcodeLineHeight
+          ? WatermarkTypography.lineHeight(valueFontSize)
           : metrics.lineHeight;
-
-      String displayLabel = label;
-      if (theme.typography.useSpacedLabels &&
-          theme.typography.spacedLabelKeys.contains(label)) {
-        displayLabel = _spaceOutLabel(label);
-      }
 
       TextHelper.paintText(
         canvas: canvas,
-        text: displayLabel,
+        text: _spaceOutLabel(label),
         x: textX,
         y: textY,
         maxWidth: textContentWidth,
         color: Colors.white.withOpacity(0.45),
-        fontSize: theme.typography.captionFontSize,
+        fontSize: WatermarkTypography.caption(data.fontSize),
         fontWeight: FontWeight.w700,
         maxLines: 1,
         textAlign: textAlign,
@@ -234,7 +221,7 @@ class ProfessionalLayout extends WatermarkLayout {
         maxWidth: textContentWidth,
         color: valueColor,
         fontSize: valueFontSize,
-        fontWeight: emphasize ? FontWeight.w600 : FontWeight.w500,
+        fontWeight: emphasize ? FontWeight.w700 : FontWeight.w500,
         maxLines: 1,
         textAlign: textAlign,
         fontFamily: data.fontFamily,
@@ -242,68 +229,6 @@ class ProfessionalLayout extends WatermarkLayout {
       textY += rowLineHeight;
     }
 
-    void drawTitleRow(String text) {
-      TextHelper.paintText(
-        canvas: canvas,
-        text: text,
-        x: textX,
-        y: textY,
-        maxWidth: textContentWidth,
-        color: c,
-        fontSize: theme.typography.titleFontSize,
-        fontWeight: FontWeight.w800,
-        maxLines: 1,
-        textAlign: textAlign,
-        fontFamily: data.fontFamily,
-      );
-      textY += metrics.lineHeight + theme.typography.titleRowBonus;
-    }
-
-    void drawCoordLine(String text) {
-      if (text.isEmpty) return;
-      TextHelper.paintText(
-        canvas: canvas,
-        text: text,
-        x: textX,
-        y: textY,
-        maxWidth: textContentWidth,
-        color: Colors.white.withOpacity(0.65),
-        fontSize: theme.typography.captionFontSize,
-        fontWeight: FontWeight.w600,
-        maxLines: 1,
-        textAlign: textAlign,
-        fontFamily: data.fontFamily,
-      );
-      textY += metrics.lineHeight;
-    }
-
-    // ─── URUTAN INFORMASI ──────────────────────────────────────
-    if (data.hasLocation) {
-      drawTitleRow(data.locationName!);
-    }
-
-    drawLabelValue(
-      'TANGGAL',
-      data.formattedDate,
-      Colors.white.withOpacity(0.85),
-      customFontSize: theme.typography.barcodeFontSize,
-    );
-    drawLabelValue(
-      'JAM',
-      data.formattedTime,
-      Colors.white.withOpacity(0.80),
-      customFontSize: theme.typography.barcodeFontSize,
-    );
-
-    textY += theme.typography.groupSpacing;
-
-    if (data.hasOperator) {
-      drawLabelValue(
-        'OPERATOR',
-        data.operatorName,
-        Colors.white.withOpacity(0.92),
-      );
-    }
     if (data.hasBarcode) {
       drawLabelValue(
         'KODE BARANG',
@@ -312,44 +237,51 @@ class ProfessionalLayout extends WatermarkLayout {
         emphasize: true,
       );
     }
-
-    if (data.hasCoordinates) {
-      textY += theme.typography.coordSpacing;
-      drawCoordLine(data.latText);
-      drawCoordLine(data.lonText);
+    if (data.hasOperator) {
+      drawLabelValue(
+        'OPERATOR',
+        data.operatorName,
+        Colors.white.withOpacity(0.92),
+      );
     }
+    drawLabelValue(
+      'WAKTU',
+      data.formattedTimestamp,
+      Colors.white.withOpacity(0.80),
+    );
+    drawLabelValue(
+      'LOKASI',
+      data.displayLocation,
+      Colors.white.withOpacity(0.70),
+    );
 
-    // ─── LOGO ──────────────────────────────────────────────────
     if (logoImage != null) {
-      final logoMaxH = metrics.logoMaxSize; // sudah termasuk scaleFactor
+      final logoMaxH = logoMaxSize;
       final logoW = logoImage.width.toDouble();
       final logoH = logoImage.height.toDouble();
       final scale = math.min(logoMaxH / logoW, logoMaxH / logoH);
       final drawW = logoW * scale;
       final drawH = logoH * scale;
-
-      double logoX = textAlign == ui.TextAlign.left
+      double logoX = textAlign == TextAlign.left
           ? photoWidth - padding - drawW
           : padding;
-      double logoY;
-      if (theme.logo.centerVertically) {
-        logoY = overlayTop + (overlayHeight - drawH) / 2;
-      } else {
-        logoY = overlayAtBottom ? photoHeight - padding - drawH : padding;
-      }
+      double logoY = overlayAtBottom
+          ? photoHeight - padding - drawH
+          : padding;
 
-      final cardPad = theme.logoCardPadding(drawW);
+      // ✅ cardPad diperbesar dari 0.15 → 0.25
+      final cardPad = drawW * 0.25;
       canvas.drawRRect(
-        ui.RRect.fromRectAndRadius(
-          ui.Rect.fromLTWH(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(
             logoX - cardPad,
             logoY - cardPad,
             drawW + cardPad * 2,
             drawH + cardPad * 2,
           ),
-          ui.Radius.circular(theme.logoCardRadius(cardPad)),
+          Radius.circular(cardPad * 0.8),
         ),
-        ui.Paint()..color = Colors.black.withOpacity(theme.logo.cardOpacity),
+        Paint()..color = Colors.black.withOpacity(0.35),
       );
 
       LogoWidget.paint(
@@ -359,26 +291,13 @@ class ProfessionalLayout extends WatermarkLayout {
         y: logoY,
         maxWidth: drawW,
         maxHeight: drawH,
-        opacity: theme.logo.opacity,
+        opacity: 1.0,
       );
     }
   }
 
   String _spaceOutLabel(String label) {
     return label.split('').join('\u200a ');
-  }
-
-  // ─── Helper posisi ──────────────────────────────────────────
-  _Position _resolvePosition(WatermarkPosition position, double photoHeight, double overlayHeight) {
-    final atBottom = position == WatermarkPosition.bottomRight ||
-                     position == WatermarkPosition.bottomLeft ||
-                     (position != WatermarkPosition.topLeft &&
-                      position != WatermarkPosition.topRight);
-    final top = atBottom ? photoHeight - overlayHeight : 0.0;
-    final textAlign = (position == WatermarkPosition.bottomLeft || position == WatermarkPosition.topLeft)
-        ? ui.TextAlign.left
-        : ui.TextAlign.right;
-    return _Position(top: top, textAlign: textAlign, atBottom: atBottom);
   }
 
   // ─── PREVIEW ──────────────────────────────────────────────────
@@ -390,355 +309,216 @@ class ProfessionalLayout extends WatermarkLayout {
     double previewWidth = 300,
     double previewHeight = 400,
   }) {
-    final baseSize = LayoutHelper.getBaseSize(previewWidth, previewHeight);
-    final theme = WatermarkTheme.of(style: style, data: previewData, baseSize: baseSize);
     final metrics = computeMetrics(
       photoWidth: previewWidth,
       photoHeight: previewHeight,
       data: previewData,
-      theme: theme,
     );
+
+    final overlayFractionHeight = metrics.stripHeight / previewHeight;
+    final isBottom = previewData.position == WatermarkPosition.bottomRight ||
+        previewData.position == WatermarkPosition.bottomLeft ||
+        (previewData.position != WatermarkPosition.topLeft &&
+            previewData.position != WatermarkPosition.topRight);
+    final isLeftAligned = previewData.position == WatermarkPosition.bottomLeft ||
+        previewData.position == WatermarkPosition.topLeft;
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(6),
       child: AspectRatio(
         aspectRatio: previewWidth / previewHeight,
-        child: CustomPaint(
-          painter: _ProfessionalPreviewPainter(
-            previewData: previewData,
-            hasLogo: hasLogo,
-            logoPath: logoPath,
-            metrics: metrics,
-            theme: theme,
-          ),
-          child: Container(),
+        child: Stack(
+          children: [
+            Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF33373D), Color(0xFF1B1E22)],
+                ),
+              ),
+              child: const Center(
+                child: Icon(Icons.image, color: Colors.white12, size: 28),
+              ),
+            ),
+            Align(
+              alignment: isBottom ? Alignment.bottomCenter : Alignment.topCenter,
+              child: FractionallySizedBox(
+                heightFactor: overlayFractionHeight.clamp(0.18, 0.9),
+                widthFactor: 1.0,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: isBottom ? Alignment.topCenter : Alignment.bottomCenter,
+                      end: isBottom ? Alignment.bottomCenter : Alignment.topCenter,
+                      colors: [
+                        Colors.black.withOpacity(0.0),
+                        Colors.black.withOpacity(
+                          (previewData.backgroundOpacity).clamp(0.0, 1.0),
+                        ),
+                      ],
+                    ),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisAlignment: isLeftAligned
+                        ? MainAxisAlignment.start
+                        : MainAxisAlignment.end,
+                    children: [
+                      if (isLeftAligned) ...[
+                        _buildAccentBar(),
+                        const Gap(8),
+                        Expanded(child: _buildTextColumn(previewData, isLeftAligned)),
+                      ] else ...[
+                        Expanded(child: _buildTextColumn(previewData, isLeftAligned)),
+                        const Gap(8),
+                        _buildAccentBar(),
+                      ],
+                      if (hasLogo && logoPath != null && logoPath.isNotEmpty) ...[
+                        const Gap(8),
+                        Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.10),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Image.file(
+                            File(logoPath),
+                            width: metrics.logoMaxSize * 0.55,
+                            height: metrics.logoMaxSize * 0.55,
+                            fit: BoxFit.contain,
+                            errorBuilder: (_, __, ___) =>
+                                const Icon(Icons.business, color: Colors.white38, size: 14),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              top: 6,
+              left: 6,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade800.withOpacity(0.85),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  displayName,
+                  style: const TextStyle(
+                    color: Colors.grey,
+                    fontSize: 8,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
+
+  Widget _buildAccentBar() {
+    return Container(
+      width: 2.5,
+      height: 36,
+      decoration: BoxDecoration(
+        color: _accentColor,
+        borderRadius: BorderRadius.circular(2),
+      ),
+    );
+  }
+
+  Widget _buildTextColumn(WatermarkData previewData, bool isLeftAligned) {
+    return Column(
+      crossAxisAlignment:
+          isLeftAligned ? CrossAxisAlignment.start : CrossAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (previewData.hasBarcode)
+          _PreviewField(
+            label: 'KODE BARANG',
+            value: previewData.barcodeValue ?? '',
+            valueColor: Colors.white,
+            bold: true,
+            alignEnd: !isLeftAligned,
+          ),
+        if (previewData.hasOperator)
+          _PreviewField(
+            label: 'OPERATOR',
+            value: previewData.operatorName,
+            valueColor: Colors.white.withOpacity(0.92),
+            alignEnd: !isLeftAligned,
+          ),
+        _PreviewField(
+          label: 'WAKTU',
+          value: previewData.formattedTimestamp,
+          valueColor: Colors.white.withOpacity(0.80),
+          alignEnd: !isLeftAligned,
+        ),
+        _PreviewField(
+          label: 'LOKASI',
+          value: previewData.displayLocation,
+          valueColor: Colors.white.withOpacity(0.70),
+          alignEnd: !isLeftAligned,
+        ),
+      ],
+    );
+  }
 }
 
-// ─── PREVIEW PAINTER ────────────────────────────────────────────
-class _ProfessionalPreviewPainter extends CustomPainter {
-  final WatermarkData previewData;
-  final bool hasLogo;
-  final String? logoPath;
-  final LayoutMetrics metrics;
-  final WatermarkTheme theme;
+class _PreviewField extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color valueColor;
+  final bool bold;
+  final bool alignEnd;
 
-  _ProfessionalPreviewPainter({
-    required this.previewData,
-    required this.hasLogo,
-    required this.logoPath,
-    required this.metrics,
-    required this.theme,
+  const _PreviewField({
+    required this.label,
+    required this.value,
+    required this.valueColor,
+    this.bold = false,
+    this.alignEnd = false,
   });
 
   @override
-  void paint(ui.Canvas canvas, ui.Size size) {
-    final photoWidth = size.width;
-    final photoHeight = size.height;
-    final overlayHeight = metrics.stripHeight;
-    final isBottom = previewData.position == WatermarkPosition.bottomRight ||
-                     previewData.position == WatermarkPosition.bottomLeft ||
-                     (previewData.position != WatermarkPosition.topLeft &&
-                      previewData.position != WatermarkPosition.topRight);
-    final isLeftAligned = previewData.position == WatermarkPosition.bottomLeft ||
-                          previewData.position == WatermarkPosition.topLeft;
-    final overlayTop = isBottom ? photoHeight - overlayHeight : 0.0;
-    final padding = metrics.padding;
-    final textAlign = isLeftAligned ? ui.TextAlign.left : ui.TextAlign.right;
-    final c = theme.accent.color;
-
-    // Background placeholder
-    final bgPaint = ui.Paint()
-      ..shader = ui.Gradient.linear(
-        ui.Offset(0, 0),
-        ui.Offset(photoWidth, photoHeight),
-        [const Color(0xFF33373D), const Color(0xFF1B1E22)],
-      );
-    canvas.drawRect(ui.Rect.fromLTWH(0, 0, photoWidth, photoHeight), bgPaint);
-    final iconPaint = ui.Paint()..color = Colors.white12;
-    canvas.drawCircle(ui.Offset(photoWidth / 2, photoHeight / 2), 14, iconPaint);
-
-    // Panel
-    final panelRect = ui.Rect.fromLTWH(0, overlayTop, photoWidth, overlayHeight);
-    canvas.drawRect(
-      panelRect,
-      ui.Paint()..color = theme.panel.backgroundColor.withOpacity(theme.panel.backgroundOpacity),
-    );
-    final gradientColors = isBottom
-        ? [
-            theme.panel.backgroundColor.withOpacity(theme.panel.gradientStartOpacity),
-            theme.panel.backgroundColor.withOpacity(theme.panel.gradientEndOpacity),
-          ]
-        : [
-            theme.panel.backgroundColor.withOpacity(theme.panel.gradientEndOpacity),
-            theme.panel.backgroundColor.withOpacity(theme.panel.gradientStartOpacity),
-          ];
-    final gradientPaint = ui.Paint()
-      ..shader = ui.Gradient.linear(
-        ui.Offset(0, overlayTop),
-        ui.Offset(0, overlayTop + overlayHeight),
-        gradientColors,
-      );
-    canvas.drawRect(panelRect, gradientPaint);
-
-    if (theme.panel.showBorder) {
-      final borderPaint = ui.Paint()
-        ..color = theme.panel.borderColor.withOpacity(theme.panel.borderOpacity)
-        ..style = ui.PaintingStyle.stroke
-        ..strokeWidth = theme.panel.borderWidth;
-      canvas.drawRRect(
-        ui.RRect.fromRectAndRadius(
-          ui.Rect.fromLTWH(
-            theme.panel.borderWidth / 2,
-            overlayTop + theme.panel.borderWidth / 2,
-            photoWidth - theme.panel.borderWidth,
-            overlayHeight - theme.panel.borderWidth,
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 3),
+      child: Column(
+        crossAxisAlignment:
+            alignEnd ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.45),
+              fontSize: 6.5,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.6,
+            ),
           ),
-          ui.Radius.circular(theme.panel.borderRadius),
-        ),
-        borderPaint,
-      );
-    }
-
-    if (theme.panel.showHighlight && theme.panel.highlightOpacity > 0) {
-      final highlightPaint = ui.Paint()
-        ..color = theme.panel.highlightColor.withOpacity(theme.panel.highlightOpacity)
-        ..style = ui.PaintingStyle.stroke
-        ..strokeWidth = 1.0;
-      canvas.drawRect(
-        ui.Rect.fromLTWH(
-          theme.panel.borderWidth + 2,
-          overlayTop + theme.panel.borderWidth + 2,
-          photoWidth - (theme.panel.borderWidth + 2) * 2,
-          1.0,
-        ),
-        highlightPaint,
-      );
-    }
-
-    // Accent bar
-    final accentBarW = theme.accent.showBar ? theme.accent.barWidth : 0.0;
-    final accentBarSpace = accentBarW + padding * 0.5;
-    final logoMaxSize = metrics.logoMaxSize;
-    final logoReserve = (hasLogo && logoPath != null) ? logoMaxSize + padding * 1.4 : 0.0;
-    final textContentWidth = photoWidth - padding * 2 - logoReserve - accentBarSpace;
-    final double textX = isLeftAligned
-        ? padding + accentBarSpace
-        : photoWidth - padding - textContentWidth;
-    double textY = overlayTop + padding * 0.95;
-
-    if (theme.accent.showBar && accentBarW > 0) {
-      final barX = isLeftAligned ? padding : photoWidth - padding - accentBarW;
-      final barcodeBonus = previewData.hasBarcode ? theme.typography.barcodeRowBonus : 0.0;
-      final titleBonus = previewData.hasLocation ? theme.typography.titleRowBonus : 0.0;
-      final textBlockHeight =
-          metrics.textRowCount * metrics.lineHeight + barcodeBonus + titleBonus;
-      canvas.drawRect(
-        ui.Rect.fromLTWH(
-          barX,
-          overlayTop + padding * 0.85,
-          accentBarW,
-          textBlockHeight,
-        ),
-        ui.Paint()..color = c.withOpacity(theme.accent.barOpacity),
-      );
-    }
-
-    // Fungsi teks
-    void drawLabelValue(String label, String value, Color valueColor,
-        {bool emphasize = false, double? customFontSize}) {
-      final valueFontSize = customFontSize ??
-          (emphasize ? theme.typography.barcodeFontSize : theme.typography.bodyFontSize);
-      final rowLineHeight = emphasize
-          ? theme.typography.barcodeLineHeight
-          : metrics.lineHeight;
-
-      String displayLabel = label;
-      if (theme.typography.useSpacedLabels &&
-          theme.typography.spacedLabelKeys.contains(label)) {
-        displayLabel = label.split('').join('\u200a ');
-      }
-
-      TextHelper.paintText(
-        canvas: canvas,
-        text: displayLabel,
-        x: textX,
-        y: textY,
-        maxWidth: textContentWidth,
-        color: Colors.white.withOpacity(0.45),
-        fontSize: theme.typography.captionFontSize,
-        fontWeight: FontWeight.w700,
-        maxLines: 1,
-        textAlign: textAlign,
-        fontFamily: previewData.fontFamily,
-      );
-      TextHelper.paintText(
-        canvas: canvas,
-        text: value,
-        x: textX,
-        y: textY + valueFontSize * 0.78,
-        maxWidth: textContentWidth,
-        color: valueColor,
-        fontSize: valueFontSize,
-        fontWeight: emphasize ? FontWeight.w600 : FontWeight.w500,
-        maxLines: 1,
-        textAlign: textAlign,
-        fontFamily: previewData.fontFamily,
-      );
-      textY += rowLineHeight;
-    }
-
-    void drawTitleRow(String text) {
-      TextHelper.paintText(
-        canvas: canvas,
-        text: text,
-        x: textX,
-        y: textY,
-        maxWidth: textContentWidth,
-        color: c,
-        fontSize: theme.typography.titleFontSize,
-        fontWeight: FontWeight.w800,
-        maxLines: 1,
-        textAlign: textAlign,
-        fontFamily: previewData.fontFamily,
-      );
-      textY += metrics.lineHeight + theme.typography.titleRowBonus;
-    }
-
-    void drawCoordLine(String text) {
-      if (text.isEmpty) return;
-      TextHelper.paintText(
-        canvas: canvas,
-        text: text,
-        x: textX,
-        y: textY,
-        maxWidth: textContentWidth,
-        color: Colors.white.withOpacity(0.65),
-        fontSize: theme.typography.captionFontSize,
-        fontWeight: FontWeight.w600,
-        maxLines: 1,
-        textAlign: textAlign,
-        fontFamily: previewData.fontFamily,
-      );
-      textY += metrics.lineHeight;
-    }
-
-    // Informasi
-    if (previewData.hasLocation) {
-      drawTitleRow(previewData.locationName!);
-    }
-    drawLabelValue(
-      'TANGGAL',
-      previewData.formattedDate,
-      Colors.white.withOpacity(0.85),
-      customFontSize: theme.typography.barcodeFontSize,
-    );
-    drawLabelValue(
-      'JAM',
-      previewData.formattedTime,
-      Colors.white.withOpacity(0.80),
-      customFontSize: theme.typography.barcodeFontSize,
-    );
-    textY += theme.typography.groupSpacing;
-
-    if (previewData.hasOperator) {
-      drawLabelValue(
-        'OPERATOR',
-        previewData.operatorName,
-        Colors.white.withOpacity(0.92),
-      );
-    }
-    if (previewData.hasBarcode) {
-      drawLabelValue(
-        'KODE BARANG',
-        previewData.barcodeValue ?? '',
-        Colors.white,
-        emphasize: true,
-      );
-    }
-    if (previewData.hasCoordinates) {
-      textY += theme.typography.coordSpacing;
-      drawCoordLine(previewData.latText);
-      drawCoordLine(previewData.lonText);
-    }
-
-    // Logo (placeholder)
-    if (hasLogo && logoPath != null) {
-      final logoSize = metrics.logoMaxSize;
-      final drawW = logoSize * 0.8;
-      final drawH = logoSize * 0.8;
-      double logoX = isLeftAligned ? photoWidth - padding - drawW : padding;
-      double logoY;
-      if (theme.logo.centerVertically) {
-        logoY = overlayTop + (overlayHeight - drawH) / 2;
-      } else {
-        logoY = isBottom ? photoHeight - padding - drawH : padding;
-      }
-
-      final cardPad = theme.logoCardPadding(drawW);
-      canvas.drawRRect(
-        ui.RRect.fromRectAndRadius(
-          ui.Rect.fromLTWH(
-            logoX - cardPad,
-            logoY - cardPad,
-            drawW + cardPad * 2,
-            drawH + cardPad * 2,
+          Text(
+            value,
+            style: TextStyle(
+              color: valueColor,
+              fontSize: bold ? 10.5 : 9.5,
+              fontWeight: bold ? FontWeight.w800 : FontWeight.w500,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: alignEnd ? TextAlign.right : TextAlign.left,
           ),
-          ui.Radius.circular(theme.logoCardRadius(cardPad)),
-        ),
-        ui.Paint()..color = Colors.black.withOpacity(theme.logo.cardOpacity),
-      );
-
-      final iconPaint2 = ui.Paint()..color = Colors.white38;
-      canvas.drawRect(ui.Rect.fromLTWH(logoX, logoY, drawW, drawH), iconPaint2);
-
-      final paragraphStyle = ui.ParagraphStyle(
-        fontSize: 10,
-        fontWeight: FontWeight.w500,
-        textAlign: ui.TextAlign.center,
-      );
-      final builder = ui.ParagraphBuilder(paragraphStyle)
-        ..pushStyle(ui.TextStyle(color: Colors.white54))
-        ..addText('LOGO')
-        ..pop();
-      final paragraph = builder.build();
-      paragraph.layout(ui.ParagraphConstraints(width: drawW));
-      canvas.drawParagraph(
-        paragraph,
-        ui.Offset(logoX + (drawW - paragraph.width) / 2, logoY + (drawH - paragraph.height) / 2),
-      );
-    }
-
-    // Label nama layout
-    final labelPaint = ui.Paint()..color = Colors.grey.withOpacity(0.85);
-    canvas.drawRRect(
-      ui.RRect.fromRectAndRadius(const ui.Rect.fromLTWH(6, 6, 70, 16), ui.Radius.circular(4)),
-      labelPaint,
+        ],
+      ),
     );
-    final labelParagraphStyle = ui.ParagraphStyle(
-      fontSize: 8,
-      fontWeight: FontWeight.w700,
-    );
-    final labelBuilder = ui.ParagraphBuilder(labelParagraphStyle)
-      ..pushStyle(ui.TextStyle(color: Colors.grey, letterSpacing: 0.5))
-      ..addText('🏢 Professional')
-      ..pop();
-    final labelPara = labelBuilder.build();
-    labelPara.layout(ui.ParagraphConstraints(width: 70));
-    canvas.drawParagraph(labelPara, ui.Offset(8, 7));
   }
-
-  @override
-  bool shouldRepaint(covariant _ProfessionalPreviewPainter oldDelegate) => false;
-}
-
-// ─── Helper position ─────────────────────────────────────────────
-class _Position {
-  final double top;
-  final ui.TextAlign textAlign;
-  final bool atBottom;
-  _Position({required this.top, required this.textAlign, required this.atBottom});
 }

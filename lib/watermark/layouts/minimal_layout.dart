@@ -1,5 +1,7 @@
-// lib/watermark/layouts/minimal_layout.dart
-import 'dart:io';
+// ============================================================
+// lib/watermark/layouts/minimal_layout.dart (FINAL – ELEGAN)
+// ============================================================
+import 'dart:io';                         // ← untuk File
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -8,7 +10,7 @@ import '../watermark_style.dart';
 import '../watermark_settings.dart';
 import '../helpers/layout_helper.dart';
 import '../helpers/text_helper.dart';
-import '../theme/watermark_theme.dart';
+import '../helpers/watermark_typography.dart';
 import '../widgets/logo_widget.dart';
 import 'base_layout.dart';
 import 'layout_metrics.dart';
@@ -20,20 +22,16 @@ class MinimalLayout extends WatermarkLayout {
   @override
   WatermarkStyle get style => WatermarkStyle.minimal;
 
+  static const Color _accentColor = Color(0xFFFFB74D);
+
   @override
   LayoutMetrics computeMetrics({
     required double photoWidth,
     required double photoHeight,
     required WatermarkData data,
-    required WatermarkTheme theme,
   }) {
-    final isPortrait = photoHeight > photoWidth;
-    double effectiveBaseSize = theme.typography.baseSize;
-    double effectivePadding = theme.typography.padding;
-    if (theme.usePortraitScaling && isPortrait) {
-      effectiveBaseSize *= theme.portraitScaleFactor;
-      effectivePadding *= theme.portraitScaleFactor;
-    }
+    final baseSize = LayoutHelper.getBaseSize(photoWidth, photoHeight);
+    final padding = LayoutHelper.padding(baseSize);
 
     int lineCount = 0;
     if (data.hasBarcode) lineCount++;
@@ -41,22 +39,28 @@ class MinimalLayout extends WatermarkLayout {
     lineCount++; // timestamp
     if (data.hasLocation) lineCount++;
 
-    final lineH = effectiveBaseSize * theme.typography.lineHeight;
-    final barcodeBonus = data.hasBarcode ? theme.typography.barcodeRowBonus : 0.0;
+    final fontSz = data.fontSize;
+    final lineH = WatermarkTypography.lineHeight(fontSz); // ✅ konsisten di semua layout
+    final spacing = 6.0;
 
-    final minHeight = photoHeight * theme.minPanelHeightFraction;
-    final contentHeight = lineCount * lineH + barcodeBonus + effectivePadding * 1.2;
-    final overlayHeight = math.max(minHeight, contentHeight);
+    // Baris "Kode" dirender lebih besar (WatermarkTypography.barcode), jadi
+    // butuh tinggi baris ekstra dibanding baris normal.
+    final barcodeLineH =
+        WatermarkTypography.lineHeight(WatermarkTypography.barcode(fontSz));
+    final barcodeBonus = data.hasBarcode ? (barcodeLineH - lineH) : 0.0;
 
-    // logo.maxSize sekarang rasio kecil (mis. 0.20), langsung dikalikan baseSize * scaleFactor
-    final logoMaxSize = effectiveBaseSize * theme.logo.maxSize * theme.logo.scaleFactor;
-    final textW = photoWidth - effectivePadding * 2 - logoMaxSize - 12;
+    final overlayHeight = (lineCount * lineH + (lineCount - 1) * spacing) +
+        barcodeBonus +
+        padding * 1.2;
+
+    final logoMaxSize = WatermarkTypography.logo(baseSize); // ✅ konsisten di semua layout
+    final textW = photoWidth - padding * 2 - logoMaxSize - 12;
 
     return LayoutMetrics(
-      baseSize: effectiveBaseSize,
-      padding: effectivePadding,
-      fontSize: theme.typography.fontSize,
-      lineHeight: lineH,
+      baseSize: baseSize,
+      padding: padding,
+      fontSize: fontSz,
+      lineHeight: lineH + spacing,
       stripHeight: overlayHeight,
       logoMaxSize: logoMaxSize,
       textRowCount: lineCount,
@@ -75,65 +79,85 @@ class MinimalLayout extends WatermarkLayout {
     required double photoHeight,
     required ui.Image? logoImage,
     required WatermarkData data,
-    required WatermarkTheme theme,
   }) {
     final padding = metrics.padding;
     final overlayHeight = metrics.stripHeight;
+    double overlayTop;
+    TextAlign textAlign;
+    final bool overlayAtBottom;
 
-    final placement = _resolveWatermarkPosition(data.position, photoHeight, overlayHeight);
-    final overlayTop = placement.top;
-    final textAlign = placement.textAlign;
-    final overlayAtBottom = placement.atBottom;
+    switch (data.position) {
+      case WatermarkPosition.bottomRight:
+        overlayTop = photoHeight - overlayHeight;
+        textAlign = TextAlign.right;
+        overlayAtBottom = true;
+        break;
+      case WatermarkPosition.bottomLeft:
+        overlayTop = photoHeight - overlayHeight;
+        textAlign = TextAlign.left;
+        overlayAtBottom = true;
+        break;
+      case WatermarkPosition.topRight:
+        overlayTop = 0;
+        textAlign = TextAlign.right;
+        overlayAtBottom = false;
+        break;
+      case WatermarkPosition.topLeft:
+        overlayTop = 0;
+        textAlign = TextAlign.left;
+        overlayAtBottom = false;
+        break;
+      default:
+        overlayTop = photoHeight - overlayHeight;
+        textAlign = TextAlign.right;
+        overlayAtBottom = true;
+    }
 
     canvas.drawImageRect(
       srcImage,
-      ui.Rect.fromLTWH(0, 0, photoWidth, photoHeight),
-      ui.Rect.fromLTWH(0, 0, photoWidth, photoHeight),
-      ui.Paint()
-        ..filterQuality = ui.FilterQuality.high
+      Rect.fromLTWH(0, 0, photoWidth, photoHeight),
+      Rect.fromLTWH(0, 0, photoWidth, photoHeight),
+      Paint()
+        ..filterQuality = FilterQuality.high
         ..isAntiAlias = true,
     );
 
-    // Panel background (solid + border)
-    final panelRect = ui.Rect.fromLTWH(0, overlayTop, photoWidth, overlayHeight);
+    final bgOpacity = data.backgroundOpacity.clamp(0.0, 1.0);
+    final gradientPaint = Paint()
+      ..shader = ui.Gradient.linear(
+        Offset(0, overlayTop),
+        Offset(0, overlayTop + overlayHeight),
+        overlayAtBottom
+            ? [
+                Colors.black.withOpacity(0.0),
+                Colors.black.withOpacity(bgOpacity),
+              ]
+            : [
+                Colors.black.withOpacity(bgOpacity),
+                Colors.black.withOpacity(0.0),
+              ],
+        [0.0, 1.0],
+      );
     canvas.drawRect(
-      panelRect,
-      ui.Paint()..color = theme.panel.backgroundColor.withOpacity(theme.panel.backgroundOpacity),
+      Rect.fromLTWH(0, overlayTop, photoWidth, overlayHeight),
+      gradientPaint,
     );
 
-    // Border
-    if (theme.panel.showBorder) {
-      final borderPaint = ui.Paint()
-        ..color = theme.panel.borderColor.withOpacity(theme.panel.borderOpacity)
-        ..style = ui.PaintingStyle.stroke
-        ..strokeWidth = theme.panel.borderWidth;
-      canvas.drawRRect(
-        ui.RRect.fromRectAndRadius(
-          ui.Rect.fromLTWH(
-            theme.panel.borderWidth / 2,
-            overlayTop + theme.panel.borderWidth / 2,
-            photoWidth - theme.panel.borderWidth,
-            overlayHeight - theme.panel.borderWidth,
-          ),
-          ui.Radius.circular(theme.panel.borderRadius),
-        ),
-        borderPaint,
-      );
-    }
-
-    final c = theme.accent.color;
     final textContentWidth = metrics.textAvailableWidth;
-    final double textX = textAlign == ui.TextAlign.left
+    final double textX = textAlign == TextAlign.left
         ? padding
         : photoWidth - padding - textContentWidth;
+    final double lineHeight = metrics.lineHeight;
     double textY = overlayTop + padding * 0.6;
 
     void drawIconLine(String icon, String text, Color color, {bool emphasize = false}) {
-      final valueFontSize =
-          emphasize ? theme.typography.barcodeFontSize : theme.typography.bodyFontSize;
-      final rowLineHeight =
-          emphasize ? theme.typography.barcodeLineHeight : metrics.lineHeight;
-      final iconOffset = textAlign == ui.TextAlign.left ? textX : textX + textContentWidth - valueFontSize * 2;
+      final valueFontSize = emphasize
+          ? WatermarkTypography.barcode(metrics.fontSize)
+          : WatermarkTypography.body(metrics.fontSize);
+      final rowLineHeight = emphasize
+          ? WatermarkTypography.lineHeight(valueFontSize)
+          : lineHeight;
+      final iconOffset = textAlign == TextAlign.left ? textX : textX + textContentWidth - valueFontSize * 2;
       TextHelper.paintText(
         canvas: canvas,
         text: icon,
@@ -147,7 +171,7 @@ class MinimalLayout extends WatermarkLayout {
         textAlign: textAlign,
         fontFamily: data.fontFamily,
       );
-      final textOffset = textAlign == ui.TextAlign.left ? textX + 30 : textX;
+      final textOffset = textAlign == TextAlign.left ? textX + 30 : textX;
       TextHelper.paintText(
         canvas: canvas,
         text: text,
@@ -164,28 +188,20 @@ class MinimalLayout extends WatermarkLayout {
       textY += rowLineHeight;
     }
 
-    // Timestamp (paling besar)
-    drawIconLine('🕒', data.formattedTimestamp, Colors.white.withOpacity(0.85), emphasize: true);
-
-    textY += theme.typography.groupSpacing;
-
     if (data.hasBarcode) {
-      drawIconLine('📦', data.barcodeValue ?? '', Colors.white, emphasize: false);
+      drawIconLine('📦', data.barcodeValue ?? '', Colors.white, emphasize: true);
     }
     if (data.hasOperator) {
       drawIconLine('👤', data.operatorName, Colors.white.withOpacity(0.92));
     }
-
+    drawIconLine('🕒', data.formattedTimestamp, Colors.white.withOpacity(0.85));
     if (data.hasLocation) {
-      textY += theme.typography.groupSpacing * 0.5;
-      drawIconLine('📍', data.displayLocation, Colors.white.withOpacity(0.75));
+      drawIconLine('📍', data.displayLocation, Colors.white.withOpacity(0.85));
     }
-
     if (data.isManual) {
-      drawIconLine('⚡', 'MANUAL ENTRY', c);
+      drawIconLine('⚡', 'MANUAL ENTRY', _accentColor);
     }
 
-    // Logo
     if (logoImage != null) {
       final logoSize = metrics.logoMaxSize;
       final logoW = logoImage.width.toDouble();
@@ -193,30 +209,25 @@ class MinimalLayout extends WatermarkLayout {
       final scale = math.min(logoSize / logoW, logoSize / logoH);
       final drawW = logoW * scale;
       final drawH = logoH * scale;
-      double logoX = textAlign == ui.TextAlign.left
+      double logoX = textAlign == TextAlign.left
           ? photoWidth - padding - drawW
           : padding;
       double logoY = overlayAtBottom
           ? photoHeight - padding - drawH
           : padding;
 
-      // Center vertically if enabled
-      if (theme.logo.centerVertically) {
-        logoY = overlayTop + (overlayHeight - drawH) / 2;
-      }
-
-      final cardPad = theme.logoCardPadding(drawW);
+      final cardPad = drawW * 0.25;
       canvas.drawRRect(
-        ui.RRect.fromRectAndRadius(
-          ui.Rect.fromLTWH(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(
             logoX - cardPad,
             logoY - cardPad,
             drawW + cardPad * 2,
             drawH + cardPad * 2,
           ),
-          ui.Radius.circular(theme.logoCardRadius(cardPad)),
+          Radius.circular(cardPad * 0.8),
         ),
-        ui.Paint()..color = Colors.black.withOpacity(theme.logo.cardOpacity),
+        Paint()..color = Colors.black.withOpacity(0.35),
       );
 
       LogoWidget.paint(
@@ -226,22 +237,9 @@ class MinimalLayout extends WatermarkLayout {
         y: logoY,
         maxWidth: drawW,
         maxHeight: drawH,
-        opacity: theme.logo.opacity,
+        opacity: 1.0,
       );
     }
-  }
-
-  // Helper untuk resolve posisi (menggantikan WatermarkAlignment)
-  _Position _resolveWatermarkPosition(WatermarkPosition position, double photoHeight, double overlayHeight) {
-    final atBottom = position == WatermarkPosition.bottomRight ||
-                     position == WatermarkPosition.bottomLeft ||
-                     (position != WatermarkPosition.topLeft &&
-                      position != WatermarkPosition.topRight);
-    final top = atBottom ? photoHeight - overlayHeight : 0.0;
-    final textAlign = (position == WatermarkPosition.bottomLeft || position == WatermarkPosition.topLeft)
-        ? ui.TextAlign.left
-        : ui.TextAlign.right;
-    return _Position(top: top, textAlign: textAlign, atBottom: atBottom);
   }
 
   @override
@@ -252,13 +250,10 @@ class MinimalLayout extends WatermarkLayout {
     double previewWidth = 300,
     double previewHeight = 400,
   }) {
-    final baseSize = LayoutHelper.getBaseSize(previewWidth, previewHeight);
-    final theme = WatermarkTheme.of(style: style, data: previewData, baseSize: baseSize);
     final metrics = computeMetrics(
       photoWidth: previewWidth,
       photoHeight: previewHeight,
       data: previewData,
-      theme: theme,
     );
     final overlayFractionHeight = metrics.stripHeight / previewHeight;
     final isBottom = previewData.position == WatermarkPosition.bottomRight ||
@@ -266,7 +261,7 @@ class MinimalLayout extends WatermarkLayout {
         (previewData.position != WatermarkPosition.topLeft &&
             previewData.position != WatermarkPosition.topRight);
     final isLeftAligned = previewData.position == WatermarkPosition.bottomLeft ||
-                          previewData.position == WatermarkPosition.topLeft;
+        previewData.position == WatermarkPosition.topLeft;
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(6),
@@ -289,7 +284,7 @@ class MinimalLayout extends WatermarkLayout {
             Align(
               alignment: isBottom ? Alignment.bottomCenter : Alignment.topCenter,
               child: FractionallySizedBox(
-                heightFactor: overlayFractionHeight.clamp(0.08, 0.8),
+                heightFactor: overlayFractionHeight.clamp(0.12, 0.8),
                 widthFactor: 1.0,
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -310,10 +305,10 @@ class MinimalLayout extends WatermarkLayout {
                     mainAxisAlignment: isLeftAligned ? MainAxisAlignment.start : MainAxisAlignment.end,
                     children: [
                       Expanded(
-                        child: _buildPreviewText(previewData, isLeftAligned, theme),
+                        child: _buildPreviewText(previewData, isLeftAligned),
                       ),
                       if (hasLogo && logoPath != null && logoPath.isNotEmpty) ...[
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 8),   // pengganti Gap(8)
                         Container(
                           padding: const EdgeInsets.all(4),
                           decoration: BoxDecoration(
@@ -361,8 +356,8 @@ class MinimalLayout extends WatermarkLayout {
     );
   }
 
-  Widget _buildPreviewText(WatermarkData data, bool alignLeft, WatermarkTheme theme) {
-    const textStyle = TextStyle(
+  Widget _buildPreviewText(WatermarkData data, bool alignLeft) {
+    final textStyle = TextStyle(
       color: Colors.white,
       fontSize: 9,
       fontWeight: FontWeight.w500,
@@ -370,26 +365,18 @@ class MinimalLayout extends WatermarkLayout {
     final align = alignLeft ? TextAlign.left : TextAlign.right;
 
     final lines = <Widget>[];
-    lines.add(Text(
-      '🕒 ${data.formattedTimestamp}',
-      style: textStyle.copyWith(fontWeight: FontWeight.w800, fontSize: 10),
-      textAlign: align,
-    ));
     if (data.hasBarcode) {
-      lines.add(Text(
-        '📦 ${data.barcodeValue}',
-        style: textStyle,
-        textAlign: align,
-      ));
+      lines.add(Text('📦 ${data.barcodeValue}', style: textStyle, textAlign: align));
     }
     if (data.hasOperator) {
       lines.add(Text('👤 ${data.operatorName}', style: textStyle, textAlign: align));
     }
+    lines.add(Text('🕒 ${data.formattedTimestamp}', style: textStyle, textAlign: align));
     if (data.hasLocation) {
       lines.add(Text('📍 ${data.displayLocation}', style: textStyle, maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: align));
     }
     if (data.isManual) {
-      lines.add(Text('⚡ MANUAL ENTRY', style: TextStyle(color: theme.accent.color, fontSize: 8, fontWeight: FontWeight.w700), textAlign: align));
+      lines.add(Text('⚡ MANUAL ENTRY', style: TextStyle(color: _accentColor, fontSize: 8, fontWeight: FontWeight.w700), textAlign: align));
     }
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -397,11 +384,4 @@ class MinimalLayout extends WatermarkLayout {
       children: lines,
     );
   }
-}
-
-class _Position {
-  final double top;
-  final ui.TextAlign textAlign;
-  final bool atBottom;
-  _Position({required this.top, required this.textAlign, required this.atBottom});
 }

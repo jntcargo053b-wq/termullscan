@@ -1,7 +1,6 @@
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../models/watermark_data.dart';
-import '../theme/watermark_theme.dart';
 import '../watermark_style.dart'; // ✅ import yang benar
 import 'layout_metrics.dart';
 
@@ -12,14 +11,10 @@ abstract class WatermarkLayout {
 
   WatermarkStyle? get style => null;
 
-  /// [theme] dibuat SEKALI oleh WatermarkRenderer (satu instance per proses
-  /// render) dan diteruskan ke sini — layout tidak lagi membangun
-  /// WatermarkTheme sendiri-sendiri.
   LayoutMetrics computeMetrics({
     required double photoWidth,
     required double photoHeight,
     required WatermarkData data,
-    required WatermarkTheme theme,
   }) {
     throw UnimplementedError(
       '$runtimeType belum mengimplementasikan computeMetrics()',
@@ -34,7 +29,6 @@ abstract class WatermarkLayout {
     required double photoHeight,
     required ui.Image? logoImage,
     required WatermarkData data,
-    required WatermarkTheme theme,
   }) {
     throw UnimplementedError(
       '$runtimeType belum mengimplementasikan paintOnCanvas()',

@@ -1,16 +1,20 @@
-// lib/watermark/layouts/polaroid_layout.dart
+// ============================================================
+// lib/watermark/layouts/polaroid_layout.dart (FINAL)
+// ============================================================
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:gap/gap.dart';
+import 'package:intl/intl.dart';
 import 'base_layout.dart';
 import 'layout_metrics.dart';
 import '../models/watermark_data.dart';
 import '../watermark_style.dart';
+import '../watermark_settings.dart';
 import '../helpers/layout_helper.dart';
 import '../helpers/text_helper.dart';
-import '../theme/watermark_theme.dart';
+import '../helpers/watermark_typography.dart';
 import '../widgets/logo_widget.dart';
 
 class PolaroidLayout extends WatermarkLayout {
@@ -27,25 +31,32 @@ class PolaroidLayout extends WatermarkLayout {
     required double photoWidth,
     required double photoHeight,
     required WatermarkData data,
-    required WatermarkTheme theme,
   }) {
-    final baseSize = theme.typography.baseSize;
-    final padding = theme.typography.padding;
+    final baseSize = LayoutHelper.getBaseSize(photoWidth, photoHeight);
+    final padding = LayoutHelper.padding(baseSize);
     final rowCount = _countTextLines(data);
 
-    final lineH = baseSize * theme.typography.lineHeight;
-    final barcodeBonus = data.hasBarcode ? theme.typography.barcodeRowBonus : 0.0;
+    final fontSz = data.fontSize;
+    final lineH = WatermarkTypography.lineHeight(fontSz); // ✅ konsisten di semua layout
+
+    // Baris "Kode" dirender lebih besar (WatermarkTypography.barcode), jadi
+    // butuh tinggi baris ekstra dibanding baris normal.
+    final barcodeLineH =
+        WatermarkTypography.lineHeight(WatermarkTypography.barcode(fontSz));
+    final barcodeBonus =
+        data.hasBarcode ? (barcodeLineH - lineH) : 0.0;
 
     final bottomStripHeight = math.max(
       photoHeight * 0.20,
       rowCount * lineH + barcodeBonus + padding * 2.2,
     );
 
+    final frameBorder = math.max(10.0, baseSize * _frameBorderRatio);
+
     final canvasW = photoWidth + padding * 2;
     final canvasH = photoHeight + padding + bottomStripHeight;
 
-    // logo.maxSize sekarang rasio kecil (mis. 0.20), langsung dikalikan baseSize * scaleFactor
-    final logoMaxH = baseSize * theme.logo.maxSize * theme.logo.scaleFactor;
+    final logoMaxH = WatermarkTypography.logo(baseSize); // ✅ konsisten di semua layout
     final isManual = data.isManual;
     final rightReserved = (isManual ? baseSize * 0.11 : 0.0) + logoMaxH;
     final textW = canvasW - padding * 2 - 14 - rightReserved;
@@ -53,7 +64,7 @@ class PolaroidLayout extends WatermarkLayout {
     return LayoutMetrics(
       baseSize: baseSize,
       padding: padding,
-      fontSize: theme.typography.fontSize,
+      fontSize: fontSz,
       lineHeight: lineH,
       stripHeight: bottomStripHeight,
       logoMaxSize: logoMaxH,
@@ -73,7 +84,6 @@ class PolaroidLayout extends WatermarkLayout {
     required double photoHeight,
     required ui.Image? logoImage,
     required WatermarkData data,
-    required WatermarkTheme theme,
   }) {
     final canvasWidth = metrics.canvasWidth;
     final canvasHeight = metrics.canvasHeight;
@@ -82,61 +92,51 @@ class PolaroidLayout extends WatermarkLayout {
     final stripHeight = metrics.stripHeight;
     final stripTop = photoHeight + padding;
     final frameBorder = math.max(10.0, baseSize * _frameBorderRatio);
-    final accentColor = theme.accent.color;
 
-    // Define missing color constants
-    final surfaceColor = const Color(0xFFF8F8F4);
-    final dividerColor = const Color(0xFFE0DED6);
-    final textPrimary = const Color(0xFF2C2C2C);
-    final textSecondary = const Color(0xFF555555);
-    final textMuted = const Color(0xFF9A9A92);
-
-    final paperRect = ui.Rect.fromLTWH(0, 0, canvasWidth, canvasHeight);
+    final paperRect = Rect.fromLTWH(0, 0, canvasWidth, canvasHeight);
     final paperShader = ui.Gradient.linear(
       paperRect.topLeft,
       paperRect.bottomRight,
-      [surfaceColor, const Color(0xFFF0EFE9)],
+      [const Color(0xFFFAFAF6), const Color(0xFFF0EFE9)],
     );
-    final cardRadius = ui.Radius.circular(theme.panel.borderRadius);
-    final cardRRect = ui.RRect.fromRectAndRadius(paperRect, cardRadius);
-    final cardPath = ui.Path()..addRRect(cardRRect);
+    // Radius kartu diperbesar dari 3 → 14 supaya terasa modern (kartu polaroid
+    // lama terasa flat karena sudutnya nyaris kotak sempurna).
+    const cardRadius = Radius.circular(14);
+    final cardRRect = RRect.fromRectAndRadius(paperRect, cardRadius);
+    final cardPath = Path()..addRRect(cardRRect);
+    canvas.drawShadow(cardPath, Colors.black.withOpacity(0.20), 6, true);
+    canvas.drawShadow(cardPath, Colors.black.withOpacity(0.28), 22, true);
 
-    // Simple shadow without external shadow themes
-    canvas.drawShadow(
-      cardPath,
-      Colors.black.withOpacity(0.12),
-      10.0,
-      true,
-    );
-
+    // Clip seluruh kanvas ke rounded-rect supaya foto & strip bawah ikut
+    // mengikuti sudut membulat kartu, bukan hanya background paper-nya.
     canvas.save();
     canvas.clipRRect(cardRRect);
-    canvas.drawRect(paperRect, ui.Paint()..shader = paperShader);
+    canvas.drawRect(paperRect, Paint()..shader = paperShader);
 
-    final outerPhotoRect = ui.Rect.fromLTWH(
+    final outerPhotoRect = Rect.fromLTWH(
       padding - frameBorder,
       padding - frameBorder,
       photoWidth + frameBorder * 2,
       photoHeight + frameBorder * 2,
     );
-    canvas.drawRect(outerPhotoRect, ui.Paint()..color = const Color(0xFFFFFFFF));
+    canvas.drawRect(outerPhotoRect, Paint()..color = const Color(0xFFFFFFFF));
     canvas.drawRect(
       outerPhotoRect,
-      ui.Paint()
-        ..color = dividerColor
-        ..style = ui.PaintingStyle.stroke
-        ..strokeWidth = 1.0, // hairlineStroke
+      Paint()
+        ..color = const Color(0xFFE2E0D8)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = math.max(1.0, baseSize * 0.0012),
     );
 
-    final photoRect = ui.Rect.fromLTWH(padding, padding, photoWidth, photoHeight);
+    final photoRect = Rect.fromLTWH(padding, padding, photoWidth, photoHeight);
     canvas.save();
-    canvas.clipRRect(ui.RRect.fromRectAndRadius(photoRect, ui.Radius.circular(6)));
+    canvas.clipRRect(RRect.fromRectAndRadius(photoRect, const Radius.circular(6)));
     canvas.drawImageRect(
       srcImage,
-      ui.Rect.fromLTWH(0, 0, photoWidth, photoHeight),
+      Rect.fromLTWH(0, 0, photoWidth, photoHeight),
       photoRect,
-      ui.Paint()
-        ..filterQuality = ui.FilterQuality.high
+      Paint()
+        ..filterQuality = FilterQuality.high
         ..isAntiAlias = true,
     );
 
@@ -149,21 +149,19 @@ class PolaroidLayout extends WatermarkLayout {
       ],
       [0.72, 1.0],
     );
-    canvas.drawRect(photoRect, ui.Paint()..shader = vignette);
+    canvas.drawRect(photoRect, Paint()..shader = vignette);
     canvas.drawRect(
       photoRect,
-      ui.Paint()..color = const Color(0xFFE8A95B).withOpacity(0.05),
+      Paint()..color = const Color(0xFFE8A95B).withOpacity(0.05),
     );
     canvas.restore();
 
-    // Draw divider line (replacing WatermarkDivider)
-    final dividerPaint = ui.Paint()
-      ..color = dividerColor.withOpacity(0.6)
-      ..strokeWidth = 1.0;
     canvas.drawLine(
-      ui.Offset(padding, stripTop),
-      ui.Offset(canvasWidth - padding, stripTop),
-      dividerPaint,
+      Offset(padding, stripTop),
+      Offset(canvasWidth - padding, stripTop),
+      Paint()
+        ..color = const Color(0xFFE2E0D8)
+        ..strokeWidth = 1.2,
     );
 
     final isManual = data.isManual;
@@ -177,26 +175,21 @@ class PolaroidLayout extends WatermarkLayout {
     _paintInfoTable(
       canvas: canvas,
       data: data,
-      theme: theme,
       x: tableX,
       y: tableY,
       maxWidth: tableWidth,
+      baseSize: baseSize,
+      fontSize: data.fontSize,
       lineHeight: metrics.lineHeight,
-      textPrimary: textPrimary,
-      textSecondary: textSecondary,
-      textMuted: textMuted,
-      accentColor: accentColor,
     );
 
     if (isManual) {
       _paintManualBadge(
         canvas: canvas,
         data: data,
-        theme: theme,
         x: canvasWidth - padding - baseSize * 0.105 - 8,
         y: stripTop + (stripHeight * 0.12),
         baseSize: baseSize,
-        accentColor: accentColor,
       );
     }
 
@@ -204,7 +197,7 @@ class PolaroidLayout extends WatermarkLayout {
       final logoMaxH = metrics.logoMaxSize;
       final logoW = logoImage!.width.toDouble();
       final logoH = logoImage.height.toDouble();
-      final scale = math.min(logoMaxH / logoW, logoMaxH / logoH);
+      final scale = logoMaxH / logoH;
       final drawW = logoW * scale;
       final drawH = logoH * scale;
       final logoX = canvasWidth - padding - drawW - 8;
@@ -212,18 +205,19 @@ class PolaroidLayout extends WatermarkLayout {
           ? stripTop + (stripHeight * 0.12) + (baseSize * 0.032) + 6
           : stripTop + (stripHeight - drawH) / 2;
 
-      final cardPad = theme.logoCardPadding(drawW);
+      // ✅ cardPad diperbesar (logo di polaroid menggunakan opacity, tapi tetap tambahkan background)
+      final cardPad = drawW * 0.20;
       canvas.drawRRect(
-        ui.RRect.fromRectAndRadius(
-          ui.Rect.fromLTWH(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(
             logoX - cardPad,
             logoY.clamp(stripTop, stripTop + stripHeight - drawH) - cardPad,
             drawW + cardPad * 2,
             drawH + cardPad * 2,
           ),
-          ui.Radius.circular(theme.logoCardRadius(cardPad)),
+          Radius.circular(cardPad * 0.8),
         ),
-        ui.Paint()..color = Colors.black.withOpacity(0.30),
+        Paint()..color = Colors.black.withOpacity(0.30),
       );
 
       LogoWidget.paint(
@@ -237,6 +231,7 @@ class PolaroidLayout extends WatermarkLayout {
       );
     }
 
+    // Menutup save() dari clipRRect kartu di awal method.
     canvas.restore();
   }
 
@@ -248,13 +243,10 @@ class PolaroidLayout extends WatermarkLayout {
     double previewWidth = 300,
     double previewHeight = 400,
   }) {
-    final baseSize = LayoutHelper.getBaseSize(previewWidth, previewHeight);
-    final theme = WatermarkTheme.of(style: style, data: previewData, baseSize: baseSize);
     final metrics = computeMetrics(
       photoWidth: previewWidth,
       photoHeight: previewHeight,
       data: previewData,
-      theme: theme,
     );
 
     return Container(
@@ -268,31 +260,45 @@ class PolaroidLayout extends WatermarkLayout {
         borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.12),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
+            color: Colors.black.withOpacity(0.25),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
           ),
         ],
-        border: Border.all(color: const Color(0xFFE2E0D8)),
       ),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
           AspectRatio(
             aspectRatio: 4 / 3,
             child: Container(
+              padding: const EdgeInsets.all(4),
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(6),
-                color: Colors.grey.shade200,
+                color: Colors.white,
+                border: Border.all(color: const Color(0xFFE2E0D8)),
               ),
-              child: const Center(
-                child: Icon(Icons.image, size: 40, color: Colors.black26),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1A1A1A),
+                  gradient: RadialGradient(
+                    center: Alignment.center,
+                    radius: 1.0,
+                    colors: [
+                      const Color(0xFF3A3A38),
+                      Colors.black.withOpacity(0.85),
+                    ],
+                  ),
+                ),
+                child: const Center(
+                  child: Icon(Icons.image, color: Colors.white24, size: 28),
+                ),
               ),
             ),
           ),
           const Gap(10),
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Expanded(
                 child: Column(
@@ -413,30 +419,24 @@ class PolaroidLayout extends WatermarkLayout {
   void _paintInfoTable({
     required ui.Canvas canvas,
     required WatermarkData data,
-    required WatermarkTheme theme,
     required double x,
     required double y,
     required double maxWidth,
+    required double baseSize,
+    required double fontSize,
     required double lineHeight,
-    required Color textPrimary,
-    required Color textSecondary,
-    required Color textMuted,
-    required Color accentColor,
   }) {
     double currentY = y;
 
     void drawRow(String label, String value, {bool emphasize = false}) {
-      final valueFontSize = emphasize ? theme.typography.barcodeFontSize : theme.typography.bodyFontSize;
-      final rowLineHeight = emphasize ? theme.typography.barcodeLineHeight : lineHeight;
-
       TextHelper.paintText(
         canvas: canvas,
         text: label.toUpperCase(),
         x: x,
         y: currentY,
         maxWidth: maxWidth * 0.26,
-        color: textMuted,
-        fontSize: theme.typography.captionFontSize,
+        color: const Color(0xFF8A8A82),
+        fontSize: WatermarkTypography.caption(fontSize),
         fontWeight: FontWeight.w700,
         fontFamily: data.fontFamily,
       );
@@ -446,12 +446,16 @@ class PolaroidLayout extends WatermarkLayout {
         x: x + maxWidth * 0.26,
         y: currentY,
         maxWidth: maxWidth * 0.74,
-        color: emphasize ? textPrimary : textSecondary,
-        fontSize: valueFontSize,
+        color: emphasize ? const Color(0xFF1F1F1F) : const Color(0xFF2C2C2C),
+        fontSize: emphasize
+            ? WatermarkTypography.barcode(fontSize)
+            : WatermarkTypography.body(fontSize),
         fontWeight: emphasize ? FontWeight.w800 : FontWeight.w600,
         fontFamily: data.fontFamily,
       );
-      currentY += rowLineHeight;
+      currentY += emphasize
+          ? WatermarkTypography.lineHeight(WatermarkTypography.barcode(fontSize))
+          : lineHeight;
     }
 
     if (data.hasBarcode) {
@@ -467,11 +471,9 @@ class PolaroidLayout extends WatermarkLayout {
   void _paintManualBadge({
     required ui.Canvas canvas,
     required WatermarkData data,
-    required WatermarkTheme theme,
     required double x,
     required double y,
     required double baseSize,
-    required Color accentColor,
   }) {
     final badgeW = baseSize * 0.105;
     final badgeH = baseSize * 0.032;
@@ -481,16 +483,16 @@ class PolaroidLayout extends WatermarkLayout {
     canvas.rotate(-0.07);
     canvas.translate(-badgeW / 2, -badgeH / 2);
 
-    final rect = ui.Rect.fromLTWH(0, 0, badgeW, badgeH);
+    final rect = Rect.fromLTWH(0, 0, badgeW, badgeH);
     canvas.drawRRect(
-      ui.RRect.fromRectAndRadius(rect, ui.Radius.circular(badgeH * 0.22)),
-      ui.Paint()..color = accentColor,
+      RRect.fromRectAndRadius(rect, Radius.circular(badgeH * 0.22)),
+      Paint()..color = const Color(0xFFE67E22),
     );
     canvas.drawRRect(
-      ui.RRect.fromRectAndRadius(rect, ui.Radius.circular(badgeH * 0.22)),
-      ui.Paint()
+      RRect.fromRectAndRadius(rect, Radius.circular(badgeH * 0.22)),
+      Paint()
         ..color = Colors.white.withOpacity(0.55)
-        ..style = ui.PaintingStyle.stroke
+        ..style = PaintingStyle.stroke
         ..strokeWidth = math.max(1.0, badgeH * 0.06),
     );
     TextHelper.paintText(
