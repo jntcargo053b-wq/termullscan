@@ -3,4 +3,5 @@ enum WatermarkStyle {
   professional,
   polaroid,
   stamp,
+  timestamp, // ✅ TAMBAHKAN
 }
