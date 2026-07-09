@@ -160,8 +160,15 @@ class VideoWatermarkService {
     final mediaInfo = session.getMediaInformation();
     if (mediaInfo == null) return null;
 
+    // ⚠️ PENTING: MediaInformation.getDuration() dari ffmpeg_kit_flutter_new
+    // mengembalikan String? (mis. "12.345000"), BUKAN double. Cast langsung
+    // `as double?` di sini SELALU melempar TypeError di setiap video (100%
+    // reproducible), yang langsung tertangkap oleh try/catch di addWatermark()
+    // dan membuat proses watermark video SELALU gagal sejak langkah pertama
+    // (baca metadata) — sebelum overlay/FFmpeg encode sempat dijalankan sama
+    // sekali. Ini akar masalah "video selalu tersimpan tanpa watermark".
     final durationObj = mediaInfo.getDuration();
-    final double duration = (durationObj as double?) ?? 0.0;
+    final double duration = double.tryParse(durationObj?.toString() ?? '') ?? 0.0;
 
     int srcW = 720, srcH = 1280, rotation = 0;
     final streams = mediaInfo.getStreams();
@@ -355,10 +362,11 @@ class VideoWatermarkService {
     final arguments = <String>[
       '-noautorotate',
       '-i', inputPath,
-      '-i', overlayPath,
+      '-loop', '1', '-i', overlayPath,
       ...filterArgs,
       ...encoderArgs,
       '-pix_fmt', 'yuv420p',
+      '-shortest',
       '-movflags', '+faststart',
       '-y',
       outputPath,

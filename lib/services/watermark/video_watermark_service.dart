@@ -282,7 +282,7 @@ class VideoWatermarkService {
     if (mediaInfo == null) return null;
 
     final durationObj = mediaInfo.getDuration();
-    final double duration = (durationObj as double?) ?? 0.0;
+    final double duration = double.tryParse(durationObj?.toString() ?? '') ?? 0.0;
 
     int srcW = 720, srcH = 1280, rotation = 0;
     final streams = mediaInfo.getStreams();

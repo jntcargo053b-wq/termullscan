@@ -17,7 +17,7 @@ import '../services/task_queue.dart';
 import '../services/background/video_processing_service.dart';
 import '../watermark/watermark_settings.dart';
 import '../watermark/watermark_style.dart';
-import '../services/watermark/watermark_service.dart';
+import '../services/watermark/watermark_service.dart'; // ✅ PERBAIKAN: pakai service overlay-PNG (bukan drawtext lama)
 import '../theme/app_theme.dart';
 import '../utils/file_helper.dart';
 import 'preview_screen.dart';
@@ -59,8 +59,6 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     super.initState();
     PermissionService.requestGalleryPermission();
     unawaited(VideoProcessingService.requestPermissions());
-    // ✅ Warm up FFmpeg
-    unawaited(VideoWatermarkService.warmUp());
     _taskQueue.statusStream.listen((task) {
       if (!mounted) return;
       setState(() {
@@ -252,7 +250,11 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       });
 
       // ============================================================
-      // ✅ PAKAI VideoWatermarkService (overlay PNG + fallback hw→sw)
+      // ✅ PERBAIKAN: Gunakan VideoWatermarkService (overlay PNG + fallback
+      // hw→sw encoder) — BUKAN VideoWatermarkRenderer lama yang memakai
+      // drawtext dengan urutan escaping salah (colon di-escape dulu baru
+      // backslash-nya di-escape ulang → filter FFmpeg jadi korup → selalu
+      // gagal parse → video jatuh ke jalur "simpan tanpa watermark").
       // ============================================================
       final wmResult = await VideoWatermarkService.addWatermark(
         inputPath: videoFile.path,
@@ -265,21 +267,19 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
           value: widget.barcode ?? 'video_${DateTime.now().millisecondsSinceEpoch}',
           timestamp: DateTime.now(),
         ),
-        onProgress: (progress) {
-          _safeSetState(() {
-            _progress = progress;
-            _statusText = 'Menambahkan watermark... ${(progress * 100).toInt()}%';
-          });
-          unawaited(VideoProcessingService.updateProgress(
-            title: 'TERMULScan — merender video',
-            text: '${(progress * 100).toInt()}% selesai',
-          ));
+        onProgress: (p) {
+          _safeSetState(() => _progress = p);
         },
       );
 
       if (wmResult == null && VideoWatermarkService.lastError != null) {
         debugPrint('🩺 Diagnosis watermark video: ${VideoWatermarkService.lastError}');
       }
+
+      _safeSetState(() {
+        _progress = 1.0;
+        _statusText = wmResult != null ? 'Watermark selesai!' : 'Watermark gagal';
+      });
 
       if (wmResult != null) {
         // 4. Watermark berhasil
