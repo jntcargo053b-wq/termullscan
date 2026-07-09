@@ -1,5 +1,5 @@
 // lib/services/watermark/watermark_service.dart
-// VERSI FINAL - Pertahankan resolusi asli, orientasi akurat, dan filter setsar=1
+// VERSI FINAL – Pemetaan transpose benar: 90° → transpose=2, 270° → transpose=1
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
@@ -14,17 +14,15 @@ import '../../watermark/watermark_settings.dart';
 import '../../watermark/watermark_renderer.dart';
 import 'watermark_cache.dart';
 
-/// Service untuk menambahkan watermark ke video dengan efisiensi tinggi.
+/// Service untuk menambahkan watermark ke video dengan orientasi yang benar.
 class VideoWatermarkService {
   static String? lastError;
   static bool _warmedUp = false;
   static final WatermarkCache _cache = WatermarkCache();
 
-  // Cache overlay: key -> path file PNG
   static final Map<String, String> _overlayFileCache = {};
   static const int _maxCacheSize = 50;
 
-  // Untuk progress callback yang aman (multi-session)
   static int _sessionCounter = 0;
   static final Map<int, void Function(double)> _progressCallbacks = {};
 
@@ -32,7 +30,7 @@ class VideoWatermarkService {
   static Future<void> warmUp() async {
     if (_warmedUp) return;
     try {
-      debugPrint('🔥 Memanaskan FFmpeg (ringan)...');
+      debugPrint('🔥 Memanaskan FFmpeg...');
       final session = await FFmpegKit.execute(
         '-hide_banner -f lavfi -i color -frames:v 1 -f null -',
       );
@@ -49,12 +47,7 @@ class VideoWatermarkService {
     }
   }
 
-  // ─── PRELOAD (opsional) ──────────────────────────────────────
-  static Future<void> preload(WatermarkSettings settings) async {
-    await _cache.initialize(settings);
-  }
-
-  // ─── ADD WATERMARK (entry point) ────────────────────────────
+  // ─── ADD WATERMARK ────────────────────────────────────────────
   static Future<String?> addWatermark({
     required String inputPath,
     required String outputPath,
@@ -71,20 +64,17 @@ class VideoWatermarkService {
     try {
       await _cache.initialize(settings);
 
-      // 1. Baca informasi video (dengan display dimensions & rotasi)
       final videoInfo = await _readVideoInfo(inputPath);
       if (videoInfo == null) {
         throw Exception('Gagal membaca metadata video');
       }
-      debugPrint('📹 Input: ${videoInfo.displayWidth}x${videoInfo.displayHeight}'
-          ' (stream: ${videoInfo.streamWidth}x${videoInfo.streamHeight}),'
-          ' rotasi ${videoInfo.rotation}°, durasi ${videoInfo.duration}s');
+      debugPrint('📹 Input: ${videoInfo.width}x${videoInfo.height}, rotasi ${videoInfo.rotation}°');
 
-      // 2. Hitung dimensi output & filter (tanpa scaling)
+      // Dimensi output setelah rotasi yang benar
       final dims = _computeDimensions(videoInfo);
-      debugPrint('📐 Output: ${dims.outW}x${dims.outH} (resolusi asli)');
+      debugPrint('📐 Output: ${dims.outW}x${dims.outH}');
 
-      // 3. Render overlay PNG (display dimensions digunakan untuk overlay)
+      // Render overlay PNG dengan dimensi setelah rotasi
       final overlayResult = await _renderOverlay(
         outW: dims.outW,
         outH: dims.outH,
@@ -92,7 +82,7 @@ class VideoWatermarkService {
         entry: entry,
       );
       if (overlayResult == null) {
-        debugPrint('⚠️ Gagal membuat overlay PNG, beralih ke drawtext fallback...');
+        debugPrint('⚠️ Gagal membuat overlay PNG, fallback drawtext...');
         final fallbackResult = await _addWatermarkWithDrawtext(
           inputPath: inputPath,
           outputPath: outputPath,
@@ -103,20 +93,15 @@ class VideoWatermarkService {
           onProgress: onProgress,
           sessionId: sessionId,
         );
-        if (fallbackResult != null) {
-          return fallbackResult;
-        }
-        throw Exception('Gagal membuat watermark (overlay & drawtext)');
+        if (fallbackResult != null) return fallbackResult;
+        throw Exception('Gagal membuat watermark');
       }
       overlayPath = overlayResult.$1;
       offsetX = overlayResult.$2;
       offsetY = overlayResult.$3;
-      if (overlayPath == null) {
-        throw Exception('Overlay path null');
-      }
-      debugPrint('🖼️ Overlay PNG siap: $overlayPath (${await File(overlayPath).length()} bytes)');
+      if (overlayPath == null) throw Exception('Overlay path null');
+      debugPrint('🖼️ Overlay PNG siap: $overlayPath');
 
-      // 4. Bangun argumen FFmpeg
       final args = _buildFFmpegArguments(
         inputPath: inputPath,
         outputPath: outputPath,
@@ -130,7 +115,6 @@ class VideoWatermarkService {
       );
       debugPrint('🎬 FFmpeg args: ${args.join(' ')}');
 
-      // 5. Eksekusi encoding
       final success = await _executeEncoding(
         args: args,
         sessionId: sessionId,
@@ -157,9 +141,7 @@ class VideoWatermarkService {
           onProgress: onProgress,
           sessionId: sessionId,
         );
-        if (fallbackResult != null) {
-          return fallbackResult;
-        }
+        if (fallbackResult != null) return fallbackResult;
         return null;
       }
 
@@ -172,12 +154,7 @@ class VideoWatermarkService {
     } finally {
       _progressCallbacks.remove(sessionId);
       if (overlayPath != null && !_overlayFileCache.containsValue(overlayPath)) {
-        try {
-          final f = File(overlayPath);
-          if (await f.exists()) await f.delete();
-        } catch (e) {
-          debugPrint('⚠️ Gagal hapus overlay sementara: $e');
-        }
+        try { await File(overlayPath).delete(); } catch (_) {}
       }
       if (_progressCallbacks.isEmpty) {
         FFmpegKitConfig.enableStatisticsCallback(null);
@@ -215,34 +192,23 @@ class VideoWatermarkService {
       String x, y;
       switch (pos) {
         case WatermarkPosition.bottomRight:
-          x = '(w-tw)-$padding';
-          y = '(h-th)-$padding';
-          break;
+          x = '(w-tw)-$padding'; y = '(h-th)-$padding'; break;
         case WatermarkPosition.bottomLeft:
-          x = '$padding';
-          y = '(h-th)-$padding';
-          break;
+          x = '$padding'; y = '(h-th)-$padding'; break;
         case WatermarkPosition.topRight:
-          x = '(w-tw)-$padding';
-          y = '$padding';
-          break;
+          x = '(w-tw)-$padding'; y = '$padding'; break;
         case WatermarkPosition.topLeft:
-          x = '$padding';
-          y = '$padding';
-          break;
+          x = '$padding'; y = '$padding'; break;
       }
 
       final fontSize = settings.fontSize;
       final opacity = settings.backgroundOpacity;
-      final fontColor = 'white';
-      final bgColor = 'black@$opacity';
-
       String drawText =
           "drawtext=text='$text':"
-          "fontcolor=$fontColor:"
+          "fontcolor=white:"
           "fontsize=$fontSize:"
           "box=1:"
-          "boxcolor=$bgColor:"
+          "boxcolor=black@$opacity:"
           "boxborderw=5:"
           "x=$x:y=$y";
 
@@ -272,77 +238,65 @@ class VideoWatermarkService {
     }
   }
 
-  // ─── 1. BACA INFO VIDEO (dengan display dimensions & rotasi) ──
+  // ─── BACA INFO VIDEO ──────────────────────────────────────────
   static Future<_VideoInfo?> _readVideoInfo(String inputPath) async {
     final session = await FFprobeKit.getMediaInformation(inputPath);
     final mediaInfo = session.getMediaInformation();
     if (mediaInfo == null) return null;
 
-    // ✅ FIX: getDuration() return String, bukan double
     final durationObj = mediaInfo.getDuration();
     final double duration = double.tryParse(durationObj?.toString() ?? '') ?? 0.0;
 
-    int streamW = 0, streamH = 0;
+    int width = 0, height = 0;
     int rotation = 0;
-    int displayW = 0, displayH = 0;
 
     final streams = mediaInfo.getStreams();
     for (final stream in streams) {
       final w = stream.getWidth();
       final h = stream.getHeight();
       if (w != null && h != null && w > 0 && h > 0) {
-        streamW = w;
-        streamH = h;
-
-        // Deteksi rotasi
+        width = w;
+        height = h;
         rotation = _detectRotation(stream);
-
-        // Coba dapatkan display dimensions dari side_data
-        final displayDims = _getDisplayDimensions(stream);
-        if (displayDims != null) {
-          displayW = displayDims.$1;
-          displayH = displayDims.$2;
-        }
+        debugPrint('📐 Stream: ${width}x${height}, rotasi terdeteksi: $rotation°');
         break;
       }
     }
 
-    // Jika tidak ada display dimensions, gunakan stream dimensions
-    if (displayW == 0 || displayH == 0) {
-      displayW = streamW;
-      displayH = streamH;
-    }
-
-    // Jika rotasi 90/270, display dimensions harus ditukar
-    if (rotation == 90 || rotation == 270) {
-      final temp = displayW;
-      displayW = displayH;
-      displayH = temp;
+    // Jika rotasi 0 tapi dimensi portrait (height > width), kemungkinan rotasi 90
+    // Ini untuk fallback jika metadata tidak ada
+    if (rotation == 0 && height > width) {
+      debugPrint('⚠️ Dimensi portrait (${width}x${height}) tanpa metadata rotasi → coba transpose=2');
+      rotation = 90; // asumsikan perlu diputar 90° CW
     }
 
     return _VideoInfo(
-      streamWidth: streamW,
-      streamHeight: streamH,
-      displayWidth: displayW,
-      displayHeight: displayH,
+      width: width,
+      height: height,
       rotation: rotation,
       duration: duration,
     );
   }
 
-  // ─── DETEKSI ROTASI ──────────────────────────────────────────
+  // ─── DETEKSI ROTASI (AKURAT) ────────────────────────────────
   static int _detectRotation(dynamic stream) {
-    // Cek tag 'rotate' (umum dari kamera)
+    int rotation = 0;
+
+    // 1. Cari tag 'rotate' (umum dari kamera)
     try {
       final tags = stream.getTags();
       if (tags != null && tags.containsKey('rotate')) {
         final rotStr = tags['rotate']?.toString() ?? '0';
         final tagRotation = int.tryParse(rotStr) ?? 0;
-        if (tagRotation != 0) return _normalizeRotation(tagRotation);
+        if (tagRotation != 0) {
+          rotation = _normalizeRotation(tagRotation);
+          debugPrint('🔄 Rotasi dari tag: $rotation°');
+          return rotation;
+        }
       }
     } catch (_) {}
 
-    // Cek side_data (display matrix) - perhatikan tanda terbalik
+    // 2. Cari side_data 'rotation' (display matrix)
     try {
       final props = stream.getAllProperties() as Map?;
       final sideDataList = props?['side_data_list'];
@@ -351,8 +305,20 @@ class VideoWatermarkService {
           if (sd is Map && sd.containsKey('rotation')) {
             final raw = sd['rotation'];
             final rot = raw is num ? raw.toInt() : int.tryParse('$raw') ?? 0;
-            // ⚠️ side_data rotation memiliki tanda terbalik dari tag rotate
-            if (rot != 0) return _normalizeRotation(-rot);
+            if (rot != 0) {
+              // 🔥 PERBAIKAN: side_data rotation biasanya sudah dalam arah yang benar,
+              // kita normalize saja tanpa negasi karena FFmpeg transpose menggunakan arah yang sama
+              // Tapi untuk beberapa device, nilai negatif berarti sebaliknya.
+              // Kita coba dua arah: jika rot negatif, kita balik.
+              int finalRot = rot;
+              if (rot < 0) {
+                finalRot = _normalizeRotation(rot); // misal -90 → 270
+              } else {
+                finalRot = _normalizeRotation(rot);
+              }
+              debugPrint('🔄 Rotasi dari side_data: ${rot} → normalisasi: $finalRot°');
+              return finalRot;
+            }
           }
         }
       }
@@ -361,56 +327,41 @@ class VideoWatermarkService {
     return 0;
   }
 
-  // ─── GET DISPLAY DIMENSIONS ──────────────────────────────────
-  static (int, int)? _getDisplayDimensions(dynamic stream) {
-    try {
-      final props = stream.getAllProperties() as Map?;
-      final sideDataList = props?['side_data_list'];
-      if (sideDataList is List) {
-        for (final sd in sideDataList) {
-          if (sd is Map && sd.containsKey('display_matrix')) {
-            // display_matrix adalah array 3x3, kita extract width/height
-            final matrix = sd['display_matrix'];
-            if (matrix is List && matrix.length >= 9) {
-              // Untuk display matrix, kita perlu parse lebih lanjut
-              // Sederhana: gunakan stream dimensions sebagai fallback
-              return null;
-            }
-          }
-        }
-      }
-    } catch (_) {}
-    return null;
-  }
-
   static int _normalizeRotation(int rotation) {
     var r = rotation % 360;
     if (r < 0) r += 360;
-    return (r / 90).round() * 90 % 360;
+    // Bulatkan ke kelipatan 90 terdekat
+    return ((r + 45) ~/ 90) * 90 % 360;
   }
 
-  // ─── 2. HITUNG DIMENSI (PERTAHANKAN RESOLUSI ASLI) ──────────
+  // ─── HITUNG DIMENSI OUTPUT ────────────────────────────────────
   static _Dimensions _computeDimensions(_VideoInfo info) {
-    // ✅ Pertahankan resolusi asli dari display dimensions
-    int outW = info.displayWidth;
-    int outH = info.displayHeight;
+    // Dimensi asli stream
+    int outW = info.width;
+    int outH = info.height;
 
-    // Pastikan genap (divisible by 2) untuk encoder (H.264/H.265 yuv420p)
+    // Jika rotasi 90/270, tukar dimensi agar output sesuai orientasi
+    final rot = info.rotation;
+    if (rot == 90 || rot == 270) {
+      final temp = outW;
+      outW = outH;
+      outH = temp;
+      debugPrint('🔄 Swap dimensi karena rotasi $rot°: ${outW}x${outH}');
+    }
+
+    // Pastikan genap
     outW = (outW ~/ 2) * 2;
     outH = (outH ~/ 2) * 2;
-
-    // Hanya setsar=1, tanpa scaling/pad — ini menormalkan Sample Aspect Ratio
-    const videoFilter = 'setsar=1';
 
     return _Dimensions(
       outW: outW,
       outH: outH,
-      videoFilter: videoFilter,
+      rotation: info.rotation,
       needScale: false,
     );
   }
 
-  // ─── 3. RENDER OVERLAY ──────────────────────────────────────
+  // ─── RENDER OVERLAY ──────────────────────────────────────────
   static Future<(String?, int, int)?> _renderOverlay({
     required int outW,
     required int outH,
@@ -448,17 +399,14 @@ class VideoWatermarkService {
     await file.writeAsBytes(overlayBytes);
 
     _overlayFileCache[key] = filePath;
-    if (_overlayFileCache.length > _maxCacheSize) {
-      _trimCache();
-    }
+    if (_overlayFileCache.length > _maxCacheSize) _trimCache();
 
     return (filePath, 0, 0);
   }
 
   static String _cacheKey(int outW, int outH, WatermarkSettings settings, ScanEntry entry) {
     final parts = [
-      outW,
-      outH,
+      outW, outH,
       settings.style.name,
       settings.companyName,
       settings.operatorName,
@@ -482,9 +430,7 @@ class VideoWatermarkService {
   static Future<Directory> _getCacheDirectory() async {
     final dir = await getTemporaryDirectory();
     final cacheDir = Directory('${dir.path}/watermark_cache');
-    if (!await cacheDir.exists()) {
-      await cacheDir.create(recursive: true);
-    }
+    if (!await cacheDir.exists()) await cacheDir.create(recursive: true);
     return cacheDir;
   }
 
@@ -493,15 +439,12 @@ class VideoWatermarkService {
     final entries = _overlayFileCache.entries.toList();
     final toRemove = entries.take(_overlayFileCache.length - _maxCacheSize);
     for (final entry in toRemove) {
-      try {
-        final file = File(entry.value);
-        if (file.existsSync()) file.deleteSync();
-      } catch (_) {}
+      try { File(entry.value).deleteSync(); } catch (_) {}
       _overlayFileCache.remove(entry.key);
     }
   }
 
-  // ─── 4. BANGUN ARGUMEN FFMPEG ──────────────────────────────
+  // ─── BANGUN ARGUMEN FFMPEG ──────────────────────────────────
   static List<String> _buildFFmpegArguments({
     required String inputPath,
     required String outputPath,
@@ -513,11 +456,32 @@ class VideoWatermarkService {
     required bool keepAudio,
     required _VideoInfo videoInfo,
   }) {
-    // ✅ Tanpa scaling, normalisasi yuv420p, lalu overlay
-    // dims.videoFilter = 'setsar=1' hanya memastikan SAR=1
+    // 🔥 PERBAIKAN: Pemetaan transpose yang benar
+    // 90° rotasi CW → transpose=2 (rotate 90° clockwise)
+    // 270° rotasi CW / 90° CCW → transpose=1 (rotate 90° counter-clockwise)
+    String videoFilter = '';
+    final rot = dims.rotation;
+
+    if (rot == 90) {
+      videoFilter += 'transpose=2,'; // ✅ CW 90°
+      debugPrint('🔄 Mapping rotasi 90° → transpose=2 (CW)');
+    } else if (rot == 270) {
+      videoFilter += 'transpose=1,'; // ✅ CCW 90° (atau CW 270°)
+      debugPrint('🔄 Mapping rotasi 270° → transpose=1 (CCW)');
+    } else if (rot == 180) {
+      videoFilter += 'transpose=2,transpose=2,'; // 180° = dua kali CW
+      debugPrint('🔄 Mapping rotasi 180° → transpose=2,transpose=2');
+    } else {
+      debugPrint('🔄 Tidak ada rotasi (0°)');
+    }
+
+    // Setsar=1 setelah transpose
+    videoFilter += 'setsar=1';
+
+    // Overlay
     final filterComplex =
-        '[0:v]${dims.videoFilter},format=yuv420p[base];'
-        '[base][1:v]overlay=$offsetX:$offsetY:format=auto[outv]';
+        '[0:v]$videoFilter,format=yuv420p[base];'
+        '[base][1:v]overlay=0:0:format=auto[outv]';
 
     final List<String> filterArgs = [
       '-filter_complex', filterComplex,
@@ -531,10 +495,7 @@ class VideoWatermarkService {
 
     final List<String> encoderArgs;
     if (useHw) {
-      encoderArgs = [
-        '-c:v', 'h264_mediacodec',
-        '-b:v', '${bitrate}k',
-      ];
+      encoderArgs = ['-c:v', 'h264_mediacodec', '-b:v', '${bitrate}k'];
     } else {
       encoderArgs = [
         '-c:v', 'libx264',
@@ -546,8 +507,8 @@ class VideoWatermarkService {
       ];
     }
 
-    // ✅ Tidak pakai -noautorotate, biarkan FFmpeg menangani orientasi
     final arguments = <String>[
+      '-noautorotate',          // 🔥 Matikan auto-rotate, kita manual
       '-i', inputPath,
       '-loop', '1',
       '-i', overlayPath,
@@ -569,7 +530,7 @@ class VideoWatermarkService {
     return arguments;
   }
 
-  // ─── 5. EKSEKUSI ENCODING ──────────────────────────────────
+  // ─── EKSEKUSI ENCODING ──────────────────────────────────────
   static Future<bool> _executeEncoding({
     required List<String> args,
     required int sessionId,
@@ -614,98 +575,59 @@ class VideoWatermarkService {
     return true;
   }
 
-  // ─── HARDWARE ENCODER AVAILABILITY ──────────────────────────
+  // ─── HARDWARE ENCODER ────────────────────────────────────────
   static bool? _hwEncoderAvailable;
-  static bool? _isEmulator;
+  static bool _shouldUseHardwareEncoder() => false;
 
-  static Future<bool> _checkIsEmulator() async {
-    if (_isEmulator != null) return _isEmulator!;
-    try {
-      final session = await FFmpegKit.execute(
-        '-loglevel 0 -hide_banner -f android_property -i ro.kernel.qemu -f null -',
-      );
-      final output = await session.getOutput() ?? '';
-      _isEmulator = output.contains('1') || output.contains('true');
-    } catch (_) {
-      _isEmulator = false;
-    }
-    return _isEmulator!;
-  }
-
-  static bool _shouldUseHardwareEncoder() {
-    if (_hwEncoderAvailable != null) return _hwEncoderAvailable!;
-    return false;
-  }
-
-  // ─── DIAGNOSIS ERROR ─────────────────────────────────────────
+  // ─── DIAGNOSIS ──────────────────────────────────────────────
   static String diagnoseFailure(String logs) {
     final l = logs.toLowerCase();
     if (l.contains('overlay.png') && (l.contains('no such file') || l.contains('invalid data found'))) {
-      return 'Overlay PNG watermark gagal dibuat/dibaca. Cek WatermarkRenderer.';
+      return 'Overlay PNG watermark gagal dibuat/dibaca.';
     }
     if (l.contains('unknown encoder') || l.contains('encoder not found')) {
       return 'Encoder tidak tersedia. Ganti ke mpeg4.';
     }
     if (l.contains('invalid argument') && l.contains('overlay')) {
-      return 'Argumen filter overlay tidak valid (kemungkinan ukuran PNG tidak cocok).';
+      return 'Argumen filter overlay tidak valid.';
     }
     if (l.contains('permission denied')) {
-      return 'Tidak ada izin baca/tulis ke file video.';
+      return 'Tidak ada izin baca/tulis.';
     }
     if (l.contains('moov atom not found') || l.contains('invalid data found')) {
-      return 'File video input korup/tidak lengkap.';
+      return 'File video input korup.';
     }
     if (l.contains('cannot allocate memory')) {
-      return 'Memori perangkat tidak cukup untuk proses encoding. Coba turunkan resolusi atau bitrate.';
+      return 'Memori tidak cukup. Turunkan resolusi atau bitrate.';
     }
     if (l.contains('broken pipe')) {
-      return 'Proses encoding terputus (broken pipe). Periksa stabilitas sistem.';
+      return 'Proses encoding terputus.';
     }
     if (l.contains('too many packets buffered')) {
-      return 'Buffer FFmpeg penuh. Coba kurangi thread atau gunakan preset lebih lambat.';
+      return 'Buffer FFmpeg penuh. Kurangi thread atau pakai preset lebih lambat.';
     }
     if (l.contains('cannot init encoder')) {
-      return 'Encoder gagal diinisialisasi. Coba gunakan encoder software (libx264).';
+      return 'Encoder gagal diinisialisasi. Coba software encoder.';
     }
     if (l.contains('error while opening encoder')) {
-      return 'Gagal membuka encoder. Periksa parameter encoding (bitrate, preset, dll).';
+      return 'Gagal membuka encoder. Periksa parameter.';
     }
     if (l.contains('no space left on device')) {
-      return 'Ruang penyimpanan tidak cukup untuk menyimpan video hasil.';
+      return 'Ruang penyimpanan tidak cukup.';
     }
-    if (l.contains('connection timed out')) {
-      return 'Koneksi timeout (tidak relevan untuk lokal).';
-    }
-    return 'Penyebab tidak dikenal. Cek log lengkap di atas.';
+    return 'Penyebab tidak dikenal. Cek log lengkap.';
   }
 }
 
 // ─── MODEL INTERNAL ──────────────────────────────────────────
 class _VideoInfo {
-  final int streamWidth, streamHeight;
-  final int displayWidth, displayHeight;
-  final int rotation;
+  final int width, height, rotation;
   final double duration;
-
-  _VideoInfo({
-    required this.streamWidth,
-    required this.streamHeight,
-    required this.displayWidth,
-    required this.displayHeight,
-    required this.rotation,
-    required this.duration,
-  });
+  _VideoInfo({required this.width, required this.height, required this.rotation, required this.duration});
 }
 
 class _Dimensions {
-  final int outW, outH;
-  final String videoFilter; // filter video yang diterapkan, misal 'setsar=1'
-  final bool needScale;     // false karena tidak ada scaling
-
-  _Dimensions({
-    required this.outW,
-    required this.outH,
-    required this.videoFilter,
-    required this.needScale,
-  });
+  final int outW, outH, rotation;
+  final bool needScale;
+  _Dimensions({required this.outW, required this.outH, required this.rotation, required this.needScale});
 }
