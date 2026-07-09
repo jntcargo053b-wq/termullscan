@@ -1,5 +1,5 @@
 // lib/services/watermark/watermark_service.dart
-// VERSI FINAL - Mendukung display dimensions & rotasi yang akurat
+// VERSI FINAL - Pertahankan resolusi asli, orientasi akurat, dan filter setsar=1
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
@@ -80,9 +80,9 @@ class VideoWatermarkService {
           ' (stream: ${videoInfo.streamWidth}x${videoInfo.streamHeight}),'
           ' rotasi ${videoInfo.rotation}°, durasi ${videoInfo.duration}s');
 
-      // 2. Hitung dimensi output & filter
+      // 2. Hitung dimensi output & filter (tanpa scaling)
       final dims = _computeDimensions(videoInfo);
-      debugPrint('📐 Output: ${dims.outW}x${dims.outH}');
+      debugPrint('📐 Output: ${dims.outW}x${dims.outH} (resolusi asli)');
 
       // 3. Render overlay PNG (display dimensions digunakan untuk overlay)
       final overlayResult = await _renderOverlay(
@@ -389,38 +389,24 @@ class VideoWatermarkService {
     return (r / 90).round() * 90 % 360;
   }
 
-  // ─── 2. HITUNG DIMENSI ──────────────────────────────────────
+  // ─── 2. HITUNG DIMENSI (PERTAHANKAN RESOLUSI ASLI) ──────────
   static _Dimensions _computeDimensions(_VideoInfo info) {
-    // Gunakan display dimensions
+    // ✅ Pertahankan resolusi asli dari display dimensions
     int outW = info.displayWidth;
     int outH = info.displayHeight;
 
-    // Batasi resolusi maksimal untuk performa (opsional)
-    const int maxDimension = 1920;
-    if (outW > maxDimension || outH > maxDimension) {
-      if (outW >= outH) {
-        outH = (outH * maxDimension / outW).round();
-        outW = maxDimension;
-      } else {
-        outW = (outW * maxDimension / outH).round();
-        outH = maxDimension;
-      }
-      // Pastikan genap (divisible by 2) untuk encoder
-      outW = (outW ~/ 2) * 2;
-      outH = (outH ~/ 2) * 2;
-    }
+    // Pastikan genap (divisible by 2) untuk encoder (H.264/H.265 yuv420p)
+    outW = (outW ~/ 2) * 2;
+    outH = (outH ~/ 2) * 2;
 
-    // Filter scale: gunakan display dimensions, jaga aspect ratio
-    final scaleFilter =
-        'scale=$outW:$outH:force_original_aspect_ratio=decrease,'
-        'pad=$outW:$outH:(ow-iw)/2:(oh-ih)/2,'
-        'setsar=1';
+    // Hanya setsar=1, tanpa scaling/pad — ini menormalkan Sample Aspect Ratio
+    const videoFilter = 'setsar=1';
 
     return _Dimensions(
       outW: outW,
       outH: outH,
-      scaleFilter: scaleFilter,
-      needScale: true,
+      videoFilter: videoFilter,
+      needScale: false,
     );
   }
 
@@ -527,10 +513,11 @@ class VideoWatermarkService {
     required bool keepAudio,
     required _VideoInfo videoInfo,
   }) {
-    // ✅ Normalisasi yuv420p SEBELUM overlay (mencegah error format)
+    // ✅ Tanpa scaling, normalisasi yuv420p, lalu overlay
+    // dims.videoFilter = 'setsar=1' hanya memastikan SAR=1
     final filterComplex =
-        '[0:v]${dims.scaleFilter},format=yuv420p[scaled];'
-        '[scaled][1:v]overlay=$offsetX:$offsetY:format=auto[outv]';
+        '[0:v]${dims.videoFilter},format=yuv420p[base];'
+        '[base][1:v]overlay=$offsetX:$offsetY:format=auto[outv]';
 
     final List<String> filterArgs = [
       '-filter_complex', filterComplex,
@@ -712,13 +699,13 @@ class _VideoInfo {
 
 class _Dimensions {
   final int outW, outH;
-  final String scaleFilter;
-  final bool needScale;
+  final String videoFilter; // filter video yang diterapkan, misal 'setsar=1'
+  final bool needScale;     // false karena tidak ada scaling
 
   _Dimensions({
     required this.outW,
     required this.outH,
-    required this.scaleFilter,
+    required this.videoFilter,
     required this.needScale,
   });
 }
