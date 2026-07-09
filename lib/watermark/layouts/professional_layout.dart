@@ -1,5 +1,5 @@
 // ============================================================
-// lib/watermark/layouts/professional_layout.dart (REFACTORED)
+// lib/watermark/layouts/professional_layout.dart (REFACTORED + FIX SPACING)
 // ============================================================
 import 'dart:io';
 import 'dart:math' as math;
@@ -25,6 +25,15 @@ class ProfessionalLayout extends WatermarkLayout {
 
   static const Color _accentColor = Color(0xFF4FA8E8);
 
+  // ─── KONSTANTA SPASI ──────────────────────────────────────────
+  static const double _rowSpacingMultiplier = 1.8; // ✅ Perbaikan: spasi antar baris lebih besar
+  static const double _labelValueOffset = 0.78;   // offset value terhadap label
+  static const double _topPaddingFactor = 0.85;
+  static const double _bottomPaddingFactor = 0.7;
+  static const double _logoCardScale = 0.25;
+  static const double _logoCardRadiusScale = 0.8;
+  static const double _accentBarWidthScale = 0.004;
+
   @override
   LayoutMetrics computeMetrics({
     required double photoWidth,
@@ -40,10 +49,12 @@ class ProfessionalLayout extends WatermarkLayout {
     rowCount++; // location
 
     final fontSz = data.fontSize;
-    final lineH = WatermarkTypography.lineHeight(fontSz);
+    // ✅ Perbaikan: gunakan multiplier yang lebih besar untuk spasi antar baris
+    final lineH = fontSz * _rowSpacingMultiplier;
 
-    final barcodeLineH =
-        WatermarkTypography.lineHeight(WatermarkTypography.barcode(fontSz));
+    // Barcode memiliki font lebih besar, jadi butuh extra space
+    final barcodeFontSize = WatermarkTypography.barcode(fontSz);
+    final barcodeLineH = barcodeFontSize * _rowSpacingMultiplier;
     final barcodeBonus = data.hasBarcode ? (barcodeLineH - lineH) : 0.0;
 
     final overlayHeight = math.max(
@@ -80,6 +91,16 @@ class ProfessionalLayout extends WatermarkLayout {
     required ui.Image? logoImage,
     required WatermarkData data,
   }) {
+    // Gambar foto
+    canvas.drawImageRect(
+      srcImage,
+      Rect.fromLTWH(0, 0, photoWidth, photoHeight),
+      Rect.fromLTWH(0, 0, photoWidth, photoHeight),
+      Paint()
+        ..filterQuality = FilterQuality.high
+        ..isAntiAlias = true,
+    );
+
     _paint(
       canvas: canvas,
       metrics: metrics,
@@ -87,8 +108,6 @@ class ProfessionalLayout extends WatermarkLayout {
       photoHeight: photoHeight,
       logoImage: logoImage,
       data: data,
-      withPhoto: true,
-      srcImage: srcImage,
     );
   }
 
@@ -106,12 +125,10 @@ class ProfessionalLayout extends WatermarkLayout {
       photoHeight: metrics.canvasHeight,
       logoImage: logoImage,
       data: data,
-      withPhoto: false,
-      srcImage: null,
     );
   }
 
-  // ─── INTERNAL PAINT ──────────────────────────────────────────
+  // ─── INTERNAL PAINT ───────────────────────────────────────────
   void _paint({
     required ui.Canvas canvas,
     required LayoutMetrics metrics,
@@ -119,13 +136,10 @@ class ProfessionalLayout extends WatermarkLayout {
     required double photoHeight,
     required ui.Image? logoImage,
     required WatermarkData data,
-    required bool withPhoto,
-    ui.Image? srcImage,
   }) {
     final padding = metrics.padding;
     final baseSize = metrics.baseSize;
     final overlayHeight = metrics.stripHeight;
-
     double overlayTop;
     TextAlign textAlign;
     final bool overlayAtBottom;
@@ -157,21 +171,6 @@ class ProfessionalLayout extends WatermarkLayout {
         overlayAtBottom = true;
     }
 
-    // ─── GAMBAR FOTO (jika dengan foto) ──────────────────────
-    if (withPhoto && srcImage != null) {
-      canvas.drawImageRect(
-        srcImage,
-        Rect.fromLTWH(0, 0, photoWidth, photoHeight),
-        Rect.fromLTWH(0, 0, photoWidth, photoHeight),
-        Paint()
-          ..filterQuality = FilterQuality.high
-          ..isAntiAlias = true,
-      );
-    } else {
-      // Untuk overlay video, kita hanya butuh background gelap (tidak ada foto)
-      // Karena sudah ada gradien di bawah, tidak perlu tambahan.
-    }
-
     // ─── BACKGROUND GRADIEN ──────────────────────────────────
     final gradientPaint = Paint()
       ..shader = ui.Gradient.linear(
@@ -195,7 +194,7 @@ class ProfessionalLayout extends WatermarkLayout {
       gradientPaint,
     );
 
-    // ─── GARIS PEMISAH ────────────────────────────────────────
+    // ─── GARIS PEMISAH ──────────────────────────────────────
     final dividerY = overlayAtBottom ? overlayTop : overlayTop + overlayHeight;
     canvas.drawLine(
       Offset(0, dividerY),
@@ -207,7 +206,7 @@ class ProfessionalLayout extends WatermarkLayout {
 
     // ─── LAYOUT: TEKS + LOGO ──────────────────────────────────
     final logoMaxSize = metrics.logoMaxSize;
-    final accentBarW = math.max(2.0, baseSize * 0.004);
+    final accentBarW = math.max(2.0, baseSize * _accentBarWidthScale);
     final accentBarSpace = accentBarW + padding * 0.5;
     final logoReserve = (logoImage != null) ? logoMaxSize + padding * 1.4 : 0.0;
     final textContentWidth = photoWidth - padding * 2 - logoReserve - accentBarSpace;
@@ -215,18 +214,20 @@ class ProfessionalLayout extends WatermarkLayout {
     final double textX = textAlign == TextAlign.left
         ? padding + accentBarSpace
         : photoWidth - padding - textContentWidth;
-    double textY = overlayTop + padding * 0.85;
+    double textY = overlayTop + padding * _topPaddingFactor;
 
-    // ─── ACCENT BAR (GARIS VERTIKAL) ──────────────────────────
+    // ─── ACCENT BAR ──────────────────────────────────────────
     final barX = textAlign == TextAlign.left
         ? padding
         : photoWidth - padding - accentBarW;
-    final barcodeBonus = data.hasBarcode
-        ? (WatermarkTypography.lineHeight(WatermarkTypography.barcode(data.fontSize)) -
-            metrics.lineHeight)
-        : 0.0;
+    final barcodeFontSize = data.hasBarcode
+        ? WatermarkTypography.barcode(data.fontSize)
+        : data.fontSize;
+    final barcodeLineH = barcodeFontSize * _rowSpacingMultiplier;
+    final normalLineH = data.fontSize * _rowSpacingMultiplier;
+    final barcodeBonus = data.hasBarcode ? (barcodeLineH - normalLineH) : 0.0;
     final textBlockHeight =
-        metrics.textRowCount * metrics.lineHeight + barcodeBonus;
+        metrics.textRowCount * normalLineH + barcodeBonus;
     canvas.drawRect(
       Rect.fromLTWH(
         barX,
@@ -243,12 +244,17 @@ class ProfessionalLayout extends WatermarkLayout {
           ? WatermarkTypography.barcode(data.fontSize)
           : WatermarkTypography.body(data.fontSize);
       final labelFontSize = WatermarkTypography.caption(data.fontSize);
-      final rowLineHeight = emphasize
-          ? WatermarkTypography.lineHeight(valueFontSize)
-          : metrics.lineHeight;
+
+      // ✅ PERBAIKAN: Hitung tinggi baris berdasarkan konten
+      // Value di-offset ke bawah sebesar valueFontSize * _labelValueOffset
+      // Total tinggi = offset + tinggi value
+      final labelHeight = WatermarkTypography.lineHeight(labelFontSize);
+      final valueHeight = WatermarkTypography.lineHeight(valueFontSize);
+      final totalHeightNeeded = (valueFontSize * _labelValueOffset) + valueHeight;
+      final rowLineHeight = math.max(labelHeight, totalHeightNeeded) + 4; // +4 padding
 
       // Label (uppercase, abu-abu, kecil)
-      final labelY = textY + (rowLineHeight - labelFontSize) / 2;
+      final labelY = textY + (rowLineHeight - labelHeight) / 2;
       TextHelper.paintText(
         canvas: canvas,
         text: label.toUpperCase(),
@@ -264,7 +270,7 @@ class ProfessionalLayout extends WatermarkLayout {
       );
 
       // Value (besar, bold, warna sesuai)
-      final valueY = textY + (rowLineHeight - valueFontSize) / 2;
+      final valueY = textY + (valueFontSize * _labelValueOffset);
       TextHelper.paintText(
         canvas: canvas,
         text: value,
@@ -307,7 +313,7 @@ class ProfessionalLayout extends WatermarkLayout {
           ? photoHeight - padding - drawH
           : padding;
 
-      final cardPad = drawW * 0.25;
+      final cardPad = drawW * _logoCardScale;
       canvas.drawRRect(
         RRect.fromRectAndRadius(
           Rect.fromLTWH(
@@ -316,7 +322,7 @@ class ProfessionalLayout extends WatermarkLayout {
             drawW + cardPad * 2,
             drawH + cardPad * 2,
           ),
-          Radius.circular(cardPad * 0.8),
+          Radius.circular(cardPad * _logoCardRadiusScale),
         ),
         Paint()..color = Colors.black.withOpacity(0.35),
       );
