@@ -12,12 +12,12 @@ import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
-import '../services/watermark/watermark_service.dart';
 import '../services/permission_service.dart';
 import '../services/task_queue.dart';
 import '../services/background/video_processing_service.dart';
 import '../watermark/watermark_settings.dart';
 import '../watermark/watermark_style.dart';
+import '../watermark/video_watermark_renderer.dart'; // ✅ PASTIKAN IMPORT INI
 import '../theme/app_theme.dart';
 import '../utils/file_helper.dart';
 import 'preview_screen.dart';
@@ -193,7 +193,6 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
   // ─── Core Processing ────────────────────────────────────────
   Future<bool> _maybeDeleteLocalCopy(String path, bool galleryOk) async {
     if (!galleryOk) return false;
-    // ✅ Ambil settings dari Provider
     final settings = context.read<WatermarkSettings>();
     if (!settings.deleteLocalVideoAfterGalleryExport) return false;
     try {
@@ -208,7 +207,6 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
   }
 
   Future<ScanEntry> _processVideo(XFile videoFile) async {
-    // ✅ Ambil settings dari Provider (BUKAN bikin baru)
     final settings = context.read<WatermarkSettings>();
 
     String? finalPath;
@@ -251,31 +249,26 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         _progress = 0.0;
       });
 
-      // 3. Proses watermark ✅ PAKAI SETTINGS DARI PROVIDER
-      final wmResult = await VideoWatermarkService.addWatermark(
-        inputPath: videoFile.path,
+      // ============================================================
+      // ✅ PERBAIKAN: Gunakan VideoWatermarkRenderer LANGSUNG
+      // ============================================================
+      final wmResult = await VideoWatermarkRenderer.render(
+        videoPath: videoFile.path,
         outputPath: wmOutputPath,
+        settings: settings,
         entry: ScanEntry(
           id: _storage.generateId(),
           type: ScanType.video,
           value: widget.barcode ?? 'video_${DateTime.now().millisecondsSinceEpoch}',
           timestamp: DateTime.now(),
         ),
-        settings: settings, // ← INSTANCE SAMA DENGAN DI SHEET
-        onProgress: (progress) {
-          _safeSetState(() {
-            _progress = progress;
-            _statusText = 'Menambahkan watermark... ${(progress * 100).toInt()}%';
-          });
-          unawaited(VideoProcessingService.updateProgress(
-            title: 'TERMULScan — merender video',
-            text: '${(progress * 100).toInt()}% selesai',
-          ));
-        },
       );
 
-      _progress = 0.0;
-      _safeSetState(() {});
+      // Update progress setelah selesai (renderer tidak support progress)
+      _safeSetState(() {
+        _progress = 1.0;
+        _statusText = 'Watermark selesai!';
+      });
 
       if (wmResult != null) {
         // 4. Watermark berhasil
@@ -313,9 +306,8 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
             : 'Video tersimpan di internal (gagal ekspor)');
       } else {
         // 5. Watermark gagal → simpan video mentah
-        final reason = VideoWatermarkService.lastError ?? 'Penyebab tidak diketahui';
-        debugPrint('❌ Watermark video gagal: $reason');
-        _showError('Watermark gagal: $reason. Video disimpan tanpa watermark.');
+        debugPrint('❌ Watermark video gagal');
+        _showError('Watermark gagal. Video disimpan tanpa watermark.');
 
         _safeSetState(() => _statusText = 'Watermark gagal, menyimpan video mentah...');
         final savedPath = await _storage.saveVideo(videoFile.path, name: widget.barcode);
@@ -475,7 +467,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
                 shape: const RoundedRectangleBorder(
                   borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
                 ),
-                builder: (_) => const WatermarkSettingsSheet(), // ← PERUBAHAN: hapus videoMode
+                builder: (_) => const WatermarkSettingsSheet(),
               );
             },
           ),
