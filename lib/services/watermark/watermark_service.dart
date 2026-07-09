@@ -1,5 +1,5 @@
 // lib/services/watermark/watermark_service.dart
-// VERSI FINAL – Pemetaan transpose benar: 90° → transpose=2, 270° → transpose=1
+// VERSI FINAL – dengan preload()
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
@@ -25,6 +25,13 @@ class VideoWatermarkService {
 
   static int _sessionCounter = 0;
   static final Map<int, void Function(double)> _progressCallbacks = {};
+
+  // ─── PRELOAD (untuk main.dart) ──────────────────────────────
+  static Future<void> preload(WatermarkSettings settings) async {
+    await _cache.initialize(settings);
+    // Tidak perlu warmUp di sini, bisa dipanggil nanti
+    if (kDebugMode) debugPrint('📦 VideoWatermarkService preload selesai');
+  }
 
   // ─── WARM UP ──────────────────────────────────────────────────
   static Future<void> warmUp() async {
@@ -63,6 +70,7 @@ class VideoWatermarkService {
 
     try {
       await _cache.initialize(settings);
+      await warmUp(); // pastikan FFmpeg siap
 
       final videoInfo = await _readVideoInfo(inputPath);
       if (videoInfo == null) {
@@ -70,11 +78,9 @@ class VideoWatermarkService {
       }
       debugPrint('📹 Input: ${videoInfo.width}x${videoInfo.height}, rotasi ${videoInfo.rotation}°');
 
-      // Dimensi output setelah rotasi yang benar
       final dims = _computeDimensions(videoInfo);
       debugPrint('📐 Output: ${dims.outW}x${dims.outH}');
 
-      // Render overlay PNG dengan dimensi setelah rotasi
       final overlayResult = await _renderOverlay(
         outW: dims.outW,
         outH: dims.outH,
@@ -263,11 +269,9 @@ class VideoWatermarkService {
       }
     }
 
-    // Jika rotasi 0 tapi dimensi portrait (height > width), kemungkinan rotasi 90
-    // Ini untuk fallback jika metadata tidak ada
     if (rotation == 0 && height > width) {
-      debugPrint('⚠️ Dimensi portrait (${width}x${height}) tanpa metadata rotasi → coba transpose=2');
-      rotation = 90; // asumsikan perlu diputar 90° CW
+      debugPrint('⚠️ Dimensi portrait tanpa metadata rotasi → asumsi 90°');
+      rotation = 90;
     }
 
     return _VideoInfo(
@@ -278,11 +282,10 @@ class VideoWatermarkService {
     );
   }
 
-  // ─── DETEKSI ROTASI (AKURAT) ────────────────────────────────
+  // ─── DETEKSI ROTASI ──────────────────────────────────────────
   static int _detectRotation(dynamic stream) {
     int rotation = 0;
 
-    // 1. Cari tag 'rotate' (umum dari kamera)
     try {
       final tags = stream.getTags();
       if (tags != null && tags.containsKey('rotate')) {
@@ -296,7 +299,6 @@ class VideoWatermarkService {
       }
     } catch (_) {}
 
-    // 2. Cari side_data 'rotation' (display matrix)
     try {
       final props = stream.getAllProperties() as Map?;
       final sideDataList = props?['side_data_list'];
@@ -306,16 +308,7 @@ class VideoWatermarkService {
             final raw = sd['rotation'];
             final rot = raw is num ? raw.toInt() : int.tryParse('$raw') ?? 0;
             if (rot != 0) {
-              // 🔥 PERBAIKAN: side_data rotation biasanya sudah dalam arah yang benar,
-              // kita normalize saja tanpa negasi karena FFmpeg transpose menggunakan arah yang sama
-              // Tapi untuk beberapa device, nilai negatif berarti sebaliknya.
-              // Kita coba dua arah: jika rot negatif, kita balik.
-              int finalRot = rot;
-              if (rot < 0) {
-                finalRot = _normalizeRotation(rot); // misal -90 → 270
-              } else {
-                finalRot = _normalizeRotation(rot);
-              }
+              int finalRot = rot < 0 ? _normalizeRotation(rot) : _normalizeRotation(rot);
               debugPrint('🔄 Rotasi dari side_data: ${rot} → normalisasi: $finalRot°');
               return finalRot;
             }
@@ -330,17 +323,13 @@ class VideoWatermarkService {
   static int _normalizeRotation(int rotation) {
     var r = rotation % 360;
     if (r < 0) r += 360;
-    // Bulatkan ke kelipatan 90 terdekat
     return ((r + 45) ~/ 90) * 90 % 360;
   }
 
-  // ─── HITUNG DIMENSI OUTPUT ────────────────────────────────────
+  // ─── HITUNG DIMENSI OUTPUT ──────────────────────────────────
   static _Dimensions _computeDimensions(_VideoInfo info) {
-    // Dimensi asli stream
     int outW = info.width;
     int outH = info.height;
-
-    // Jika rotasi 90/270, tukar dimensi agar output sesuai orientasi
     final rot = info.rotation;
     if (rot == 90 || rot == 270) {
       final temp = outW;
@@ -348,8 +337,6 @@ class VideoWatermarkService {
       outH = temp;
       debugPrint('🔄 Swap dimensi karena rotasi $rot°: ${outW}x${outH}');
     }
-
-    // Pastikan genap
     outW = (outW ~/ 2) * 2;
     outH = (outH ~/ 2) * 2;
 
@@ -361,7 +348,7 @@ class VideoWatermarkService {
     );
   }
 
-  // ─── RENDER OVERLAY ──────────────────────────────────────────
+  // ─── RENDER OVERLAY ─────────────────────────────────────────
   static Future<(String?, int, int)?> _renderOverlay({
     required int outW,
     required int outH,
@@ -456,29 +443,24 @@ class VideoWatermarkService {
     required bool keepAudio,
     required _VideoInfo videoInfo,
   }) {
-    // 🔥 PERBAIKAN: Pemetaan transpose yang benar
-    // 90° rotasi CW → transpose=2 (rotate 90° clockwise)
-    // 270° rotasi CW / 90° CCW → transpose=1 (rotate 90° counter-clockwise)
     String videoFilter = '';
     final rot = dims.rotation;
 
     if (rot == 90) {
-      videoFilter += 'transpose=2,'; // ✅ CW 90°
+      videoFilter += 'transpose=2,';
       debugPrint('🔄 Mapping rotasi 90° → transpose=2 (CW)');
     } else if (rot == 270) {
-      videoFilter += 'transpose=1,'; // ✅ CCW 90° (atau CW 270°)
+      videoFilter += 'transpose=1,';
       debugPrint('🔄 Mapping rotasi 270° → transpose=1 (CCW)');
     } else if (rot == 180) {
-      videoFilter += 'transpose=2,transpose=2,'; // 180° = dua kali CW
+      videoFilter += 'transpose=2,transpose=2,';
       debugPrint('🔄 Mapping rotasi 180° → transpose=2,transpose=2');
     } else {
       debugPrint('🔄 Tidak ada rotasi (0°)');
     }
 
-    // Setsar=1 setelah transpose
     videoFilter += 'setsar=1';
 
-    // Overlay
     final filterComplex =
         '[0:v]$videoFilter,format=yuv420p[base];'
         '[base][1:v]overlay=0:0:format=auto[outv]';
@@ -508,7 +490,7 @@ class VideoWatermarkService {
     }
 
     final arguments = <String>[
-      '-noautorotate',          // 🔥 Matikan auto-rotate, kita manual
+      '-noautorotate',
       '-i', inputPath,
       '-loop', '1',
       '-i', overlayPath,
