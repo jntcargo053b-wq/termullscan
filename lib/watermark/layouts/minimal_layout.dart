@@ -25,7 +25,6 @@ class MinimalLayout extends WatermarkLayout {
   // ─── KONSTANTA ──────────────────────────────────────────────────
   static const Color _accentColor = Color(0xFFFFB74D);
 
-  // Spacing & padding
   static const double _lineSpacing = 6.0;
   static const double _overlayPaddingScale = 1.2;
   static const double _topPaddingFactor = 0.6;
@@ -34,20 +33,15 @@ class MinimalLayout extends WatermarkLayout {
   static const double _logoCardRadiusScale = 0.8;
   static const double _iconSpace = 30.0;
 
-  // Opacity
   static const double _opacityOperator = 0.92;
   static const double _opacityTimestamp = 0.85;
   static const double _opacityLocation = 0.85;
   static const double _logoCardOpacity = 0.35;
 
-  // Preview
   static const double _previewLogoScale = 0.55;
   static const double _previewCardPadding = 4.0;
   static const double _previewGap = 8.0;
   static const double _previewIconGap = 4.0;
-
-  // ⚠️ TODO: Ganti emoji dengan glyph/vector icon di semua layout
-  // untuk kompatibilitas video (Android H.264).
 
   // ─── COMPUTE METRICS ───────────────────────────────────────────
   @override
@@ -79,7 +73,6 @@ class MinimalLayout extends WatermarkLayout {
 
     final logoMaxSize = WatermarkTypography.logo(baseSize);
 
-    // ✅ Hanya reserve jika ada logoPath (tidak bergantung pada status load)
     final hasLogo = data.logoPath != null && data.logoPath!.isNotEmpty;
     final logoReserve = hasLogo ? logoMaxSize + _logoSpacing : 0.0;
     final textW = photoWidth - padding * 2 - logoReserve;
@@ -163,7 +156,7 @@ class MinimalLayout extends WatermarkLayout {
       position: data.position,
     );
 
-    // ─── BACKGROUND GRADIEN ──────────────────────────────────
+    // Background gradien
     final bgOpacity = data.backgroundOpacity.clamp(0.0, 1.0);
     final gradientPaint = ui.Paint()
       ..shader = ui.Gradient.linear(
@@ -179,7 +172,7 @@ class MinimalLayout extends WatermarkLayout {
       gradientPaint,
     );
 
-    // ─── ICON LINES ────────────────────────────────────────────
+    // Icon lines
     final hasLogo = logoImage != null;
     final logoReserve = hasLogo ? metrics.logoMaxSize + _logoSpacing : 0.0;
     final textContentWidth = photoWidth - padding * 2 - logoReserve;
@@ -195,7 +188,7 @@ class MinimalLayout extends WatermarkLayout {
       photoWidth: photoWidth,
     );
 
-    // ─── LOGO ──────────────────────────────────────────────────
+    // Logo
     _drawLogo(
       canvas: canvas,
       logoImage: logoImage,
@@ -259,7 +252,6 @@ class MinimalLayout extends WatermarkLayout {
     required double textContentWidth,
     required double photoWidth,
   }) {
-    // Anchor posisi untuk teks (kiri atau kanan)
     final double textStart = textAlign == TextAlign.left
         ? padding
         : photoWidth - padding;
@@ -273,7 +265,6 @@ class MinimalLayout extends WatermarkLayout {
           ? WatermarkTypography.lineHeight(valueFontSize)
           : metrics.lineHeight;
 
-      // Icon digambar di ujung (kiri atau kanan) dengan alignment sesuai
       final iconX = textAlign == TextAlign.left
           ? textStart
           : textStart - _iconSpace;
@@ -291,10 +282,9 @@ class MinimalLayout extends WatermarkLayout {
         fontFamily: data.fontFamily,
       );
 
-      // Teks utama mengikuti icon
       final textX = textAlign == TextAlign.left
           ? textStart + _iconSpace
-          : textStart - textContentWidth + _iconSpace; // agar tetap dalam area
+          : textStart - textContentWidth + _iconSpace;
       TextHelper.paintText(
         canvas: canvas,
         text: text,
@@ -511,26 +501,27 @@ class MinimalLayout extends WatermarkLayout {
   ) {
     final textAlign = alignLeft ? TextAlign.left : TextAlign.right;
     final crossAlign = alignLeft ? CrossAxisAlignment.start : CrossAxisAlignment.end;
-
-    // Gunakan metrics.lineHeight untuk menjaga konsistensi spasi
     final lineHeight = metrics.lineHeight;
+    // ✅ Gunakan data.fontSize, bukan WatermarkTypography.defaultFontSize
+    final baseFontSize = data.fontSize;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: crossAlign,
       children: [
         if (data.hasBarcode)
-          _buildPreviewField('📦 ${data.barcodeValue}', textAlign, lineHeight, bold: true),
+          _buildPreviewField('📦 ${data.barcodeValue}', textAlign, lineHeight, baseFontSize, bold: true),
         if (data.hasOperator)
-          _buildPreviewField('👤 ${data.operatorName}', textAlign, lineHeight),
-        _buildPreviewField('🕒 ${data.formattedTimestamp}', textAlign, lineHeight),
+          _buildPreviewField('👤 ${data.operatorName}', textAlign, lineHeight, baseFontSize),
+        _buildPreviewField('🕒 ${data.formattedTimestamp}', textAlign, lineHeight, baseFontSize),
         if (data.hasLocation)
-          _buildPreviewField('📍 ${data.displayLocation}', textAlign, lineHeight),
+          _buildPreviewField('📍 ${data.displayLocation}', textAlign, lineHeight, baseFontSize),
         if (data.isManual)
           _buildPreviewField(
             '⚡ MANUAL ENTRY',
             textAlign,
             lineHeight,
+            baseFontSize,
             color: _accentColor,
             bold: true,
             fontSizeFactor: 0.9,
@@ -542,12 +533,12 @@ class MinimalLayout extends WatermarkLayout {
   Widget _buildPreviewField(
     String text,
     TextAlign align,
-    double lineHeight, {
+    double lineHeight,
+    double baseFontSize, {
     Color? color,
     bool bold = false,
     double fontSizeFactor = 1.0,
   }) {
-    final baseFontSize = WatermarkTypography.body(WatermarkTypography.defaultFontSize);
     final fontSize = baseFontSize * fontSizeFactor;
     return SizedBox(
       height: lineHeight,
