@@ -12,12 +12,12 @@ import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
+import '../services/watermark/watermark_service.dart'; // ✅ PAKAI YANG INI
 import '../services/permission_service.dart';
 import '../services/task_queue.dart';
 import '../services/background/video_processing_service.dart';
 import '../watermark/watermark_settings.dart';
 import '../watermark/watermark_style.dart';
-import '../watermark/video_watermark_renderer.dart'; // ✅ PASTIKAN IMPORT INI
 import '../theme/app_theme.dart';
 import '../utils/file_helper.dart';
 import 'preview_screen.dart';
@@ -67,6 +67,8 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         _isProcessing = _pendingTasks > 0 || _runningTasks > 0;
       });
     });
+    // ✅ Warm up FFmpeg
+    unawaited(VideoWatermarkService.warmUp());
   }
 
   @override
@@ -250,25 +252,33 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       });
 
       // ============================================================
-      // ✅ PERBAIKAN: Gunakan VideoWatermarkRenderer LANGSUNG
+      // ✅ PERBAIKAN: Pakai VideoWatermarkService.addWatermark
       // ============================================================
-      final wmResult = await VideoWatermarkRenderer.render(
-        videoPath: videoFile.path,
+      final wmResult = await VideoWatermarkService.addWatermark(
+        inputPath: videoFile.path,
         outputPath: wmOutputPath,
-        settings: settings,
         entry: ScanEntry(
           id: _storage.generateId(),
           type: ScanType.video,
           value: widget.barcode ?? 'video_${DateTime.now().millisecondsSinceEpoch}',
           timestamp: DateTime.now(),
         ),
+        settings: settings,
+        keepAudio: true,
+        onProgress: (progress) {
+          _safeSetState(() {
+            _progress = progress;
+            _statusText = 'Menambahkan watermark... ${(progress * 100).toInt()}%';
+          });
+          unawaited(VideoProcessingService.updateProgress(
+            title: 'TERMULScan — merender video',
+            text: '${(progress * 100).toInt()}% selesai',
+          ));
+        },
       );
 
-      // Update progress setelah selesai (renderer tidak support progress)
-      _safeSetState(() {
-        _progress = 1.0;
-        _statusText = 'Watermark selesai!';
-      });
+      _progress = 0.0;
+      _safeSetState(() {});
 
       if (wmResult != null) {
         // 4. Watermark berhasil
@@ -306,8 +316,9 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
             : 'Video tersimpan di internal (gagal ekspor)');
       } else {
         // 5. Watermark gagal → simpan video mentah
-        debugPrint('❌ Watermark video gagal');
-        _showError('Watermark gagal. Video disimpan tanpa watermark.');
+        final reason = VideoWatermarkService.lastError ?? 'Penyebab tidak diketahui';
+        debugPrint('❌ Watermark video gagal: $reason');
+        _showError('Watermark gagal: $reason. Video disimpan tanpa watermark.');
 
         _safeSetState(() => _statusText = 'Watermark gagal, menyimpan video mentah...');
         final savedPath = await _storage.saveVideo(videoFile.path, name: widget.barcode);
@@ -441,7 +452,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       SnackBar(
         backgroundColor: AppTheme.error,
         content: Text(msg),
-        duration: const Duration(seconds: 3),
+        duration: const Duration(seconds: 5),
       ),
     );
   }
