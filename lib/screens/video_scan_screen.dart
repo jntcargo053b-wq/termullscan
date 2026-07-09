@@ -12,12 +12,12 @@ import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
-import '../services/watermark/watermark_service.dart'; // ✅ PAKAI YANG INI
 import '../services/permission_service.dart';
 import '../services/task_queue.dart';
 import '../services/background/video_processing_service.dart';
 import '../watermark/watermark_settings.dart';
 import '../watermark/watermark_style.dart';
+import '../services/watermark/watermark_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/file_helper.dart';
 import 'preview_screen.dart';
@@ -59,6 +59,8 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     super.initState();
     PermissionService.requestGalleryPermission();
     unawaited(VideoProcessingService.requestPermissions());
+    // ✅ Warm up FFmpeg
+    unawaited(VideoWatermarkService.warmUp());
     _taskQueue.statusStream.listen((task) {
       if (!mounted) return;
       setState(() {
@@ -67,8 +69,6 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         _isProcessing = _pendingTasks > 0 || _runningTasks > 0;
       });
     });
-    // ✅ Warm up FFmpeg
-    unawaited(VideoWatermarkService.warmUp());
   }
 
   @override
@@ -252,19 +252,19 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       });
 
       // ============================================================
-      // ✅ PERBAIKAN: Pakai VideoWatermarkService.addWatermark
+      // ✅ PAKAI VideoWatermarkService (overlay PNG + fallback hw→sw)
       // ============================================================
       final wmResult = await VideoWatermarkService.addWatermark(
         inputPath: videoFile.path,
         outputPath: wmOutputPath,
+        settings: settings,
+        keepAudio: true,
         entry: ScanEntry(
           id: _storage.generateId(),
           type: ScanType.video,
           value: widget.barcode ?? 'video_${DateTime.now().millisecondsSinceEpoch}',
           timestamp: DateTime.now(),
         ),
-        settings: settings,
-        keepAudio: true,
         onProgress: (progress) {
           _safeSetState(() {
             _progress = progress;
@@ -277,8 +277,9 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         },
       );
 
-      _progress = 0.0;
-      _safeSetState(() {});
+      if (wmResult == null && VideoWatermarkService.lastError != null) {
+        debugPrint('🩺 Diagnosis watermark video: ${VideoWatermarkService.lastError}');
+      }
 
       if (wmResult != null) {
         // 4. Watermark berhasil
@@ -316,9 +317,11 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
             : 'Video tersimpan di internal (gagal ekspor)');
       } else {
         // 5. Watermark gagal → simpan video mentah
-        final reason = VideoWatermarkService.lastError ?? 'Penyebab tidak diketahui';
-        debugPrint('❌ Watermark video gagal: $reason');
-        _showError('Watermark gagal: $reason. Video disimpan tanpa watermark.');
+        final diagnosis = VideoWatermarkService.lastError;
+        debugPrint('❌ Watermark video gagal${diagnosis != null ? ': $diagnosis' : ''}');
+        _showError(diagnosis != null
+            ? 'Watermark gagal ($diagnosis). Video disimpan tanpa watermark.'
+            : 'Watermark gagal. Video disimpan tanpa watermark.');
 
         _safeSetState(() => _statusText = 'Watermark gagal, menyimpan video mentah...');
         final savedPath = await _storage.saveVideo(videoFile.path, name: widget.barcode);
@@ -452,7 +455,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       SnackBar(
         backgroundColor: AppTheme.error,
         content: Text(msg),
-        duration: const Duration(seconds: 5),
+        duration: const Duration(seconds: 3),
       ),
     );
   }
