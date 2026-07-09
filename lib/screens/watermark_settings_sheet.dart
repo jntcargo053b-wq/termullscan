@@ -1,14 +1,14 @@
 // ============================================================
-// lib/screens/watermark_settings_sheet.dart (FINAL – COMPANY + OPERATOR)
+// lib/screens/watermark_settings_sheet.dart (FINAL – DENGAN TIMESTAMP)
 // ============================================================
 import 'package:flutter/material.dart';
 import 'package:gap/gap.dart';
 import 'package:image_picker/image_picker.dart';
+import 'dart:io';
 import '../watermark/watermark_settings.dart';
 import '../watermark/models/watermark_data.dart';
 import '../watermark/watermark_style.dart';
 import '../watermark/watermark_factory.dart';
-import 'dart:io';
 
 class WatermarkSettingsSheet extends StatefulWidget {
   const WatermarkSettingsSheet({super.key});
@@ -22,13 +22,15 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
   final ImagePicker _picker = ImagePicker();
   bool _isLoading = true;
   final TextEditingController _operatorController = TextEditingController();
-  final TextEditingController _companyController = TextEditingController(); // ← BARU
+  final TextEditingController _companyController = TextEditingController();
 
+  // ✅ SEMUA GAYA TERMASUK TIMESTAMP
   final List<WatermarkStyle> _supportedStyles = [
     WatermarkStyle.minimal,
     WatermarkStyle.professional,
     WatermarkStyle.polaroid,
     WatermarkStyle.stamp,
+    WatermarkStyle.timestamp, // ✅ TAMBAHKAN
   ];
 
   @override
@@ -41,16 +43,16 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
     _settings = WatermarkSettings();
     await _settings.load();
     _operatorController.text = _settings.operatorName;
-    _companyController.text = _settings.companyName; // ← BARU
+    _companyController.text = _settings.companyName;
     if (mounted) setState(() => _isLoading = false);
   }
 
   Future<void> _saveAndClose() async {
     _settings.operatorName = _operatorController.text;
-    _settings.companyName = _companyController.text; // ← BARU
+    _settings.companyName = _companyController.text;
     await _settings.save();
     debugPrint('💾 SAVED: company=${_settings.companyName}, operator=${_settings.operatorName}, style=${_settings.style.name}');
-    Navigator.pop(context);
+    if (mounted) Navigator.pop(context);
   }
 
   Future<void> _pickLogo() async {
@@ -79,7 +81,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
   @override
   void dispose() {
     _operatorController.dispose();
-    _companyController.dispose(); // ← BARU
+    _companyController.dispose();
     super.dispose();
   }
 
@@ -97,7 +99,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
           : _settings.operatorName,
       companyName: _companyController.text.isNotEmpty 
           ? _companyController.text 
-          : _settings.companyName, // ← BARU
+          : _settings.companyName,
       barcodeValue: '8991234567890',
       barcodeFormat: 'EAN-13',
       locationName: 'Jl. Sudirman No. 123, Jakarta',
