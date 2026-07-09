@@ -484,7 +484,13 @@ class VideoWatermarkService {
           if (sd is Map && sd.containsKey('rotation')) {
             final raw = sd['rotation'];
             final rot = raw is num ? raw.toInt() : int.tryParse('$raw') ?? 0;
-            if (rot != 0) return _normalizeRotation(rot);
+            // ⚠️ PENTING: side_data "displaymatrix rotation" pakai KONVENSI TANDA
+            // TERBALIK dibanding tag legacy 'rotate'. Contoh nyata dari video yang
+            // sama: tag rotate=90 selalu berpasangan dengan side_data rotation=-90
+            // (dua-duanya menggambarkan rotasi fisik YANG SAMA, butuh transpose=1).
+            // Tanpa negasi ini, rotation=-90 dinormalisasi jadi 270 → transpose=2
+            // (arah terbalik) → video ke-rotate ke arah yang salah (miring 90°).
+            if (rot != 0) return _normalizeRotation(-rot);
           }
         }
       }

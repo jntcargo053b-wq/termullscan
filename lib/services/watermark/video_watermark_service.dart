@@ -552,7 +552,7 @@ class VideoWatermarkService {
           if (sd is Map && sd.containsKey('rotation')) {
             final raw = sd['rotation'];
             final rot = raw is num ? raw.toInt() : int.tryParse('$raw') ?? 0;
-            if (rot != 0) return _normalizeRotation(rot);
+            if (rot != 0) return _normalizeRotation(-rot); // side_data pakai tanda terbalik vs tag 'rotate'
           }
         }
       }
