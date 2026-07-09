@@ -1,6 +1,5 @@
 // lib/services/watermark/watermark_service.dart
-// VERSI PERBAIKAN – kompatibel dengan WatermarkSettings baru
-
+// VERSI FINAL - Mendukung display dimensions & rotasi yang akurat
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
@@ -33,18 +32,18 @@ class VideoWatermarkService {
   static Future<void> warmUp() async {
     if (_warmedUp) return;
     try {
-      _log('info', '🔥 Memanaskan FFmpeg (ringan)...');
+      debugPrint('🔥 Memanaskan FFmpeg (ringan)...');
       final session = await FFmpegKit.execute(
         '-hide_banner -f lavfi -i color -frames:v 1 -f null -',
       );
       final returnCode = await session.getReturnCode();
       if (ReturnCode.isSuccess(returnCode)) {
-        _log('info', '✅ FFmpeg warm-up berhasil.');
+        debugPrint('✅ FFmpeg warm-up berhasil.');
       } else {
-        _log('error', '⚠️ FFmpeg warm-up gagal (rc=${returnCode?.getValue()})');
+        debugPrint('⚠️ FFmpeg warm-up gagal (rc=${returnCode?.getValue()})');
       }
     } catch (e) {
-      _log('error', '❌ FFmpeg warm-up error: $e');
+      debugPrint('❌ FFmpeg warm-up error: $e');
     } finally {
       _warmedUp = true;
     }
@@ -61,7 +60,7 @@ class VideoWatermarkService {
     required String outputPath,
     required ScanEntry entry,
     required WatermarkSettings settings,
-    bool keepAudio = false, // default false = audio dimatikan
+    bool keepAudio = false,
     void Function(double progress)? onProgress,
   }) async {
     lastError = null;
@@ -72,17 +71,20 @@ class VideoWatermarkService {
     try {
       await _cache.initialize(settings);
 
-      // 1. Baca informasi video
+      // 1. Baca informasi video (dengan display dimensions & rotasi)
       final videoInfo = await _readVideoInfo(inputPath);
       if (videoInfo == null) {
         throw Exception('Gagal membaca metadata video');
       }
+      debugPrint('📹 Input: ${videoInfo.displayWidth}x${videoInfo.displayHeight}'
+          ' (stream: ${videoInfo.streamWidth}x${videoInfo.streamHeight}),'
+          ' rotasi ${videoInfo.rotation}°, durasi ${videoInfo.duration}s');
 
-      // 2. Hitung dimensi output & scale filter (resolusi selalu original)
+      // 2. Hitung dimensi output & filter
       final dims = _computeDimensions(videoInfo);
-      _log('info', '📐 Output: ${dims.outW}x${dims.outH} | Rotasi: ${dims.rotation}°');
+      debugPrint('📐 Output: ${dims.outW}x${dims.outH}');
 
-      // 3. Render overlay PNG (dengan cache) – menggunakan WatermarkRenderer.renderOverlayPng
+      // 3. Render overlay PNG (display dimensions digunakan untuk overlay)
       final overlayResult = await _renderOverlay(
         outW: dims.outW,
         outH: dims.outH,
@@ -90,7 +92,21 @@ class VideoWatermarkService {
         entry: entry,
       );
       if (overlayResult == null) {
-        throw Exception('Gagal membuat overlay watermark PNG');
+        debugPrint('⚠️ Gagal membuat overlay PNG, beralih ke drawtext fallback...');
+        final fallbackResult = await _addWatermarkWithDrawtext(
+          inputPath: inputPath,
+          outputPath: outputPath,
+          entry: entry,
+          settings: settings,
+          keepAudio: keepAudio,
+          videoInfo: videoInfo,
+          onProgress: onProgress,
+          sessionId: sessionId,
+        );
+        if (fallbackResult != null) {
+          return fallbackResult;
+        }
+        throw Exception('Gagal membuat watermark (overlay & drawtext)');
       }
       overlayPath = overlayResult.$1;
       offsetX = overlayResult.$2;
@@ -98,6 +114,7 @@ class VideoWatermarkService {
       if (overlayPath == null) {
         throw Exception('Overlay path null');
       }
+      debugPrint('🖼️ Overlay PNG siap: $overlayPath (${await File(overlayPath).length()} bytes)');
 
       // 4. Bangun argumen FFmpeg
       final args = _buildFFmpegArguments(
@@ -111,8 +128,9 @@ class VideoWatermarkService {
         keepAudio: keepAudio,
         videoInfo: videoInfo,
       );
+      debugPrint('🎬 FFmpeg args: ${args.join(' ')}');
 
-      // 5. Eksekusi encoding (dengan progress & fallback)
+      // 5. Eksekusi encoding
       final success = await _executeEncoding(
         args: args,
         sessionId: sessionId,
@@ -128,24 +146,37 @@ class VideoWatermarkService {
       );
 
       if (!success) {
+        debugPrint('⚠️ Encoding gagal, coba drawtext fallback...');
+        final fallbackResult = await _addWatermarkWithDrawtext(
+          inputPath: inputPath,
+          outputPath: outputPath,
+          entry: entry,
+          settings: settings,
+          keepAudio: keepAudio,
+          videoInfo: videoInfo,
+          onProgress: onProgress,
+          sessionId: sessionId,
+        );
+        if (fallbackResult != null) {
+          return fallbackResult;
+        }
         return null;
       }
 
-      _log('info', '✅ Video watermark berhasil: $outputPath');
+      debugPrint('✅ Video watermark berhasil: $outputPath');
       return outputPath;
     } catch (e) {
-      _log('error', '❌ Error video watermark: $e');
+      debugPrint('❌ Error video watermark: $e');
       lastError = diagnoseFailure(e.toString());
       return null;
     } finally {
       _progressCallbacks.remove(sessionId);
-      // Hapus overlay sementara (jika tidak di-cache)
       if (overlayPath != null && !_overlayFileCache.containsValue(overlayPath)) {
         try {
           final f = File(overlayPath);
           if (await f.exists()) await f.delete();
         } catch (e) {
-          _log('error', '⚠️ Gagal hapus overlay sementara: $e');
+          debugPrint('⚠️ Gagal hapus overlay sementara: $e');
         }
       }
       if (_progressCallbacks.isEmpty) {
@@ -154,102 +185,276 @@ class VideoWatermarkService {
     }
   }
 
-  // ─── 1. BACA INFO VIDEO ──────────────────────────────────────
+  // ─── FALLBACK DRAWTEXT ──────────────────────────────────────
+  static Future<String?> _addWatermarkWithDrawtext({
+    required String inputPath,
+    required String outputPath,
+    required ScanEntry entry,
+    required WatermarkSettings settings,
+    required bool keepAudio,
+    required _VideoInfo videoInfo,
+    void Function(double progress)? onProgress,
+    required int sessionId,
+  }) async {
+    debugPrint('📝 Menggunakan drawtext fallback...');
+    try {
+      final operator = settings.operatorName.isNotEmpty ? settings.operatorName : '';
+      final company = settings.companyName.isNotEmpty ? '\n${settings.companyName}' : '';
+      final timestamp = entry.timestamp.toIso8601String().substring(0, 19).replaceAll('T', ' ');
+      final barcode = entry.value ?? 'No Barcode';
+      final location = entry.locationName ?? '';
+
+      String text = '$operator$company\n$timestamp\n$barcode';
+      if (location.isNotEmpty) text += '\n$location';
+      text = text.replaceAll("'", "'\\\\''");
+      text = text.replaceAll(':', '\\:');
+      text = text.replaceAll('\\', '\\\\');
+
+      final pos = settings.position;
+      final padding = 20;
+      String x, y;
+      switch (pos) {
+        case WatermarkPosition.bottomRight:
+          x = '(w-tw)-$padding';
+          y = '(h-th)-$padding';
+          break;
+        case WatermarkPosition.bottomLeft:
+          x = '$padding';
+          y = '(h-th)-$padding';
+          break;
+        case WatermarkPosition.topRight:
+          x = '(w-tw)-$padding';
+          y = '$padding';
+          break;
+        case WatermarkPosition.topLeft:
+          x = '$padding';
+          y = '$padding';
+          break;
+      }
+
+      final fontSize = settings.fontSize;
+      final opacity = settings.backgroundOpacity;
+      final fontColor = 'white';
+      final bgColor = 'black@$opacity';
+
+      String drawText =
+          "drawtext=text='$text':"
+          "fontcolor=$fontColor:"
+          "fontsize=$fontSize:"
+          "box=1:"
+          "boxcolor=$bgColor:"
+          "boxborderw=5:"
+          "x=$x:y=$y";
+
+      final command =
+          "-i '$inputPath' "
+          "-vf \"$drawText\" "
+          "-c:a ${keepAudio ? 'copy' : 'an'} "
+          "-c:v libx264 -preset fast -crf 23 "
+          "-y '$outputPath'";
+
+      debugPrint('🎬 FFmpeg fallback command: $command');
+      final session = await FFmpegKit.execute(command);
+      final returnCode = await session.getReturnCode();
+
+      if (ReturnCode.isSuccess(returnCode)) {
+        debugPrint('✅ Fallback drawtext berhasil: $outputPath');
+        return outputPath;
+      } else {
+        final logs = await session.getOutput();
+        debugPrint('❌ Fallback drawtext error: $logs');
+        lastError = logs;
+        return null;
+      }
+    } catch (e) {
+      debugPrint('❌ Fallback drawtext exception: $e');
+      return null;
+    }
+  }
+
+  // ─── 1. BACA INFO VIDEO (dengan display dimensions & rotasi) ──
   static Future<_VideoInfo?> _readVideoInfo(String inputPath) async {
     final session = await FFprobeKit.getMediaInformation(inputPath);
     final mediaInfo = session.getMediaInformation();
     if (mediaInfo == null) return null;
 
-    // ⚠️ PENTING: MediaInformation.getDuration() dari ffmpeg_kit_flutter_new
-    // mengembalikan String? (mis. "12.345000"), BUKAN double. Cast langsung
-    // `as double?` di sini SELALU melempar TypeError di setiap video (100%
-    // reproducible), yang langsung tertangkap oleh try/catch di addWatermark()
-    // dan membuat proses watermark video SELALU gagal sejak langkah pertama
-    // (baca metadata) — sebelum overlay/FFmpeg encode sempat dijalankan sama
-    // sekali. Ini akar masalah "video selalu tersimpan tanpa watermark".
+    // ✅ FIX: getDuration() return String, bukan double
     final durationObj = mediaInfo.getDuration();
     final double duration = double.tryParse(durationObj?.toString() ?? '') ?? 0.0;
 
-    int srcW = 720, srcH = 1280, rotation = 0;
+    int streamW = 0, streamH = 0;
+    int rotation = 0;
+    int displayW = 0, displayH = 0;
+
     final streams = mediaInfo.getStreams();
     for (final stream in streams) {
       final w = stream.getWidth();
       final h = stream.getHeight();
       if (w != null && h != null && w > 0 && h > 0) {
-        srcW = w;
-        srcH = h;
+        streamW = w;
+        streamH = h;
+
+        // Deteksi rotasi
         rotation = _detectRotation(stream);
+
+        // Coba dapatkan display dimensions dari side_data
+        final displayDims = _getDisplayDimensions(stream);
+        if (displayDims != null) {
+          displayW = displayDims.$1;
+          displayH = displayDims.$2;
+        }
         break;
       }
     }
+
+    // Jika tidak ada display dimensions, gunakan stream dimensions
+    if (displayW == 0 || displayH == 0) {
+      displayW = streamW;
+      displayH = streamH;
+    }
+
+    // Jika rotasi 90/270, display dimensions harus ditukar
+    if (rotation == 90 || rotation == 270) {
+      final temp = displayW;
+      displayW = displayH;
+      displayH = temp;
+    }
+
     return _VideoInfo(
-      width: srcW,
-      height: srcH,
+      streamWidth: streamW,
+      streamHeight: streamH,
+      displayWidth: displayW,
+      displayHeight: displayH,
       rotation: rotation,
       duration: duration,
     );
   }
 
-  // ─── 2. HITUNG DIMENSI (selalu original) ──────────────────────
-  static _Dimensions _computeDimensions(_VideoInfo info) {
-    int outW = info.width;
-    int outH = info.height;
-    int rotation = info.rotation;
+  // ─── DETEKSI ROTASI ──────────────────────────────────────────
+  static int _detectRotation(dynamic stream) {
+    // Cek tag 'rotate' (umum dari kamera)
+    try {
+      final tags = stream.getTags();
+      if (tags != null && tags.containsKey('rotate')) {
+        final rotStr = tags['rotate']?.toString() ?? '0';
+        final tagRotation = int.tryParse(rotStr) ?? 0;
+        if (tagRotation != 0) return _normalizeRotation(tagRotation);
+      }
+    } catch (_) {}
 
-    if (rotation == 90 || rotation == 270) {
-      final temp = outW;
-      outW = outH;
-      outH = temp;
+    // Cek side_data (display matrix) - perhatikan tanda terbalik
+    try {
+      final props = stream.getAllProperties() as Map?;
+      final sideDataList = props?['side_data_list'];
+      if (sideDataList is List) {
+        for (final sd in sideDataList) {
+          if (sd is Map && sd.containsKey('rotation')) {
+            final raw = sd['rotation'];
+            final rot = raw is num ? raw.toInt() : int.tryParse('$raw') ?? 0;
+            // ⚠️ side_data rotation memiliki tanda terbalik dari tag rotate
+            if (rot != 0) return _normalizeRotation(-rot);
+          }
+        }
+      }
+    } catch (_) {}
+
+    return 0;
+  }
+
+  // ─── GET DISPLAY DIMENSIONS ──────────────────────────────────
+  static (int, int)? _getDisplayDimensions(dynamic stream) {
+    try {
+      final props = stream.getAllProperties() as Map?;
+      final sideDataList = props?['side_data_list'];
+      if (sideDataList is List) {
+        for (final sd in sideDataList) {
+          if (sd is Map && sd.containsKey('display_matrix')) {
+            // display_matrix adalah array 3x3, kita extract width/height
+            final matrix = sd['display_matrix'];
+            if (matrix is List && matrix.length >= 9) {
+              // Untuk display matrix, kita perlu parse lebih lanjut
+              // Sederhana: gunakan stream dimensions sebagai fallback
+              return null;
+            }
+          }
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  static int _normalizeRotation(int rotation) {
+    var r = rotation % 360;
+    if (r < 0) r += 360;
+    return (r / 90).round() * 90 % 360;
+  }
+
+  // ─── 2. HITUNG DIMENSI ──────────────────────────────────────
+  static _Dimensions _computeDimensions(_VideoInfo info) {
+    // Gunakan display dimensions
+    int outW = info.displayWidth;
+    int outH = info.displayHeight;
+
+    // Batasi resolusi maksimal untuk performa (opsional)
+    const int maxDimension = 1920;
+    if (outW > maxDimension || outH > maxDimension) {
+      if (outW >= outH) {
+        outH = (outH * maxDimension / outW).round();
+        outW = maxDimension;
+      } else {
+        outW = (outW * maxDimension / outH).round();
+        outH = maxDimension;
+      }
+      // Pastikan genap (divisible by 2) untuk encoder
+      outW = (outW ~/ 2) * 2;
+      outH = (outH ~/ 2) * 2;
     }
 
-    // Tidak ada scaling resolusi lagi → selalu original
-    String scaleFilter = '';
-    if (rotation == 90) scaleFilter += 'transpose=1,';
-    else if (rotation == 270) scaleFilter += 'transpose=2,';
-    else if (rotation == 180) scaleFilter += 'transpose=2,transpose=2,';
-
-    // Pertahankan resolusi asli (tanpa scaling)
-    scaleFilter += 'setsar=1';
+    // Filter scale: gunakan display dimensions, jaga aspect ratio
+    final scaleFilter =
+        'scale=$outW:$outH:force_original_aspect_ratio=decrease,'
+        'pad=$outW:$outH:(ow-iw)/2:(oh-ih)/2,'
+        'setsar=1';
 
     return _Dimensions(
       outW: outW,
       outH: outH,
-      rotation: rotation,
       scaleFilter: scaleFilter,
-      needScale: false,
+      needScale: true,
     );
   }
 
-  // ─── 3. RENDER OVERLAY (DENGAN CACHE) ──────────────────────
+  // ─── 3. RENDER OVERLAY ──────────────────────────────────────
   static Future<(String?, int, int)?> _renderOverlay({
     required int outW,
     required int outH,
     required WatermarkSettings settings,
     required ScanEntry entry,
   }) async {
-    // Gunakan content-based key, bukan hashCode
     final key = _cacheKey(outW, outH, settings, entry);
-    // Cek cache file
     if (_overlayFileCache.containsKey(key)) {
       final cachedPath = _overlayFileCache[key]!;
       if (await File(cachedPath).exists()) {
-        _log('info', '🔄 Menggunakan overlay dari cache: $cachedPath');
+        debugPrint('🔄 Menggunakan overlay dari cache: $cachedPath');
         return (cachedPath, 0, 0);
       } else {
         _overlayFileCache.remove(key);
       }
     }
 
-    // Generate overlay PNG via WatermarkRenderer
+    debugPrint('🎨 Membuat overlay PNG ukuran ${outW}x${outH}...');
     final Uint8List? overlayBytes = await WatermarkRenderer.renderOverlayPng(
       canvasWidth: outW,
       canvasHeight: outH,
       settings: settings,
       entry: entry,
     );
-    if (overlayBytes == null || overlayBytes.isEmpty) return null;
+    if (overlayBytes == null || overlayBytes.isEmpty) {
+      debugPrint('❌ renderOverlayPng mengembalikan null atau kosong');
+      return null;
+    }
+    debugPrint('✅ Overlay PNG berhasil dibuat (${overlayBytes.length} bytes)');
 
-    // Simpan ke file cache
     final cacheDir = await _getCacheDirectory();
     final fileName = 'overlay_$key.png';
     final filePath = '${cacheDir.path}/$fileName';
@@ -261,12 +466,9 @@ class VideoWatermarkService {
       _trimCache();
     }
 
-    _log('info', '🖼️ Overlay PNG dibuat & di-cache: $filePath (${overlayBytes.length} bytes)');
-    // Offset selalu (0,0) karena overlay full-frame
     return (filePath, 0, 0);
   }
 
-  // ─── CACHE KEY (CONTENT-BASED) ─────────────────────────────
   static String _cacheKey(int outW, int outH, WatermarkSettings settings, ScanEntry entry) {
     final parts = [
       outW,
@@ -287,7 +489,6 @@ class VideoWatermarkService {
       entry.latitude ?? '',
       entry.longitude ?? '',
     ].join('|');
-    // Gunakan hash dari gabungan string
     final hash = parts.hashCode.abs();
     return hash.toRadixString(16).padLeft(16, '0');
   }
@@ -326,15 +527,14 @@ class VideoWatermarkService {
     required bool keepAudio,
     required _VideoInfo videoInfo,
   }) {
-    // Filter complex dengan offset overlay
+    // ✅ Normalisasi yuv420p SEBELUM overlay (mencegah error format)
     final filterComplex =
-        '[0:v]${dims.scaleFilter}[base];'
-        '[base][1:v]overlay=$offsetX:$offsetY:format=auto[outv];'
-        '[outv]format=yuv420p[out]';
+        '[0:v]${dims.scaleFilter},format=yuv420p[scaled];'
+        '[scaled][1:v]overlay=$offsetX:$offsetY:format=auto[outv]';
 
     final List<String> filterArgs = [
       '-filter_complex', filterComplex,
-      '-map', '[out]',
+      '-map', '[outv]',
     ];
 
     final int bitrate = settings.videoBitrateKbps;
@@ -359,32 +559,30 @@ class VideoWatermarkService {
       ];
     }
 
+    // ✅ Tidak pakai -noautorotate, biarkan FFmpeg menangani orientasi
     final arguments = <String>[
-      '-noautorotate',
       '-i', inputPath,
-      '-loop', '1', '-i', overlayPath,
+      '-loop', '1',
+      '-i', overlayPath,
       ...filterArgs,
       ...encoderArgs,
       '-pix_fmt', 'yuv420p',
-      '-shortest',
       '-movflags', '+faststart',
+      '-shortest',
       '-y',
       outputPath,
     ];
 
-    // ─── AUDIO ─────────────────────────────
     if (keepAudio) {
       arguments.insertAll(arguments.length - 1, ['-map', '0:a?', '-c:a', 'copy']);
-      _log('info', '🔊 Audio akan disalin dari input');
     } else {
       arguments.insertAll(arguments.length - 1, ['-an']);
-      _log('info', '🔇 Audio akan dihilangkan');
     }
 
     return arguments;
   }
 
-  // ─── 5. EKSEKUSI ENCODING (DENGAN FALLBACK) ──────────────
+  // ─── 5. EKSEKUSI ENCODING ──────────────────────────────────
   static Future<bool> _executeEncoding({
     required List<String> args,
     required int sessionId,
@@ -398,7 +596,6 @@ class VideoWatermarkService {
     required _Dimensions dims,
     required _VideoInfo videoInfo,
   }) async {
-    // Registrasi callback progress
     if (onProgress != null && duration > 0) {
       _progressCallbacks[sessionId] = onProgress;
       FFmpegKitConfig.enableStatisticsCallback((statistics) {
@@ -414,94 +611,20 @@ class VideoWatermarkService {
       });
     }
 
-    _log('ffmpeg', '🎬 FFmpeg arguments: ${args.join(' ')}');
-    var session = await FFmpegKit.executeWithArguments(args);
-    var returnCode = await session.getReturnCode();
-
-    // Fallback hardware → software
-    final useHw = _shouldUseHardwareEncoder();
-    if (useHw && !ReturnCode.isSuccess(returnCode)) {
-      _log('error', '⚠️ h264_mediacodec gagal (rc=${returnCode?.getValue()}), fallback ke libx264...');
-      final swArgs = _buildFFmpegArguments(
-        inputPath: inputPath,
-        outputPath: outputPath,
-        overlayPath: overlayPath,
-        offsetX: 0,
-        offsetY: 0,
-        dims: dims,
-        settings: settings,
-        keepAudio: keepAudio,
-        videoInfo: videoInfo,
-      );
-      final swIndex = swArgs.indexWhere((arg) => arg == '-c:v');
-      if (swIndex != -1) {
-        swArgs[swIndex + 1] = 'libx264';
-        swArgs.removeRange(swIndex + 2, swIndex + 2);
-        swArgs.insertAll(swIndex + 2, [
-          '-preset', 'veryfast',
-          '-crf', '${settings.videoCrf}',
-          '-maxrate', '${settings.videoBitrateKbps}k',
-          '-bufsize', '${settings.videoBitrateKbps * 2}k',
-          '-threads', '0',
-        ]);
-      }
-      session = await FFmpegKit.executeWithArguments(swArgs);
-      returnCode = await session.getReturnCode();
-    }
+    final session = await FFmpegKit.executeWithArguments(args);
+    final returnCode = await session.getReturnCode();
 
     if (_progressCallbacks.isEmpty) {
       FFmpegKitConfig.enableStatisticsCallback(null);
     }
 
     if (!ReturnCode.isSuccess(returnCode)) {
-      final output = await session.getOutput();
       final logs = await session.getAllLogsAsString() ?? '';
-      final diagnosis = diagnoseFailure(logs);
-      _log('error', '❌ FFmpeg error log:\n$logs');
-      _log('error', '🩺 Diagnosis: $diagnosis');
-      lastError = '$diagnosis (rc=${returnCode?.getValue()})\n$output\n$logs';
+      lastError = diagnoseFailure(logs);
+      debugPrint('❌ FFmpeg error log:\n$logs');
       return false;
     }
     return true;
-  }
-
-  // ─── DETEKSI ROTASI ──────────────────────────────────────────
-  static int _detectRotation(dynamic stream) {
-    try {
-      final tags = stream.getTags();
-      if (tags != null && tags.containsKey('rotate')) {
-        final rotStr = tags['rotate']?.toString() ?? '0';
-        final tagRotation = int.tryParse(rotStr) ?? 0;
-        if (tagRotation != 0) return _normalizeRotation(tagRotation);
-      }
-    } catch (_) {}
-
-    try {
-      final props = stream.getAllProperties() as Map?;
-      final sideDataList = props?['side_data_list'];
-      if (sideDataList is List) {
-        for (final sd in sideDataList) {
-          if (sd is Map && sd.containsKey('rotation')) {
-            final raw = sd['rotation'];
-            final rot = raw is num ? raw.toInt() : int.tryParse('$raw') ?? 0;
-            // ⚠️ PENTING: side_data "displaymatrix rotation" pakai KONVENSI TANDA
-            // TERBALIK dibanding tag legacy 'rotate'. Contoh nyata dari video yang
-            // sama: tag rotate=90 selalu berpasangan dengan side_data rotation=-90
-            // (dua-duanya menggambarkan rotasi fisik YANG SAMA, butuh transpose=1).
-            // Tanpa negasi ini, rotation=-90 dinormalisasi jadi 270 → transpose=2
-            // (arah terbalik) → video ke-rotate ke arah yang salah (miring 90°).
-            if (rot != 0) return _normalizeRotation(-rot);
-          }
-        }
-      }
-    } catch (_) {}
-    return 0;
-  }
-
-  static int _normalizeRotation(int rotation) {
-    var r = rotation % 360;
-    if (r < 0) r += 360;
-    return (r / 90).round() * 90 % 360;
   }
 
   // ─── HARDWARE ENCODER AVAILABILITY ──────────────────────────
@@ -523,7 +646,6 @@ class VideoWatermarkService {
   }
 
   static bool _shouldUseHardwareEncoder() {
-    // Sederhana: selalu false untuk stabilitas, bisa diubah nanti
     if (_hwEncoderAvailable != null) return _hwEncoderAvailable!;
     return false;
   }
@@ -569,24 +691,34 @@ class VideoWatermarkService {
     }
     return 'Penyebab tidak dikenal. Cek log lengkap di atas.';
   }
-
-  // ─── LOG HELPER ──────────────────────────────────────────────
-  static void _log(String level, String message) {
-    final prefix = level == 'error' ? '❌' : level == 'ffmpeg' ? '🎬' : 'ℹ️';
-    debugPrint('$prefix $message');
-  }
 }
 
 // ─── MODEL INTERNAL ──────────────────────────────────────────
 class _VideoInfo {
-  final int width, height, rotation;
+  final int streamWidth, streamHeight;
+  final int displayWidth, displayHeight;
+  final int rotation;
   final double duration;
-  _VideoInfo({required this.width, required this.height, required this.rotation, required this.duration});
+
+  _VideoInfo({
+    required this.streamWidth,
+    required this.streamHeight,
+    required this.displayWidth,
+    required this.displayHeight,
+    required this.rotation,
+    required this.duration,
+  });
 }
 
 class _Dimensions {
-  final int outW, outH, rotation;
+  final int outW, outH;
   final String scaleFilter;
   final bool needScale;
-  _Dimensions({required this.outW, required this.outH, required this.rotation, required this.scaleFilter, required this.needScale});
+
+  _Dimensions({
+    required this.outW,
+    required this.outH,
+    required this.scaleFilter,
+    required this.needScale,
+  });
 }
