@@ -491,7 +491,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     return result ?? imagePath;
   }
 
-  // ─── ✅ PERBAIKAN: _saveToGallery dengan filePath untuk saver_gallery 3.0.10 ──
+  // ─── ✅ PERBAIKAN: _saveToGallery untuk saver_gallery 3.0.10 ──
   Future<bool> _saveToGallery(String filePath) async {
     try {
       final file = File(filePath);
@@ -512,10 +512,10 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       for (int attempt = 0; attempt <= maxRetries; attempt++) {
         try {
           final filename = file.path.split('/').last;
-          // ✅ PERBAIKAN: gunakan filePath: (bukan file:)
+          // ✅ PERBAIKAN: pakai file: dan fileName:
           final result = await SaverGallery.saveFile(
-            filePath: filePath,
-            name: filename,
+            file: filePath,
+            fileName: filename,
             androidRelativePath: 'Pictures/TERMULScan',
           );
           if (result.isSuccess) {
@@ -994,47 +994,4 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
               _CameraIconWidget(batchMode: widget.batchMode, photoCount: _photoCount),
               const Gap(24),
               _HeaderWidget(batchMode: widget.batchMode, photoCount: _photoCount, barcode: widget.barcode),
-              if (widget.batchMode && _photoPaths.isNotEmpty)
-                _PhotoThumbnailsWidget(photoPaths: _photoPaths),
-              const Gap(48),
-              _ActionButtonsWidget(
-                onTakePhoto: _takePhoto,
-                onPickGallery: _pickFromGallery,
-                isSaving: _isSaving,
-                isCapturing: _isCapturing,
-                isProcessing: isProcessing,
-              ),
-              if (widget.batchMode)
-                _BatchFinishButtonWidget(photoCount: _photoCount, onFinish: _finishBatch),
-              const Gap(32),
-              _InfoBoxWidget(batchMode: widget.batchMode),
-              if (_isSaving || isProcessing)
-                Padding(
-                  padding: const EdgeInsets.only(top: 16),
-                  child: LinearProgressIndicator(
-                    backgroundColor: Colors.grey[800],
-                    valueColor: AlwaysStoppedAnimation(AppTheme.accentOrange),
-                  ),
-                ),
-              if (_statusText.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text(_statusText, style: const TextStyle(color: Colors.grey, fontSize: 12)),
-                ),
-              if (_pendingTasks > 0)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text('$_pendingTasks foto dalam antrian...', style: const TextStyle(color: Colors.grey, fontSize: 12)),
-                ),
-              if (_runningTasks > 0)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text('$_runningTasks foto sedang diproses...', style: const TextStyle(color: Colors.grey, fontSize: 12)),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
+              if (widget.batch
