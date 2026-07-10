@@ -340,9 +340,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       });
     });
     _initPendingDir();
-    // Idempotent: jika sudah locked/acquiring dari BarcodeScanScreen,
-    // panggilan ini langsung no-op. Jika layar ini dibuka langsung
-    // (tanpa scan barcode dulu), GPS mulai dikunci dari sini.
     unawaited(PodLocationService.instance.acquireForCapture());
   }
 
@@ -494,7 +491,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     return result ?? imagePath;
   }
 
-  // ─── ✅ PERBAIKAN: _saveToGallery dengan verifikasi & retry ──
+  // ─── ✅ PERBAIKAN: _saveToGallery dengan filePath untuk saver_gallery 3.0.10 ──
   Future<bool> _saveToGallery(String filePath) async {
     try {
       final file = File(filePath);
@@ -515,11 +512,11 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       for (int attempt = 0; attempt <= maxRetries; attempt++) {
         try {
           final filename = file.path.split('/').last;
+          // ✅ PERBAIKAN: gunakan filePath: (bukan file:)
           final result = await SaverGallery.saveFile(
-            file: filePath,
+            filePath: filePath,
             name: filename,
             androidRelativePath: 'Pictures/TERMULScan',
-            androidExistNotSave: false,
           );
           if (result.isSuccess) {
             debugPrint('✅ Ekspor gallery berhasil: $filename');
@@ -575,7 +572,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     });
 
     try {
-      // ─── Ambil file asli (tanpa maxWidth/imageQuality) ──
       final xfile = await _picker.pickImage(
         source: ImageSource.camera,
         preferredCameraDevice: CameraDevice.rear,
@@ -584,7 +580,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       if (xfile != null) {
         final previewResult = await _showPreview(xfile, MediaType.photo);
         if (previewResult == 'save') {
-          // ─── Pindahkan ke pending ─────────────────────────
           final pendingPath = await _saveToPending(xfile);
           final photoIndex = _nextPhotoIndex++;
 
@@ -607,7 +602,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                   Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
                 }
               }
-              // Hapus pending file setelah sukses
               try { File(pendingPath).delete(); } catch (_) {}
             },
             onError: (error) {
@@ -624,7 +618,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
             setState(() => _statusText = 'Memproses foto...');
           }
         } else {
-          // Retake → hapus file
           try { await File(xfile.path).delete(); } catch (_) {}
           if (mounted) setState(() => _statusText = 'Dibatalkan');
         }
@@ -652,10 +645,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     });
 
     try {
-      // ─── Ambil file asli dari galeri ────────────────────
       final xfile = await _picker.pickImage(
         source: ImageSource.gallery,
-        // maxWidth/imageQuality dihilangkan
       );
       if (!mounted) return;
       if (xfile != null) {
@@ -724,7 +715,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     bool compressedIsTemp = false;
 
     try {
-      // ─── 1. Verifikasi file input ──────────────────────────
       final inputFile = File(imagePath);
       if (!await inputFile.exists()) {
         throw Exception('File input tidak ditemukan: $imagePath');
@@ -735,7 +725,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       }
       debugPrint('📷 Input file OK: $imagePath (${inputSize ~/ 1024}KB)');
 
-      // ─── 2. Kompresi & resize (ImageCompressor) ──────────
       compressedPath = await ImageCompressor.compressIfNeeded(imagePath);
       compressedIsTemp = compressedPath != imagePath &&
           await FileHelper.isTemporaryFile(compressedPath);
@@ -750,7 +739,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       }
       debugPrint('✅ Kompresi OK: $compressedPath (${compressedSize ~/ 1024}KB)');
 
-      // ─── 3. Watermark ──────────────────────────────────────
       final timestamp = DateTime.now();
       watermarkedPath = await _applyWatermark(compressedPath, timestamp, photoIndex);
 
@@ -767,7 +755,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       }
       debugPrint('✅ Watermark OK: $watermarkedPath (${watermarkSize ~/ 1024}KB)');
 
-      // ─── 4. Simpan ke internal ────────────────────────────
       final name = _resolveFileName(photoIndex);
       final savedPath = await _storage.savePhoto(watermarkedPath, name: name);
       if (savedPath.isEmpty) {
@@ -779,14 +766,12 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       }
       debugPrint('✅ Internal save OK: $savedPath');
 
-      // ─── 5. Hapus watermark temp (hanya jika berbeda dan temporary) ──
       if (watermarkedPath != savedPath &&
           await FileHelper.isTemporaryFile(watermarkedPath) &&
           await File(watermarkedPath).exists()) {
         try { await File(watermarkedPath).delete(); } catch (_) {}
       }
 
-      // ─── 6. Update database jika ada entryId ──────────────
       if (widget.entryId != null) {
         final barcodeEntry = await _storage.getEntry(widget.entryId!);
         if (barcodeEntry != null) {
@@ -801,7 +786,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         debugPrint('⚠️ Gagal ekspor ke gallery, file tetap tersimpan di internal');
       }
 
-      // ─── 8. Notifikasi batch ──────────────────────────────
       if (widget.batchMode && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -816,7 +800,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
     } catch (e, stack) {
       debugPrint('❌ Error processing photo #$photoIndex ($imagePath): $e\n$stack');
-      // Bersihkan file sisa
       if (watermarkedPath != null && watermarkedPath != compressedPath) {
         try { await File(watermarkedPath).delete(); } catch (_) {}
       }
@@ -825,18 +808,9 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       }
       rethrow;
     } finally {
-      // Hapus file temporary hasil kompresi (bukan file pending asli)
       if (compressedIsTemp && compressedPath != imagePath) {
         try { await File(compressedPath).delete(); } catch (_) {}
       }
-      // ⚠️ CATATAN: file pending (imagePath) SENGAJA TIDAK dihapus di sini.
-      // _processPhoto() dipanggil ulang oleh TaskQueue saat retry dengan
-      // path pending yang SAMA — jika dihapus di sini, percobaan retry
-      // berikutnya akan selalu gagal dengan "File input tidak ditemukan",
-      // menutupi penyebab kegagalan yang sebenarnya. Pembersihan file
-      // pending sudah ditangani di pemanggil (_takePhoto/_pickFromGallery)
-      // lewat callback onSuccess/onError, yang hanya jalan sekali setelah
-      // task benar-benar final (sukses atau gagal permanen).
     }
   }
 
