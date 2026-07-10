@@ -18,7 +18,7 @@ import '../services/background/video_processing_service.dart';
 import '../services/pod_location_service.dart';
 import '../watermark/watermark_settings.dart';
 import '../watermark/watermark_style.dart';
-import '../services/watermark/watermark_service.dart'; // ✅ PERBAIKAN: pakai service overlay-PNG (bukan drawtext lama)
+import '../services/watermark/watermark_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/file_helper.dart';
 import 'preview_screen.dart';
@@ -68,7 +68,6 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         _isProcessing = _pendingTasks > 0 || _runningTasks > 0;
       });
     });
-    // Idempotent: no-op jika sudah locked/acquiring dari BarcodeScanScreen.
     unawaited(PodLocationService.instance.acquireForCapture());
   }
 
@@ -254,11 +253,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       });
 
       // ============================================================
-      // ✅ PERBAIKAN: Gunakan VideoWatermarkService (overlay PNG + fallback
-      // hw→sw encoder) — BUKAN VideoWatermarkRenderer lama yang memakai
-      // drawtext dengan urutan escaping salah (colon di-escape dulu baru
-      // backslash-nya di-escape ulang → filter FFmpeg jadi korup → selalu
-      // gagal parse → video jatuh ke jalur "simpan tanpa watermark").
+      // ✅ PERBAIKAN: Gunakan VideoWatermarkService
       // ============================================================
       final wmLocState = PodLocationService.instance.currentState;
       final wmResult = await VideoWatermarkService.addWatermark(
@@ -405,6 +400,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     }
   }
 
+  // ─── ✅ PERBAIKAN: _saveToGallery dengan filePath untuk saver_gallery 3.0.10 ──
   Future<bool> _saveToGallery(String filePath) async {
     try {
       final file = File(filePath);
@@ -425,11 +421,11 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       for (int attempt = 0; attempt <= maxRetries; attempt++) {
         try {
           final filename = '${_entryFilenameBase(filePath)}_${DateTime.now().millisecondsSinceEpoch}.mp4';
+          // ✅ PERBAIKAN: gunakan filePath: (bukan file:)
           final result = await SaverGallery.saveFile(
-            file: filePath,
+            filePath: filePath,
             name: filename,
             androidRelativePath: 'Movies/TERMULScan',
-            androidExistNotSave: false,
           );
           if (result.isSuccess) {
             debugPrint('✅ Ekspor gallery berhasil: $filename');
