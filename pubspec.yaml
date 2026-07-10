@@ -27,7 +27,7 @@ dependencies:
   # ─── SCANNER & MEDIA ──────────────────────────────────────
   mobile_scanner: ^5.2.0
   saver_gallery: ^3.0.0
-  share_plus: ^9.0.0
+  share_plus: ^10.1.4
   image: ^4.1.7
   camera: ^0.10.5+5
   video_player: ^2.8.5
