@@ -118,6 +118,7 @@ class StorageService {
   }
 
   // ─── Save to Gallery (PUBLIC) ──────────────────────────────
+  // ✅ PERBAIKAN: SaverGallery.saveFile() menggunakan filePath: (bukan file:)
 
   Future<bool> saveVideoToGallery(String filePath, {String? fileName}) async {
     try {
@@ -145,10 +146,9 @@ class StorageService {
       }
 
       final saved = await SaverGallery.saveFile(
-        file: filePath,
+        filePath: filePath,  // ✅ PERBAIKAN: filePath (bukan file)
         name: fileName ?? 'watermarked_${DateTime.now().millisecondsSinceEpoch}.mp4',
         androidRelativePath: 'Movies/TermulScan',
-        androidExistNotSave: false,
       );
 
       if (saved.isSuccess) {
@@ -164,7 +164,6 @@ class StorageService {
     }
   }
 
-  // ✅ PERBAIKAN: pakai saveFile (bukan saveImage) untuk konsistensi
   Future<bool> savePhotoToGallery(String filePath, {String? fileName}) async {
     try {
       final file = File(filePath);
@@ -179,10 +178,9 @@ class StorageService {
       if (!hasPermission) return false;
 
       final saved = await SaverGallery.saveFile(
-        file: filePath,
+        filePath: filePath,  // ✅ PERBAIKAN: filePath (bukan file)
         name: fileName ?? 'watermarked_${DateTime.now().millisecondsSinceEpoch}.jpg',
         androidRelativePath: 'Pictures/TermulScan',
-        androidExistNotSave: false,
       );
 
       return saved.isSuccess;
