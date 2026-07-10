@@ -10,7 +10,9 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # ─── UTILITY ────────────────────────────────────────────────
+  # ───────────────────────────────────────────────
+  # Utility
+  # ───────────────────────────────────────────────
   shared_preferences: ^2.2.2
   path_provider: ^2.1.1
   permission_handler: ^11.3.1
@@ -24,54 +26,74 @@ dependencies:
   archive: ^3.6.1
   file_picker: ^8.0.0
 
-  # ─── SCANNER & MEDIA ──────────────────────────────────────
+  # ───────────────────────────────────────────────
+  # Scanner & Media
+  # ───────────────────────────────────────────────
   mobile_scanner: ^5.2.0
   saver_gallery: ^3.0.0
-  share_plus: ^9.0.0
+
+  # ===== DIPERBAIKI =====
+  share_plus: ^12.0.2
+
   image: ^4.1.7
   camera: ^0.10.5+5
   video_player: ^2.8.5
   video_thumbnail: ^0.5.6
 
-  # ─── GPS / LOKASI ───────────────────────────────────────────
+  # ───────────────────────────────────────────────
+  # GPS
+  # ───────────────────────────────────────────────
   geolocator: ^13.0.1
   geocoding: ^3.0.0
   http: ^1.2.2
   rxdart: ^0.28.0
 
-  # ─── DATABASE ──────────────────────────────────────────────
+  # ───────────────────────────────────────────────
+  # Database
+  # ───────────────────────────────────────────────
   sqflite: ^2.3.0
   path: ^1.9.0
 
-  # ─── FFMPEG (STABIL) ──────────────────────────────────────
+  # ───────────────────────────────────────────────
+  # FFmpeg
+  # ───────────────────────────────────────────────
   ffmpeg_kit_flutter_new: ^4.1.0
 
-  # ─── STATE MANAGEMENT ──────────────────────────────────────
-  provider: ^6.0.5   # ✅ TAMBAHKAN INI
+  # ───────────────────────────────────────────────
+  # State Management
+  # ───────────────────────────────────────────────
+  provider: ^6.0.5
 
-  # ─── BACKGROUND & NOTIFICATIONS ──────────────────────────
+  # ───────────────────────────────────────────────
+  # Background
+  # ───────────────────────────────────────────────
   flutter_foreground_task: ^9.2.2
   flutter_local_notifications: ^17.2.2
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+
   flutter_lints: ^4.0.0
 
 flutter:
   uses-material-design: true
+
   fonts:
     - family: Roboto
       fonts:
         - asset: assets/fonts/Roboto-VariableFont_wdth,wght.ttf
         - asset: assets/fonts/Roboto-Italic-VariableFont_wdth,wght.ttf
           style: italic
+
     - family: Inter
       fonts:
         - asset: assets/fonts/Inter-VariableFont_opsz,wght.ttf
+
     - family: Montserrat
       fonts:
         - asset: assets/fonts/Montserrat-VariableFont_wght.ttf
+
     - family: Poppins
       fonts:
         - asset: assets/fonts/Poppins-Regular.ttf
