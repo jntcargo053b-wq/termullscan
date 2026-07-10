@@ -400,7 +400,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     }
   }
 
-  // ─── ✅ PERBAIKAN: _saveToGallery dengan filePath untuk saver_gallery 3.0.10 ──
+  // ─── ✅ PERBAIKAN: _saveToGallery untuk saver_gallery 3.0.10 ──
   Future<bool> _saveToGallery(String filePath) async {
     try {
       final file = File(filePath);
@@ -421,10 +421,10 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       for (int attempt = 0; attempt <= maxRetries; attempt++) {
         try {
           final filename = '${_entryFilenameBase(filePath)}_${DateTime.now().millisecondsSinceEpoch}.mp4';
-          // ✅ PERBAIKAN: gunakan filePath: (bukan file:)
+          // ✅ PERBAIKAN: pakai file: dan fileName:
           final result = await SaverGallery.saveFile(
-            filePath: filePath,
-            name: filename,
+            file: filePath,
+            fileName: filename,
             androidRelativePath: 'Movies/TERMULScan',
           );
           if (result.isSuccess) {
