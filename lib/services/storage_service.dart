@@ -118,9 +118,9 @@ class StorageService {
   }
 
   // ─── Save to Gallery (PUBLIC) ──────────────────────────────
-  // ✅ PERBAIKAN: SaverGallery.saveFile() menggunakan file: dan fileName:
+  // ✅ PERBAIKAN: SaverGallery.saveFile() menggunakan filePath: dan name:
 
-  Future<bool> saveVideoToGallery(String filePath, {String? fileName}) async {
+  Future<bool> saveVideoToGallery(String filePath, {String? name}) async {
     try {
       final file = File(filePath);
       if (!await file.exists()) {
@@ -145,10 +145,10 @@ class StorageService {
         return false;
       }
 
-      // ✅ PERBAIKAN: file: dan fileName:
+      // ✅ PERBAIKAN: filePath: dan name:
       final saved = await SaverGallery.saveFile(
-        file: filePath,
-        fileName: fileName ?? 'watermarked_${DateTime.now().millisecondsSinceEpoch}.mp4',
+        filePath: filePath,
+        name: name ?? 'watermarked_${DateTime.now().millisecondsSinceEpoch}.mp4',
         androidRelativePath: 'Movies/TermulScan',
       );
 
@@ -165,7 +165,7 @@ class StorageService {
     }
   }
 
-  Future<bool> savePhotoToGallery(String filePath, {String? fileName}) async {
+  Future<bool> savePhotoToGallery(String filePath, {String? name}) async {
     try {
       final file = File(filePath);
       if (!await file.exists()) return false;
@@ -178,10 +178,10 @@ class StorageService {
       }
       if (!hasPermission) return false;
 
-      // ✅ PERBAIKAN: file: dan fileName:
+      // ✅ PERBAIKAN: filePath: dan name:
       final saved = await SaverGallery.saveFile(
-        file: filePath,
-        fileName: fileName ?? 'watermarked_${DateTime.now().millisecondsSinceEpoch}.jpg',
+        filePath: filePath,
+        name: name ?? 'watermarked_${DateTime.now().millisecondsSinceEpoch}.jpg',
         androidRelativePath: 'Pictures/TermulScan',
       );
 
