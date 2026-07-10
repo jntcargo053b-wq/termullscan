@@ -31,7 +31,6 @@
 import 'dart:collection';
 import 'dart:convert';
 
-
 import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
@@ -119,7 +118,6 @@ class PodAddressResolver {
   static bool _isPlusCode(String? s) {
     if (s == null) return false;
     final trimmed = s.trim();
-    // Plus code is typically 8-11 characters with '+'
     if (trimmed.length < 8 || trimmed.length > 15) return false;
     return _plusCodeRe.hasMatch(trimmed);
   }
@@ -128,16 +126,13 @@ class PodAddressResolver {
   /// Resolves centroid coordinates to a clean Indonesian address.
   /// Always returns non-empty string (DMS fallback if all fail).
   static Future<String> resolve(double lat, double lon) async {
-    // Validasi koordinat
     if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
       if (kDebugMode) debugPrint('PodAddressResolver: Invalid coordinates');
       return _toDMS(lat, lon);
     }
     
-    // Load persistent cache pertama kali
     await _loadPersistentCache();
     
-    // 1. Grid cache (paling cepat, 10m precision)
     final gridKey = _gridKey(lat, lon);
     final gridCached = _gridCache[gridKey];
     if (gridCached != null) {
@@ -145,27 +140,23 @@ class PodAddressResolver {
       return gridCached;
     }
     
-    // 2. Exact cache
     final exactKey = _cacheKey(lat, lon);
     final exactEntry = _exactCache[exactKey];
     if (exactEntry != null && !exactEntry.isExpired(ttl: _exactCacheTtl)) {
       _exactCache.remove(exactKey);
-      _exactCache[exactKey] = exactEntry; // LRU: move to end
+      _exactCache[exactKey] = exactEntry;
       if (kDebugMode) debugPrint('PodAddressResolver: exact cache hit → ${exactEntry.address}');
       return exactEntry.address;
     } else if (exactEntry != null) {
-      // Expired, remove from cache
       _exactCache.remove(exactKey);
     }
     
-    // 3. Nearby cache
     final nearby = _nearbyLookup(lat, lon);
     if (nearby != null) {
       if (kDebugMode) debugPrint('PodAddressResolver: nearby cache hit → $nearby');
       return nearby;
     }
     
-    // 4. Fetch from providers
     final address = await _fetchWithFallback(lat, lon);
     
     if (address.isNotEmpty && !address.contains('GPS:')) {
@@ -201,7 +192,6 @@ class PodAddressResolver {
     final latS = lat.toStringAsFixed(7);
     final lonS = lon.toStringAsFixed(7);
     
-    // Nominatim: coba zoom 18 → 16 → 14
     for (final zoom in [18, 16, 14, 12]) {
       try {
         final r = await _nominatim(latS, lonS, zoom: zoom);
@@ -214,7 +204,6 @@ class PodAddressResolver {
       }
     }
     
-    // Photon fallback
     try {
       final r = await _photon(latS, lonS);
       if (r.isNotEmpty) {
@@ -225,7 +214,6 @@ class PodAddressResolver {
       if (kDebugMode) debugPrint('PodAddressResolver: Photon error → $e');
     }
     
-    // Android Geocoder
     try {
       final r = await _androidGeocoder(lat, lon);
       if (r.isNotEmpty && !r.contains('Unnamed Road')) {
@@ -242,13 +230,11 @@ class PodAddressResolver {
   // ── Nominatim ─────────────────────────────────────────────
   static Future<String> _nominatim(String lat, String lon, {int zoom = 18}) async {
     return await _withClient((client) async {
-      // Rate limit
       final now = DateTime.now();
       final elapsed = now.difference(_lastNominatim);
       if (elapsed < _nominatimInterval) {
         final delay = _nominatimInterval - elapsed;
         if (delay > const Duration(seconds: 5)) {
-          // Something wrong with system clock, reset
           _lastNominatim = now;
           if (kDebugMode) debugPrint('PodAddressResolver: Nominatim rate limit reset (clock anomaly)');
         } else {
@@ -295,7 +281,6 @@ class PodAddressResolver {
   static String _parseNominatimAddress(Map<String, dynamic> data) {
     final addr = data['address'] as Map<String, dynamic>?;
     if (addr == null) {
-      // Fallback ke display_name
       final display = data['display_name'] as String?;
       if (display != null && display.isNotEmpty) {
         return _cleanDisplayName(display);
@@ -309,7 +294,6 @@ class PodAddressResolver {
       return s.isEmpty ? null : s;
     }
     
-    // Jalan (prioritas: road > residential > pedestrian > service)
     final road = _s(addr['road'])
         ?? _s(addr['residential'])
         ?? _s(addr['pedestrian'])
@@ -320,58 +304,47 @@ class PodAddressResolver {
         ?? _s(addr['cycleway']);
     final houseNum = _s(addr['house_number']);
     
-    // Sub-area (RT/RW level)
     final suburb = _s(addr['suburb'])
         ?? _s(addr['neighbourhood'])
         ?? _s(addr['quarter'])
         ?? _s(addr['allotments']);
     
-    // Kelurahan/desa
     final village = _s(addr['village'])
         ?? _s(addr['hamlet'])
         ?? _s(addr['isolated_dwelling'])
         ?? _s(addr['locality']);
     
-    // Kecamatan
     final subdistrict = _s(addr['subdistrict'])
         ?? _s(addr['city_district'])
         ?? _s(addr['district']);
     
-    // Kota/kabupaten
     final city = _s(addr['city'])
         ?? _s(addr['town'])
         ?? _s(addr['municipality'])
         ?? _s(addr['county']);
     
-    // Provinsi (opsional, hanya jika tidak ada kota)
     final state = city == null ? (_s(addr['state'])) : null;
     
     final parts = <String>[];
     
-    // Jalan + nomor
     if (road != null) {
       parts.add(houseNum != null ? '$road No.$houseNum' : road);
     }
     
-    // Tambah sub-area
     if (suburb != null && suburb != road) parts.add(suburb);
     
-    // Kelurahan/desa (jika beda dari suburb)
     if (village != null && village != suburb) parts.add(village);
     
-    // Kecamatan (deduplikasi)
     if (subdistrict != null &&
         subdistrict != suburb &&
         subdistrict != village) {
       parts.add(subdistrict);
     }
     
-    // Kota
     if (city != null) parts.add(city);
     if (state != null) parts.add(state);
     
     if (parts.isEmpty) {
-      // Gunakan display_name sebagai last resort
       final display = data['display_name'] as String?;
       if (display != null && display.isNotEmpty) {
         return _cleanDisplayName(display);
@@ -383,7 +356,6 @@ class PodAddressResolver {
   }
   
   static String _cleanDisplayName(String display) {
-    // Ambil max 5 bagian, hapus plus code, strip whitespace
     final parts = display
         .split(',')
         .map((p) => p.trim())
@@ -396,30 +368,11 @@ class PodAddressResolver {
   // ════════════════════════════════════════════════════════
   // DETAILED RESOLUTION — ResolvedLocation (primaryLabel + suggestions)
   // ════════════════════════════════════════════════════════
-  //
-  //   GPS Lock
-  //     ↓
-  //   Nominatim (zoom 18, namedetails=1)
-  //     ↓
-  //   name tersedia & bukan admin-area?
-  //     ├─ Ya  → primaryLabel = name
-  //     └─ Tidak → Overpass radius 30m → POI terdekat
-  //                 ├─ ada → primaryLabel = POI.name
-  //                 └─ tidak ada → primaryLabel = null
-  //     ↓
-  //   addressLine = hasil _fetchWithFallback (chain lama, sudah teruji)
-  //   suggestions = [POI overpass lainnya..., addressLine sbg 'address']
-  //
-  /// Resolves with full detail: primary POI label + address + suggestions.
-  /// Falls back to plain address (via [resolve]) if POI lookups fail —
-  /// never throws, never returns an empty addressLine.
   static Future<ResolvedLocation> resolveDetailed(double lat, double lon) async {
     if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
       return ResolvedLocation.dms(_toDMS(lat, lon));
     }
 
-    // Cache check (in-memory, session-only — POI data changes rarely
-    // but we don't want to persist it across sessions like address cache)
     final cacheKey = _gridKey(lat, lon);
     final cached = _resolvedCache[cacheKey];
     if (cached != null) {
@@ -427,10 +380,8 @@ class PodAddressResolver {
       return cached;
     }
 
-    // 1. Alamat jalan (reuse existing battle-tested chain)
     final addressLine = await resolve(lat, lon);
 
-    // 2. Coba dapatkan nama POI dari Nominatim namedetails
     final latS = lat.toStringAsFixed(7);
     final lonS = lon.toStringAsFixed(7);
     String? poiName;
@@ -440,7 +391,6 @@ class PodAddressResolver {
       if (kDebugMode) debugPrint('PodAddressResolver: nominatimPoiName error → $e');
     }
 
-    // 3. Jika Nominatim tidak punya nama POI yang relevan, coba Overpass
     final suggestions = <LocationSuggestion>[];
     if (poiName == null) {
       try {
@@ -456,7 +406,6 @@ class PodAddressResolver {
       suggestions.add(LocationSuggestion(label: poiName, source: 'poi'));
     }
 
-    // 4. Tambahkan addressLine sebagai suggestion 'address'
     if (addressLine.isNotEmpty && !addressLine.contains('GPS:')) {
       suggestions.add(LocationSuggestion(label: addressLine, source: 'address'));
     }
@@ -493,12 +442,8 @@ class PodAddressResolver {
   }
 
   // ── Nominatim: ambil nama POI (namedetails) di titik ini ────
-  // Mengembalikan null jika tidak ada nama, atau nama tersebut
-  // adalah area administratif (kelurahan/kecamatan/kota/dll) —
-  // karena itu sudah tercakup di addressLine.
   static Future<String?> _nominatimPoiName(String lat, String lon) async {
     return await _withClient((client) async {
-      // Rate limit (shared dengan _nominatim)
       final now = DateTime.now();
       final elapsed = now.difference(_lastNominatim);
       if (elapsed < _nominatimInterval) {
@@ -529,15 +474,10 @@ class PodAddressResolver {
 
         final data = jsonDecode(res.body) as Map<String, dynamic>;
 
-        // 'class' di Nominatim menandakan tipe entitas. Jika class
-        // adalah boundary/place administratif, 'name' adalah nama
-        // wilayah (kelurahan/kecamatan/kota) — sudah ada di
-        // addressLine, jadi bukan kandidat primaryLabel yang baru.
         final cls = data['class'] as String?;
         const adminClasses = {'boundary', 'place'};
         if (cls != null && adminClasses.contains(cls)) return null;
 
-        // Nama dari namedetails (lebih lengkap) atau top-level 'name'
         final namedetails = data['namedetails'] as Map<String, dynamic>?;
         String? name = (namedetails?['name'] as String?)?.trim();
         name ??= (data['name'] as String?)?.trim();
@@ -553,11 +493,9 @@ class PodAddressResolver {
   }
 
   // ── Overpass: cari POI bernama dalam radius 30m ──────────────
-  // Mengembalikan list LocationSuggestion sudah sort by distance.
   static Future<List<LocationSuggestion>> _overpassNearbyPois(
       double lat, double lon) async {
     return await _withClient((client) async {
-      // Rate limit
       final now = DateTime.now();
       final elapsed = now.difference(_lastOverpass);
       if (elapsed < _overpassInterval) {
@@ -603,8 +541,6 @@ class PodAddressResolver {
           double? dist;
           if (elLat != null && elLon != null) {
             dist = Geolocator.distanceBetween(lat, lon, elLat, elLon);
-            // Skip jika ternyata > radius (defensive — query sudah filter,
-            // tapi double-check untuk akurasi suggestions)
             if (dist > _overpassRadiusMeters + 5) continue;
           }
 
@@ -615,7 +551,6 @@ class PodAddressResolver {
           ));
         }
 
-        // Sort by distance (terdekat dulu); null distance taruh akhir
         results.sort((a, b) {
           if (a.distanceMeters == null && b.distanceMeters == null) return 0;
           if (a.distanceMeters == null) return 1;
@@ -633,7 +568,6 @@ class PodAddressResolver {
   // ── Photon ────────────────────────────────────────────────
   static Future<String> _photon(String lat, String lon) async {
     return await _withClient((client) async {
-      // Rate limit Photon
       final now = DateTime.now();
       final elapsed = now.difference(_lastPhoton);
       if (elapsed < _photonInterval) {
@@ -690,9 +624,10 @@ class PodAddressResolver {
   // ── Android Geocoder ──────────────────────────────────────
   static Future<String> _androidGeocoder(double lat, double lon) async {
     try {
+      // ✅ PERBAIKAN: Hapus localeIdentifier
       final placemarks = await placemarkFromCoordinates(
-        lat, lon,
-        localeIdentifier: 'id_ID',
+        lat,
+        lon,
       ).timeout(const Duration(seconds: 6));
       
       if (placemarks.isEmpty) return '';
@@ -763,7 +698,6 @@ class PodAddressResolver {
       final now = DateTime.now();
       
       for (final entry in rawMap.entries) {
-        // Format: "address|timestamp"
         final parts = entry.value.toString().split('|');
         if (parts.length >= 2) {
           final timestamp = DateTime.tryParse(parts[1]);
@@ -782,11 +716,9 @@ class PodAddressResolver {
   static Future<void> _persistCache() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      // Simpan max 20 entri terbaru dengan timestamp
       final entries = _exactCache.entries.toList();
       final now = DateTime.now();
       
-      // Filter fresh entries
       final freshEntries = entries.where((entry) {
         return now.difference(entry.value.timestamp) < _exactCacheTtl;
       }).toList();
@@ -839,7 +771,6 @@ class PodAddressResolver {
     _closed = false;
   }
   
-  /// Clear all caches (for testing or force refresh)
   static void clearCaches() {
     _exactCache.clear();
     _gridCache.clear();
@@ -849,7 +780,6 @@ class PodAddressResolver {
     if (kDebugMode) debugPrint('PodAddressResolver: all caches cleared');
   }
   
-  /// Get cache statistics
   static Map<String, int> getCacheStats() {
     return {
       'exactCache': _exactCache.length,
