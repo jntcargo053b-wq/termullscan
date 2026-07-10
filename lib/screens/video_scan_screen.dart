@@ -400,73 +400,57 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     }
   }
 
-  // ─── ✅ PERBAIKAN: _saveToGallery untuk saver_gallery 3.0.10 ──
-  Future<bool> _saveToGallery(String filePath) async {
-    try {
-      final file = File(filePath);
-      if (!await file.exists()) {
-        debugPrint('❌ File tidak ditemukan untuk ekspor: $filePath');
-        return false;
-      }
-
-      final fileSize = await file.length();
-      if (fileSize == 0) {
-        debugPrint('❌ File kosong: $filePath');
-        return false;
-      }
-
-      debugPrint('📤 Mengekspor video: $filePath (${fileSize ~/ 1024}KB)');
-
-      const maxRetries = 2;
-      for (int attempt = 0; attempt <= maxRetries; attempt++) {
-        try {
-          final filename = '${_entryFilenameBase(filePath)}_${DateTime.now().millisecondsSinceEpoch}.mp4';
-          // ✅ PERBAIKAN: filePath: dan fileName:
-          final result = await SaverGallery.saveFile(
-            filePath: filePath,
-            fileName: filename,
-            androidRelativePath: 'Movies/TERMULScan',
-          );
-          if (result.isSuccess) {
-            debugPrint('✅ Ekspor gallery berhasil: $filename');
-            return true;
-          }
-          debugPrint('⚠️ Percobaan ${attempt + 1} gagal, retry...');
-          if (attempt < maxRetries) {
-            await Future.delayed(const Duration(milliseconds: 500));
-            if (!await file.exists()) {
-              debugPrint('❌ File hilang saat retry: $filePath');
-              break;
-            }
-          }
-        } catch (e) {
-          debugPrint('⚠️ Error ekspor (attempt ${attempt + 1}): $e');
-          if (attempt == maxRetries) rethrow;
-          await Future.delayed(const Duration(milliseconds: 500));
-        }
-      }
-      return false;
-    } catch (e, stack) {
-      debugPrint('❌ Error _saveToGallery: $e\n$stack');
+// ─── ✅ PERBAIKAN: _saveToGallery dengan skipIfExists WAJIB
+Future<bool> _saveToGallery(String filePath) async {
+  try {
+    final file = File(filePath);
+    if (!await file.exists()) {
+      debugPrint('❌ File tidak ditemukan untuk ekspor: $filePath');
       return false;
     }
-  }
 
-  String _entryFilenameBase(String path) {
-    final base = path.split('/').last;
-    return base.split('.').first;
-  }
+    final fileSize = await file.length();
+    if (fileSize == 0) {
+      debugPrint('❌ File kosong: $filePath');
+      return false;
+    }
 
-  void _showError(String msg) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: AppTheme.error,
-        content: Text(msg),
-        duration: const Duration(seconds: 3),
-      ),
-    );
+    debugPrint('📤 Mengekspor video: $filePath (${fileSize ~/ 1024}KB)');
+
+    const maxRetries = 2;
+    for (int attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        final filename = '${_entryFilenameBase(filePath)}_${DateTime.now().millisecondsSinceEpoch}.mp4';
+        final result = await SaverGallery.saveFile(
+          filePath: filePath,
+          fileName: filename,
+          androidRelativePath: 'Movies/TERMULScan',
+          skipIfExists: false,  // ✅ WAJIB
+        );
+        if (result.isSuccess) {
+          debugPrint('✅ Ekspor gallery berhasil: $filename');
+          return true;
+        }
+        debugPrint('⚠️ Percobaan ${attempt + 1} gagal, retry...');
+        if (attempt < maxRetries) {
+          await Future.delayed(const Duration(milliseconds: 500));
+          if (!await file.exists()) {
+            debugPrint('❌ File hilang saat retry: $filePath');
+            break;
+          }
+        }
+      } catch (e) {
+        debugPrint('⚠️ Error ekspor (attempt ${attempt + 1}): $e');
+        if (attempt == maxRetries) rethrow;
+        await Future.delayed(const Duration(milliseconds: 500));
+      }
+    }
+    return false;
+  } catch (e, stack) {
+    debugPrint('❌ Error _saveToGallery: $e\n$stack');
+    return false;
   }
+}
 
   // ─── Build ──────────────────────────────────────────────────
   @override
