@@ -15,6 +15,7 @@ import '../services/storage_service.dart';
 import '../services/permission_service.dart';
 import '../services/task_queue.dart';
 import '../services/background/video_processing_service.dart';
+import '../services/pod_location_service.dart';
 import '../watermark/watermark_settings.dart';
 import '../watermark/watermark_style.dart';
 import '../services/watermark/watermark_service.dart'; // ✅ PERBAIKAN: pakai service overlay-PNG (bukan drawtext lama)
@@ -67,11 +68,14 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         _isProcessing = _pendingTasks > 0 || _runningTasks > 0;
       });
     });
+    // Idempotent: no-op jika sudah locked/acquiring dari BarcodeScanScreen.
+    unawaited(PodLocationService.instance.acquireForCapture());
   }
 
   @override
   void dispose() {
     _taskQueue.dispose();
+    PodLocationService.instance.releaseAfterCapture();
     super.dispose();
   }
 
@@ -256,6 +260,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       // backslash-nya di-escape ulang → filter FFmpeg jadi korup → selalu
       // gagal parse → video jatuh ke jalur "simpan tanpa watermark").
       // ============================================================
+      final wmLocState = PodLocationService.instance.currentState;
       final wmResult = await VideoWatermarkService.addWatermark(
         inputPath: videoFile.path,
         outputPath: wmOutputPath,
@@ -266,6 +271,9 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
           type: ScanType.video,
           value: widget.barcode ?? 'video_${DateTime.now().millisecondsSinceEpoch}',
           timestamp: DateTime.now(),
+          latitude: wmLocState.lat,
+          longitude: wmLocState.lon,
+          locationName: wmLocState.address.isNotEmpty ? wmLocState.address : null,
         ),
         onProgress: (p) {
           _safeSetState(() => _progress = p);
@@ -345,11 +353,15 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       // 6. Simpan entry database
       if (finalPath == null) throw Exception('Gagal menyimpan video');
 
+      final finalLocState = PodLocationService.instance.currentState;
       final entry = ScanEntry(
         id: _storage.generateId(),
         type: ScanType.video,
         value: widget.barcode ?? 'video_${DateTime.now().millisecondsSinceEpoch}',
         timestamp: DateTime.now(),
+        latitude: finalLocState.lat,
+        longitude: finalLocState.lon,
+        locationName: finalLocState.address.isNotEmpty ? finalLocState.address : null,
         videoPath: finalPath,
         videoDuration: durationSeconds,
         videoThumbnail: thumbnailPath,

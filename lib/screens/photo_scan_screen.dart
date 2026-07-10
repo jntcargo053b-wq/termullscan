@@ -13,6 +13,7 @@ import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
 import '../services/permission_service.dart';
 import '../services/task_queue.dart';
+import '../services/pod_location_service.dart';
 import '../config/app_config.dart';
 import '../theme/app_theme.dart';
 import '../watermark/watermark_renderer.dart';
@@ -339,6 +340,10 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       });
     });
     _initPendingDir();
+    // Idempotent: jika sudah locked/acquiring dari BarcodeScanScreen,
+    // panggilan ini langsung no-op. Jika layar ini dibuka langsung
+    // (tanpa scan barcode dulu), GPS mulai dikunci dari sini.
+    unawaited(PodLocationService.instance.acquireForCapture());
   }
 
   Future<void> _initPendingDir() async {
@@ -350,6 +355,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   @override
   void dispose() {
     _taskQueue.dispose();
+    PodLocationService.instance.releaseAfterCapture();
     super.dispose();
   }
 
@@ -454,15 +460,16 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     final outputPath =
         '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.png';
 
+    final locState = PodLocationService.instance.currentState;
     final tempEntry = ScanEntry(
       id: _storage.generateId(),
       type: ScanType.photo,
       value: fileName,
       barcodeFormat: null,
       timestamp: timestamp,
-      latitude: null,
-      longitude: null,
-      locationName: null,
+      latitude: locState.lat,
+      longitude: locState.lon,
+      locationName: locState.address.isNotEmpty ? locState.address : null,
     );
 
     final result = await WatermarkRenderer.render(

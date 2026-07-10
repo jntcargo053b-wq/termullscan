@@ -33,6 +33,12 @@ dependencies:
   video_player: ^2.8.5
   video_thumbnail: ^0.5.6
 
+  # ─── GPS / LOKASI ───────────────────────────────────────────
+  geolocator: ^13.0.1
+  geocoding: ^3.0.0
+  http: ^1.2.2
+  rxdart: ^0.28.0
+
   # ─── DATABASE ──────────────────────────────────────────────
   sqflite: ^2.3.0
   path: ^1.9.0

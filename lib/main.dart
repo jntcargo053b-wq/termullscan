@@ -11,6 +11,7 @@ import 'watermark/watermark_settings.dart';
 import 'services/storage_service.dart';
 import 'services/watermark/watermark_service.dart';
 import 'services/background/video_processing_service.dart';
+import 'services/pod_location_service.dart';
 import 'models/scan_entry.dart';
 
 void main() async {
@@ -18,6 +19,13 @@ void main() async {
 
   // Inisialisasi foreground service
   VideoProcessingService.init();
+
+  // ─── 0. Inisialisasi layanan lokasi (idle, load cache lokal) ──
+  // GPS TIDAK langsung aktif di sini — hanya memuat koordinat +
+  // alamat sesi terakhir dari SharedPreferences agar watermark GPS
+  // punya fallback instan sebelum acquireForCapture() dipanggil di
+  // layar kamera/scan.
+  unawaited(PodLocationService.instance.init());
 
   // ─── 1. Muat watermark settings ──────────────────────────
   final watermarkSettings = WatermarkSettings();

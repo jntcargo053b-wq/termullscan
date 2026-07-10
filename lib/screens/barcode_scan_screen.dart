@@ -10,6 +10,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
 import '../services/permission_service.dart';
+import '../services/pod_location_service.dart';
 import '../theme/app_theme.dart';
 import '../watermark/watermark_settings.dart';
 import 'watermark_settings_sheet.dart';
@@ -64,6 +65,10 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _requestPermissions();
+    // Mulai kunci GPS di latar belakang begitu layar scan dibuka —
+    // operator biasanya scan barcode dulu baru foto/video, jadi GPS
+    // biasanya sudah lock/beralamat saat kamera dibuka setelah ini.
+    unawaited(PodLocationService.instance.acquireForCapture());
   }
 
   @override
@@ -73,6 +78,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       _scannerController.stop();
     } catch (_) {}
     _scannerController.dispose();
+    PodLocationService.instance.releaseAfterCapture();
     super.dispose();
   }
 
@@ -208,17 +214,19 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     try {
       HapticFeedback.mediumImpact();
 
+      final locState = PodLocationService.instance.currentState;
       final entry = ScanEntry(
         id: _storage.generateId(),
         type: ScanType.barcode,
         value: code,
         barcodeFormat: format,
         timestamp: DateTime.now(),
-        latitude: null,
-        longitude: null,
-        locationName: null,
+        latitude: locState.lat,
+        longitude: locState.lon,
+        locationName: locState.address.isNotEmpty ? locState.address : null,
       );
       await _storage.add(entry);
+      unawaited(_attachLocationUpdate(entry.id));
 
       if (!mounted) return;
       setState(() {
@@ -270,17 +278,19 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     try {
       HapticFeedback.mediumImpact();
 
+      final locState = PodLocationService.instance.currentState;
       final entry = ScanEntry(
         id: _storage.generateId(),
         type: ScanType.barcode,
         value: code,
         barcodeFormat: 'MANUAL',
         timestamp: DateTime.now(),
-        latitude: null,
-        longitude: null,
-        locationName: null,
+        latitude: locState.lat,
+        longitude: locState.lon,
+        locationName: locState.address.isNotEmpty ? locState.address : null,
       );
       await _storage.add(entry);
+      unawaited(_attachLocationUpdate(entry.id));
 
       if (!mounted) return;
       setState(() {
@@ -294,6 +304,32 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     } catch (e) {
       debugPrint('❌ Error _processManualCode: $e');
       if (mounted) await _resumeScanning();
+    }
+  }
+
+  // ─── GPS: update entry begitu alamat siap ──────────────────
+  // Entry barcode disimpan langsung dengan lat/lon terbaik yang ada saat
+  // itu (bisa saja hanya dari cache, alamat masih kosong) supaya alur
+  // scan tetap terasa instan. Begitu PodLocationService selesai geocode
+  // (atau timeout), entry di-update dengan lat/lon/alamat final.
+  // Sengaja tidak bergantung pada `mounted`/context — ini murni tulis ke
+  // database, aman dipanggil walau layar sudah berpindah/dibuang.
+  Future<void> _attachLocationUpdate(String entryId) async {
+    final locState = await PodLocationService.instance.awaitAddressReady(
+      timeout: const Duration(seconds: 10),
+    );
+    if (!locState.hasPosition) return;
+    try {
+      final stored = await _storage.getEntry(entryId);
+      if (stored == null) return; // entry sudah dihapus (mis. reset scan)
+      final updated = stored.copyWith(
+        latitude: locState.lat,
+        longitude: locState.lon,
+        locationName: locState.address.isNotEmpty ? locState.address : null,
+      );
+      await _storage.update(updated);
+    } catch (e) {
+      debugPrint('❌ Error _attachLocationUpdate: $e');
     }
   }
 
