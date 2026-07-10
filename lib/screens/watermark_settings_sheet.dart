@@ -409,6 +409,44 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
               ),
               const Gap(16),
 
+              // ─── GPS Watermark Toggle ──────────────────────
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2A2A2A),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey.withOpacity(0.3)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.gps_fixed, size: 18, color: Colors.white70),
+                    const Gap(10),
+                    const Expanded(
+                      child: Text(
+                        'Lokasi GPS pada Watermark',
+                        style: TextStyle(color: Colors.white, fontSize: 13),
+                      ),
+                    ),
+                    Switch(
+                      value: _settings.gpsWatermarkEnabled,
+                      onChanged: (val) async {
+                        await _settings.setGpsWatermarkEnabled(val);
+                        setState(() {});
+                      },
+                      activeColor: Colors.amber,
+                    ),
+                  ],
+                ),
+              ),
+              const Gap(4),
+              Text(
+                _settings.gpsWatermarkEnabled
+                    ? 'GPS aktif hanya saat scan/kamera dibuka, mati otomatis setelahnya.'
+                    : 'GPS nonaktif — foto/video tidak akan berisi lokasi.',
+                style: const TextStyle(color: Colors.white38, fontSize: 11),
+              ),
+              const Gap(16),
+
               // ─── Logo ─────────────────────────────────────
               Row(
                 children: [

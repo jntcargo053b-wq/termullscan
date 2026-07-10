@@ -68,7 +68,10 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     // Mulai kunci GPS di latar belakang begitu layar scan dibuka —
     // operator biasanya scan barcode dulu baru foto/video, jadi GPS
     // biasanya sudah lock/beralamat saat kamera dibuka setelah ini.
-    unawaited(PodLocationService.instance.acquireForCapture());
+    // Dihormati toggle "Lokasi GPS pada Watermark" di pengaturan.
+    if (_wmSettings.gpsWatermarkEnabled) {
+      unawaited(PodLocationService.instance.acquireForCapture());
+    }
   }
 
   @override
@@ -78,7 +81,9 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       _scannerController.stop();
     } catch (_) {}
     _scannerController.dispose();
-    PodLocationService.instance.releaseAfterCapture();
+    if (_wmSettings.gpsWatermarkEnabled) {
+      PodLocationService.instance.releaseAfterCapture();
+    }
     super.dispose();
   }
 
@@ -214,19 +219,20 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     try {
       HapticFeedback.mediumImpact();
 
-      final locState = PodLocationService.instance.currentState;
+      final gpsOn = _wmSettings.gpsWatermarkEnabled;
+      final locState = gpsOn ? PodLocationService.instance.currentState : null;
       final entry = ScanEntry(
         id: _storage.generateId(),
         type: ScanType.barcode,
         value: code,
         barcodeFormat: format,
         timestamp: DateTime.now(),
-        latitude: locState.lat,
-        longitude: locState.lon,
-        locationName: locState.address.isNotEmpty ? locState.address : null,
+        latitude: locState?.lat,
+        longitude: locState?.lon,
+        locationName: (locState != null && locState.address.isNotEmpty) ? locState.address : null,
       );
       await _storage.add(entry);
-      unawaited(_attachLocationUpdate(entry.id));
+      if (gpsOn) unawaited(_attachLocationUpdate(entry.id));
 
       if (!mounted) return;
       setState(() {
@@ -278,19 +284,20 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     try {
       HapticFeedback.mediumImpact();
 
-      final locState = PodLocationService.instance.currentState;
+      final gpsOn = _wmSettings.gpsWatermarkEnabled;
+      final locState = gpsOn ? PodLocationService.instance.currentState : null;
       final entry = ScanEntry(
         id: _storage.generateId(),
         type: ScanType.barcode,
         value: code,
         barcodeFormat: 'MANUAL',
         timestamp: DateTime.now(),
-        latitude: locState.lat,
-        longitude: locState.lon,
-        locationName: locState.address.isNotEmpty ? locState.address : null,
+        latitude: locState?.lat,
+        longitude: locState?.lon,
+        locationName: (locState != null && locState.address.isNotEmpty) ? locState.address : null,
       );
       await _storage.add(entry);
-      unawaited(_attachLocationUpdate(entry.id));
+      if (gpsOn) unawaited(_attachLocationUpdate(entry.id));
 
       if (!mounted) return;
       setState(() {

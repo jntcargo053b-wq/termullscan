@@ -18,7 +18,7 @@ import '../services/background/video_processing_service.dart';
 import '../services/pod_location_service.dart';
 import '../watermark/watermark_settings.dart';
 import '../watermark/watermark_style.dart';
-import '../services/watermark/watermark_service.dart';
+import '../services/watermark/watermark_service.dart'; // ✅ PERBAIKAN: pakai service overlay-PNG (bukan drawtext lama)
 import '../theme/app_theme.dart';
 import '../utils/file_helper.dart';
 import 'preview_screen.dart';
@@ -35,6 +35,7 @@ class VideoScanScreen extends StatefulWidget {
 class _VideoScanScreenState extends State<VideoScanScreen> {
   final ImagePicker _picker = ImagePicker();
   final StorageService _storage = StorageService();
+  final WatermarkSettings _wmSettings = WatermarkSettings();
 
   late final TaskQueue _taskQueue = TaskQueue(
     maxWorkers: 1,
@@ -68,13 +69,19 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         _isProcessing = _pendingTasks > 0 || _runningTasks > 0;
       });
     });
-    unawaited(PodLocationService.instance.acquireForCapture());
+    // Idempotent: no-op jika sudah locked/acquiring dari BarcodeScanScreen.
+    // Dihormati toggle "Lokasi GPS pada Watermark" di pengaturan.
+    if (_wmSettings.gpsWatermarkEnabled) {
+      unawaited(PodLocationService.instance.acquireForCapture());
+    }
   }
 
   @override
   void dispose() {
     _taskQueue.dispose();
-    PodLocationService.instance.releaseAfterCapture();
+    if (_wmSettings.gpsWatermarkEnabled) {
+      PodLocationService.instance.releaseAfterCapture();
+    }
     super.dispose();
   }
 
@@ -253,9 +260,15 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       });
 
       // ============================================================
-      // ✅ PERBAIKAN: Gunakan VideoWatermarkService
+      // ✅ PERBAIKAN: Gunakan VideoWatermarkService (overlay PNG + fallback
+      // hw→sw encoder) — BUKAN VideoWatermarkRenderer lama yang memakai
+      // drawtext dengan urutan escaping salah (colon di-escape dulu baru
+      // backslash-nya di-escape ulang → filter FFmpeg jadi korup → selalu
+      // gagal parse → video jatuh ke jalur "simpan tanpa watermark").
       // ============================================================
-      final wmLocState = PodLocationService.instance.currentState;
+      final wmLocState = _wmSettings.gpsWatermarkEnabled
+          ? PodLocationService.instance.currentState
+          : null;
       final wmResult = await VideoWatermarkService.addWatermark(
         inputPath: videoFile.path,
         outputPath: wmOutputPath,
@@ -266,9 +279,9 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
           type: ScanType.video,
           value: widget.barcode ?? 'video_${DateTime.now().millisecondsSinceEpoch}',
           timestamp: DateTime.now(),
-          latitude: wmLocState.lat,
-          longitude: wmLocState.lon,
-          locationName: wmLocState.address.isNotEmpty ? wmLocState.address : null,
+          latitude: wmLocState?.lat,
+          longitude: wmLocState?.lon,
+          locationName: (wmLocState != null && wmLocState.address.isNotEmpty) ? wmLocState.address : null,
         ),
         onProgress: (p) {
           _safeSetState(() => _progress = p);
@@ -348,15 +361,17 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       // 6. Simpan entry database
       if (finalPath == null) throw Exception('Gagal menyimpan video');
 
-      final finalLocState = PodLocationService.instance.currentState;
+      final finalLocState = _wmSettings.gpsWatermarkEnabled
+          ? PodLocationService.instance.currentState
+          : null;
       final entry = ScanEntry(
         id: _storage.generateId(),
         type: ScanType.video,
         value: widget.barcode ?? 'video_${DateTime.now().millisecondsSinceEpoch}',
         timestamp: DateTime.now(),
-        latitude: finalLocState.lat,
-        longitude: finalLocState.lon,
-        locationName: finalLocState.address.isNotEmpty ? finalLocState.address : null,
+        latitude: finalLocState?.lat,
+        longitude: finalLocState?.lon,
+        locationName: (finalLocState != null && finalLocState.address.isNotEmpty) ? finalLocState.address : null,
         videoPath: finalPath,
         videoDuration: durationSeconds,
         videoThumbnail: thumbnailPath,
@@ -400,57 +415,73 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     }
   }
 
-// ─── ✅ PERBAIKAN: _saveToGallery dengan skipIfExists WAJIB
-Future<bool> _saveToGallery(String filePath) async {
-  try {
-    final file = File(filePath);
-    if (!await file.exists()) {
-      debugPrint('❌ File tidak ditemukan untuk ekspor: $filePath');
-      return false;
-    }
-
-    final fileSize = await file.length();
-    if (fileSize == 0) {
-      debugPrint('❌ File kosong: $filePath');
-      return false;
-    }
-
-    debugPrint('📤 Mengekspor video: $filePath (${fileSize ~/ 1024}KB)');
-
-    const maxRetries = 2;
-    for (int attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        final filename = '${_entryFilenameBase(filePath)}_${DateTime.now().millisecondsSinceEpoch}.mp4';
-        final result = await SaverGallery.saveFile(
-          filePath: filePath,
-          fileName: filename,
-          androidRelativePath: 'Movies/TERMULScan',
-          skipIfExists: false,  // ✅ WAJIB
-        );
-        if (result.isSuccess) {
-          debugPrint('✅ Ekspor gallery berhasil: $filename');
-          return true;
-        }
-        debugPrint('⚠️ Percobaan ${attempt + 1} gagal, retry...');
-        if (attempt < maxRetries) {
-          await Future.delayed(const Duration(milliseconds: 500));
-          if (!await file.exists()) {
-            debugPrint('❌ File hilang saat retry: $filePath');
-            break;
-          }
-        }
-      } catch (e) {
-        debugPrint('⚠️ Error ekspor (attempt ${attempt + 1}): $e');
-        if (attempt == maxRetries) rethrow;
-        await Future.delayed(const Duration(milliseconds: 500));
+  Future<bool> _saveToGallery(String filePath) async {
+    try {
+      final file = File(filePath);
+      if (!await file.exists()) {
+        debugPrint('❌ File tidak ditemukan untuk ekspor: $filePath');
+        return false;
       }
+
+      final fileSize = await file.length();
+      if (fileSize == 0) {
+        debugPrint('❌ File kosong: $filePath');
+        return false;
+      }
+
+      debugPrint('📤 Mengekspor video: $filePath (${fileSize ~/ 1024}KB)');
+
+      const maxRetries = 2;
+      for (int attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          final filename = '${_entryFilenameBase(filePath)}_${DateTime.now().millisecondsSinceEpoch}.mp4';
+          final result = await SaverGallery.saveFile(
+            file: filePath,
+            name: filename,
+            androidRelativePath: 'Movies/TERMULScan',
+            androidExistNotSave: false,
+            skipIfExists: false,
+          );
+          if (result.isSuccess) {
+            debugPrint('✅ Ekspor gallery berhasil: $filename');
+            return true;
+          }
+          debugPrint('⚠️ Percobaan ${attempt + 1} gagal, retry...');
+          if (attempt < maxRetries) {
+            await Future.delayed(const Duration(milliseconds: 500));
+            if (!await file.exists()) {
+              debugPrint('❌ File hilang saat retry: $filePath');
+              break;
+            }
+          }
+        } catch (e) {
+          debugPrint('⚠️ Error ekspor (attempt ${attempt + 1}): $e');
+          if (attempt == maxRetries) rethrow;
+          await Future.delayed(const Duration(milliseconds: 500));
+        }
+      }
+      return false;
+    } catch (e, stack) {
+      debugPrint('❌ Error _saveToGallery: $e\n$stack');
+      return false;
     }
-    return false;
-  } catch (e, stack) {
-    debugPrint('❌ Error _saveToGallery: $e\n$stack');
-    return false;
   }
-}
+
+  String _entryFilenameBase(String path) {
+    final base = path.split('/').last;
+    return base.split('.').first;
+  }
+
+  void _showError(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: AppTheme.error,
+        content: Text(msg),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
 
   // ─── Build ──────────────────────────────────────────────────
   @override

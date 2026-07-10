@@ -34,6 +34,9 @@ class WatermarkSettings extends ChangeNotifier {
   // ─── DELETE LOCAL COPY ────────────────────────────────
   static const String _keyDeleteLocalVideo = 'watermark_delete_local_video';
 
+  // ─── GPS WATERMARK TOGGLE ─────────────────────────────
+  static const String _keyGpsEnabled = 'watermark_gps_enabled';
+
   // ========== PROPERTIES ==========
   String operatorName = '';
   String companyName = '';
@@ -52,6 +55,12 @@ class WatermarkSettings extends ChangeNotifier {
 
   // ─── DELETE LOCAL COPY AFTER GALLERY EXPORT ──────────
   bool deleteLocalVideoAfterGalleryExport = true;
+
+  // ─── GPS WATERMARK TOGGLE ─────────────────────────────
+  // Kalau false: PodLocationService tidak pernah dipanggil dari layar
+  // scan/kamera (tidak ada GPS acquire sama sekali), dan watermark GPS
+  // Timestamp/style lain jatuh ke tampilan tanpa lokasi.
+  bool gpsWatermarkEnabled = true;
 
   bool _loaded = false;
 
@@ -85,6 +94,9 @@ class WatermarkSettings extends ChangeNotifier {
       // ─── DELETE LOCAL COPY ────────────────────────────
       deleteLocalVideoAfterGalleryExport = prefs.getBool(_keyDeleteLocalVideo) ?? true;
 
+      // ─── GPS WATERMARK TOGGLE ─────────────────────────
+      gpsWatermarkEnabled = prefs.getBool(_keyGpsEnabled) ?? true;
+
       _loaded = true;
       debugPrint('✅ Watermark settings loaded');
     } catch (e) {
@@ -117,6 +129,9 @@ class WatermarkSettings extends ChangeNotifier {
 
       // ─── DELETE LOCAL COPY ────────────────────────────
       await prefs.setBool(_keyDeleteLocalVideo, deleteLocalVideoAfterGalleryExport);
+
+      // ─── GPS WATERMARK TOGGLE ─────────────────────────
+      await prefs.setBool(_keyGpsEnabled, gpsWatermarkEnabled);
 
       debugPrint('✅ Watermark settings saved');
     } catch (e) {
@@ -206,6 +221,13 @@ class WatermarkSettings extends ChangeNotifier {
   // ─── DELETE LOCAL COPY SETTER ────────────────────────
   Future<void> setDeleteLocalVideoAfterGalleryExport(bool value) async {
     deleteLocalVideoAfterGalleryExport = value;
+    notifyListeners();
+    await save();
+  }
+
+  // ─── GPS WATERMARK TOGGLE SETTER ─────────────────────
+  Future<void> setGpsWatermarkEnabled(bool value) async {
+    gpsWatermarkEnabled = value;
     notifyListeners();
     await save();
   }
