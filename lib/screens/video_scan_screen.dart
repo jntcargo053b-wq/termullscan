@@ -421,10 +421,10 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       for (int attempt = 0; attempt <= maxRetries; attempt++) {
         try {
           final filename = '${_entryFilenameBase(filePath)}_${DateTime.now().millisecondsSinceEpoch}.mp4';
-          // ✅ PERBAIKAN: filePath: dan name:
+          // ✅ PERBAIKAN: filePath: dan fileName:
           final result = await SaverGallery.saveFile(
             filePath: filePath,
-            name: filename,
+            fileName: filename,
             androidRelativePath: 'Movies/TERMULScan',
           );
           if (result.isSuccess) {
