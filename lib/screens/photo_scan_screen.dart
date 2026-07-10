@@ -500,10 +500,10 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       for (int attempt = 0; attempt <= maxRetries; attempt++) {
         try {
           final filename = file.path.split('/').last;
-          // ✅ PERBAIKAN: pakai filePath: dan name:
+          // ✅ PERBAIKAN: filePath: dan fileName:
           final result = await SaverGallery.saveFile(
             filePath: filePath,
-            name: filename,
+            fileName: filename,
             androidRelativePath: 'Pictures/TERMULScan',
           );
           if (result.isSuccess) {
