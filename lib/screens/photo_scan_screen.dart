@@ -309,7 +309,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   final StorageService _storage = StorageService();
   final WatermarkSettings _wmSettings = WatermarkSettings();
 
-  // ─── TaskQueue ──────────────────────────────────────────────
   final TaskQueue _taskQueue = TaskQueue(maxWorkers: 2);
   int _pendingTasks = 0;
   int _runningTasks = 0;
@@ -323,7 +322,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   final List<String> _photoPaths = [];
   String _statusText = '';
 
-  // ─── Pending directory ─────────────────────────────────────
   late Directory _pendingDir;
 
   static const int _maxCachedPaths = 100;
@@ -355,8 +353,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     PodLocationService.instance.releaseAfterCapture();
     super.dispose();
   }
-
-  // ─── Permission ─────────────────────────────────────────────
 
   Future<void> _requestPermissions() async {
     final cameraStatus = await Permission.camera.status;
@@ -412,8 +408,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     return granted;
   }
 
-  // ─── Settings ───────────────────────────────────────────────
-
   void _openWatermarkSettings() {
     showModalBottomSheet(
       context: context,
@@ -426,16 +420,12 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     );
   }
 
-  // ─── File naming ────────────────────────────────────────────
-
   String _resolveFileName(int photoIndex) {
     if (widget.barcode == null) return 'photo_$photoIndex';
     return photoIndex == 1
         ? widget.barcode!
         : '${widget.barcode}${photoIndex.toString().padLeft(3, '0')}';
   }
-
-  // ─── Pending file helper ─────────────────────────────────────
 
   Future<String> _saveToPending(XFile xfile) async {
     final file = File(xfile.path);
@@ -449,8 +439,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     debugPrint('📁 File disimpan ke pending: $destPath');
     return destPath;
   }
-
-  // ─── Core processing ────────────────────────────────────────
 
   Future<String> _applyWatermark(String imagePath, DateTime timestamp, int photoIndex) async {
     final fileName = _resolveFileName(photoIndex);
@@ -512,10 +500,10 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       for (int attempt = 0; attempt <= maxRetries; attempt++) {
         try {
           final filename = file.path.split('/').last;
-          // ✅ PERBAIKAN: pakai file: dan fileName:
+          // ✅ PERBAIKAN: pakai filePath: dan name:
           final result = await SaverGallery.saveFile(
-            file: filePath,
-            fileName: filename,
+            filePath: filePath,
+            name: filename,
             androidRelativePath: 'Pictures/TERMULScan',
           );
           if (result.isSuccess) {
@@ -543,8 +531,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     }
   }
 
-  // ─── Preview helper ─────────────────────────────────────────
-
   Future<String?> _showPreview(XFile file, MediaType type) async {
     return Navigator.push<String>(
       context,
@@ -558,8 +544,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       ),
     );
   }
-
-  // ─── Take photo ─────────────────────────────────────────────
 
   Future<void> _takePhoto() async {
     if (_isSaving || _isCapturing || _processingRequest) return;
@@ -707,8 +691,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     }
   }
 
-  // ─── Core processing logic ──────────────────────────────────
-
   Future<String> _processPhoto(String imagePath, int photoIndex) async {
     String? watermarkedPath;
     String compressedPath = imagePath;
@@ -780,7 +762,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         }
       }
 
-      // ─── 7. Simpan ke gallery ──────────────────────────────
       final galleryOk = await _saveToGallery(savedPath);
       if (!galleryOk) {
         debugPrint('⚠️ Gagal ekspor ke gallery, file tetap tersimpan di internal');
@@ -797,7 +778,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       }
 
       return savedPath;
-
     } catch (e, stack) {
       debugPrint('❌ Error processing photo #$photoIndex ($imagePath): $e\n$stack');
       if (watermarkedPath != null && watermarkedPath != compressedPath) {
@@ -813,8 +793,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       }
     }
   }
-
-  // ─── Batch finish ───────────────────────────────────────────
 
   Future<void> _finishBatch() async {
     if (widget.entryId != null && _photoPaths.isNotEmpty) {
@@ -876,8 +854,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     if (mounted) Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
   }
 
-  // ─── Feedback ──────────────────────────────────────────────
-
   void _showSuccess() {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -905,8 +881,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       ),
     );
   }
-
-  // ─── Build ──────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
