@@ -5,9 +5,14 @@
     <!-- Izin Kamera -->
     <uses-permission android:name="android.permission.CAMERA" />
 
-    <!-- Izin Lokasi (opsional, bisa dihapus) -->
-    <!-- <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" /> -->
-    <!-- <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" /> -->
+    <!-- Izin Internet (dibutuhkan PodAddressResolver: Nominatim/Photon/Overpass) -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Izin Lokasi (dipakai PodLocationService untuk watermark GPS) -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Deklarasi fitur hardware GPS (opsional bagi HP tanpa GPS, mis. tablet WiFi) -->
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
 
     <!-- Android 13+ – Media -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
