@@ -58,6 +58,7 @@ class PodLocationState {
   final bool isFallbackLock;
   final PodGpsMode mode;
   final ResolvedLocation? resolvedLocation;
+  final bool mockDetected;
 
   const PodLocationState({
     this.lat,
@@ -73,6 +74,7 @@ class PodLocationState {
     this.isFallbackLock = false,
     this.mode = PodGpsMode.idle,
     this.resolvedLocation,
+    this.mockDetected = false,
   });
 
   PodLocationState copyWith({
@@ -89,6 +91,7 @@ class PodLocationState {
     bool? isFallbackLock,
     PodGpsMode? mode,
     ResolvedLocation? resolvedLocation,
+    bool? mockDetected,
   }) => PodLocationState(
     lat:            lat            ?? this.lat,
     lon:            lon            ?? this.lon,
@@ -103,10 +106,13 @@ class PodLocationState {
     isFallbackLock: isFallbackLock ?? this.isFallbackLock,
     mode:           mode           ?? this.mode,
     resolvedLocation: resolvedLocation ?? this.resolvedLocation,
+    mockDetected:   mockDetected   ?? this.mockDetected,
   );
 
   bool get hasPosition => lat != null && lon != null;
-  bool get canCapture  => confidence.canCapture;
+  // canCapture WAJIB false selama mock GPS terdeteksi, meskipun
+  // confidence masih menyimpan nilai "good/excellent" dari sebelumnya.
+  bool get canCapture  => confidence.canCapture && !mockDetected;
   bool get isStale     => mode == PodGpsMode.stale;
 }
 
@@ -253,12 +259,15 @@ class PodLocationService {
       confidence:   PodConfidence.searching,
       lockProgress: 0.0,
       mode:         PodGpsMode.acquiring,
+      mockDetected: false,
     ));
 
     // Inject OS cached position → instant preview
     try {
       final osLast = await Geolocator.getLastKnownPosition();
-      if (osLast != null && !osLast.isMocked) {
+      if (osLast != null && osLast.isMocked) {
+        if (kDebugMode) debugPrint('PodLocationService: lastKnownPosition adalah mock, abaikan');
+      } else if (osLast != null) {
         _gpsEngine.processSample(osLast);
         _emit(currentState.copyWith(
           lat:            osLast.latitude,
@@ -333,10 +342,12 @@ class PodLocationService {
     if (raw.isMocked) {
       _stopStream();
       _emit(currentState.copyWith(
-        confidence: PodConfidence.poor,
-        address:    'GPS Mock terdeteksi',
-        mode:       PodGpsMode.idle,
+        confidence:   PodConfidence.poor,
+        address:      '⚠️ GPS Mock terdeteksi — nonaktifkan aplikasi lokasi palsu',
+        mode:         PodGpsMode.idle,
+        mockDetected: true,
       ));
+      if (kDebugMode) debugPrint('PodLocationService: mock GPS terdeteksi, blokir capture');
       return;
     }
 

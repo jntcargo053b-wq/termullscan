@@ -3,13 +3,19 @@
 // POD GPS ENGINE — Simple & Fast
 // ============================================================
 // Spec:
-//   accuracy threshold : 20m
-//   hard timeout       : 10 detik
-//   target samples     : 3 (fast lock), max 8 untuk refine
-//   fast path          : 1 sample ≤5m → excellent langsung
+//   accuracy threshold (terima sample) : 25m
+//   capture threshold (status Good)    : 15m  ← diperketat dari 25m
+//   excellent threshold                : 10m  ← diperketat dari 12m
+//   excellent max stdDev (cluster)     : 8m   ← BARU: cegah "akurasi bagus
+//                                                tapi titik lompat-lompat"
+//   hard timeout       : 12 detik
+//   target samples     : 3 (fast lock), max 10 untuk refine
+//   min sampel utk Excellent : 3 — TIDAK ADA fast-path 1 sampel lagi
+//   centroid           : weighted (bobot 1/accuracy²) — BARU, bukan rata2 polos
 //   provider           : fused
 //   startup            : lastKnownPosition (OS cache + SharedPrefs)
 //   distanceFilter     : 0 saat acquiring, 5 setelah locked
+//   mock GPS           : ditolak (raw.isMocked) + heuristik akurasi=0
 // ============================================================
 
 import 'dart:async';
@@ -108,6 +114,28 @@ class PodLockResult {
   );
 }
 
+// ── Cluster stats (internal) ──────────────────────────────────
+// Hasil perhitungan centroid + sebaran, dipakai bareng oleh _evaluate()
+// (untuk gating Excellent via stdDev) dan _buildResult() (untuk hasil akhir),
+// supaya tidak dihitung dua kali dengan cara berbeda.
+class _ClusterStats {
+  final double centroidLat;
+  final double centroidLon;
+  final double avgAccuracy;
+  final double stdDevMeters;
+  final double radiusMeters;
+  final PodSample best;
+
+  const _ClusterStats({
+    required this.centroidLat,
+    required this.centroidLon,
+    required this.avgAccuracy,
+    required this.stdDevMeters,
+    required this.radiusMeters,
+    required this.best,
+  });
+}
+
 // ═══════════════════════════════════════════════════════════════
 // PodGpsEngine
 // ═══════════════════════════════════════════════════════════════
@@ -115,9 +143,10 @@ class PodGpsEngine {
 
   // ── Tuning ──────────────────────────────────────────────────
   static const double _accuracyThreshold  = 25.0;  // terima sample ≤ 25m (urban Indonesia)
-  static const double _fastPathAccuracy   = 6.0;   // 1 sample ≤6m → excellent langsung
-  static const double _excellentThreshold = 12.0;  // 3 sample ≤12m → excellent
-  static const int    _targetSamples      = 3;     // 3 sample → locked (lebih cepat)
+  static const double _captureThreshold   = 15.0;  // ambang "Good"/siap-capture — diperketat dari 25m
+  static const double _excellentThreshold = 10.0;  // ambang "Excellent" — diperketat dari 12m
+  static const double _excellentMaxStdDev = 8.0;   // BARU: sebaran cluster maks utk Excellent
+  static const int    _targetSamples      = 3;     // min sampel utk Good & Excellent (tak ada fast-path 1 sampel)
   static const int    _maxWindow          = 10;    // simpan max 10 sample
   static const Duration _hardTimeout      = Duration(seconds: 12);
 
@@ -161,7 +190,16 @@ class PodGpsEngine {
   bool processSample(Position raw) {
     // Mock GPS → tolak
     if (raw.isMocked) {
-      if (kDebugMode) debugPrint('PodGpsEngine: mock GPS, skip');
+      if (kDebugMode) debugPrint('PodGpsEngine: mock GPS terdeteksi (isMocked), skip');
+      return false;
+    }
+
+    // Heuristik tambahan: akurasi persis 0.0 sangat tidak wajar untuk GPS
+    // asli (selalu ada noise sensor). Beberapa aplikasi fake-GPS di device
+    // rooted bisa menyamarkan flag isMocked, jadi ini lapisan pertahanan
+    // kedua (defense-in-depth), bukan pengganti raw.isMocked.
+    if (raw.accuracy <= 0.0) {
+      if (kDebugMode) debugPrint('PodGpsEngine: akurasi=0 mencurigakan (kemungkinan spoofed), skip');
       return false;
     }
 
@@ -226,11 +264,17 @@ class PodGpsEngine {
     // Ambil sample dengan akurasi terbaik
     _window.sort((a, b) => a.accuracy.compareTo(b.accuracy));
     final best = _window.first;
+    final stats = _computeClusterStats();
 
+    // CATATAN: fallback ini sengaja TIDAK mengikuti _captureThreshold (15m)
+    // yang lebih ketat — ini adalah katup pengaman terakhir agar user tidak
+    // terkunci total saat sinyal GPS buruk (indoor gudang, dsb). Karena itu
+    // selalu ditandai isFallbackLock=true agar UI bisa menampilkan
+    // peringatan "akurasi rendah" ke pengguna.
     _confidence = PodConfidence.good;
     _locked = true;
     _isFallbackLock = true;
-    _lockResult = _buildResult(0.6);
+    _lockResult = _buildResult(0.6, stats);
     if (kDebugMode) {
       debugPrint('PodGpsEngine: force lock acc=${best.accuracy.toStringAsFixed(1)}m [FALLBACK]');
     }
@@ -243,20 +287,26 @@ class PodGpsEngine {
       return;
     }
 
-    final avgAcc = _avgAccuracy();
-    final n = _window.length;
+    final stats  = _computeClusterStats();
+    final avgAcc = stats.avgAccuracy;
+    final stdDev = stats.stdDevMeters;
+    final n      = _window.length;
 
     PodConfidence newConf;
 
-    // Fast path: 1 sample dengan akurasi sangat baik → langsung excellent
-    if (n >= 1 && avgAcc <= _fastPathAccuracy) {
+    // TIDAK ADA fast-path 1 sampel lagi — Excellent WAJIB minimal
+    // _targetSamples (3) sampel, mencegah 1 sampel kebetulan akurat
+    // (mis. 6m) langsung dianggap "Terkunci".
+    //
+    // BARU: Excellent juga wajib stdDev (sebaran antar-sampel) kecil.
+    // Ini menutup celah di mana chip GPS melaporkan akurasi bagus tapi
+    // titik-titiknya sendiri lompat-lompat (multipath di gudang/gedung
+    // bertingkat) — kalau stdDev gagal, turun jadi Good, bukan Fair,
+    // karena avgAcc-nya sendiri tetap valid.
+    if (n >= _targetSamples && avgAcc <= _excellentThreshold && stdDev <= _excellentMaxStdDev) {
       newConf = PodConfidence.excellent;
       _locked = true;
-      _isFallbackLock = false;
-    } else if (n >= _targetSamples && avgAcc <= _excellentThreshold) {
-      newConf = PodConfidence.excellent;
-      _locked = true;
-    } else if (n >= _targetSamples && avgAcc <= _accuracyThreshold) {
+    } else if (n >= _targetSamples && avgAcc <= _captureThreshold) {
       newConf = PodConfidence.good;
       _locked = true;
     } else if (n >= 1 && avgAcc <= _accuracyThreshold) {
@@ -269,7 +319,7 @@ class PodGpsEngine {
     _confidence = newConf;
 
     if (_confidence.canCapture || _window.isNotEmpty) {
-      _lockResult = _buildResult(_score());
+      _lockResult = _buildResult(_score(), stats);
     }
 
     if (_locked) {
@@ -279,28 +329,52 @@ class PodGpsEngine {
 
     if (kDebugMode) {
       debugPrint('PodGpsEngine: ${_confidence.label} | '
-          'n=$n avgAcc=${avgAcc.toStringAsFixed(1)}m locked=$_locked');
+          'n=$n avgAcc=${avgAcc.toStringAsFixed(1)}m stdDev=${stdDev.toStringAsFixed(1)}m locked=$_locked');
     }
   }
 
-  // ── Build result ────────────────────────────────────────────
-  PodLockResult _buildResult(double score) {
-    double sumLat = 0, sumLon = 0, sumAcc = 0;
+  // ── Build result dari cluster stats yang sudah dihitung ─────
+  PodLockResult _buildResult(double score, _ClusterStats stats) {
+    return PodLockResult(
+      centroidLat: stats.centroidLat,
+      centroidLon: stats.centroidLon,
+      accuracy: stats.avgAccuracy,
+      confidenceScore: score,
+      confidence: _confidence,
+      bestRaw: stats.best,
+      samplesUsed: _window.length,
+      clusterStdDevMeters: stats.stdDevMeters,
+      clusterRadiusMeters: stats.radiusMeters,
+      lockedAt: DateTime.now(),
+    );
+  }
+
+  // ── Hitung centroid (weighted) + sebaran cluster ────────────
+  // Centroid dihitung dengan bobot inverse-variance (w = 1/accuracy²)
+  // supaya sampel yang lebih presisi lebih dominan menentukan titik akhir,
+  // bukan rata-rata polos yang menyamakan bobot sampel 5m dan 20m.
+  // Akurasi diklem minimum 1m agar sampel super-akurat tidak
+  // mendominasi secara ekstrem (mis. pembagian oleh angka mendekati 0).
+  _ClusterStats _computeClusterStats() {
+    double sumLatW = 0, sumLonW = 0, sumW = 0, sumAcc = 0;
     PodSample? best;
 
     for (final s in _window) {
-      sumLat += s.lat;
-      sumLon += s.lon;
-      sumAcc += s.accuracy;
+      final clampedAcc = max(s.accuracy, 1.0);
+      final w = 1.0 / (clampedAcc * clampedAcc);
+      sumLatW += s.lat * w;
+      sumLonW += s.lon * w;
+      sumW    += w;
+      sumAcc  += s.accuracy;
       if (best == null || s.accuracy < best.accuracy) best = s;
     }
 
     final n = _window.length;
-    final cLat = sumLat / n;
-    final cLon = sumLon / n;
+    final cLat = sumLatW / sumW;
+    final cLon = sumLonW / sumW;
     final avgAcc = sumAcc / n;
 
-    // Std-dev dan radius dari centroid
+    // Std-dev dan radius dari centroid (weighted)
     double sumSq = 0, maxD = 0;
     for (final s in _window) {
       final d = _haversine(cLat, cLon, s.lat, s.lon);
@@ -309,17 +383,13 @@ class PodGpsEngine {
     }
     final stdDev = n > 1 ? sqrt(sumSq / n) : 0.0;
 
-    return PodLockResult(
+    return _ClusterStats(
       centroidLat: cLat,
       centroidLon: cLon,
-      accuracy: avgAcc,
-      confidenceScore: score,
-      confidence: _confidence,
-      bestRaw: best!,
-      samplesUsed: n,
-      clusterStdDevMeters: stdDev,
-      clusterRadiusMeters: maxD,
-      lockedAt: DateTime.now(),
+      avgAccuracy: avgAcc,
+      stdDevMeters: stdDev,
+      radiusMeters: maxD,
+      best: best!,
     );
   }
 
