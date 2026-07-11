@@ -436,10 +436,9 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         try {
           final filename = '${_entryFilenameBase(filePath)}_${DateTime.now().millisecondsSinceEpoch}.mp4';
           final result = await SaverGallery.saveFile(
-            file: filePath,
-            name: filename,
+            filePath: filePath,
+            fileName: filename,
             androidRelativePath: 'Movies/TERMULScan',
-            androidExistNotSave: false,
             skipIfExists: false,
           );
           if (result.isSuccess) {

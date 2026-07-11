@@ -145,10 +145,9 @@ class StorageService {
       }
 
       final saved = await SaverGallery.saveFile(
-        file: filePath,
-        name: fileName ?? 'watermarked_${DateTime.now().millisecondsSinceEpoch}.mp4',
+        filePath: filePath,
+        fileName: fileName ?? 'watermarked_${DateTime.now().millisecondsSinceEpoch}.mp4',
         androidRelativePath: 'Movies/TermulScan',
-        androidExistNotSave: false,
         skipIfExists: false,
       );
 
@@ -180,10 +179,9 @@ class StorageService {
       if (!hasPermission) return false;
 
       final saved = await SaverGallery.saveFile(
-        file: filePath,
-        name: fileName ?? 'watermarked_${DateTime.now().millisecondsSinceEpoch}.jpg',
+        filePath: filePath,
+        fileName: fileName ?? 'watermarked_${DateTime.now().millisecondsSinceEpoch}.jpg',
         androidRelativePath: 'Pictures/TermulScan',
-        androidExistNotSave: false,
         skipIfExists: false,
       );
 

@@ -690,9 +690,9 @@ class PodAddressResolver {
   // ── Android Geocoder ──────────────────────────────────────
   static Future<String> _androidGeocoder(double lat, double lon) async {
     try {
+      setLocaleIdentifier('id_ID');
       final placemarks = await placemarkFromCoordinates(
         lat, lon,
-        localeIdentifier: 'id_ID',
       ).timeout(const Duration(seconds: 6));
       
       if (placemarks.isEmpty) return '';
