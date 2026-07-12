@@ -17,6 +17,27 @@ import 'watermark_settings_sheet.dart';
 import 'photo_scan_screen.dart';
 import 'video_scan_screen.dart';
 
+/// Snapshot barcode yang sedang aktif (sudah discan, menunggu aksi user).
+/// Immutable supaya bisa dipakai sebagai value di ValueNotifier.
+@immutable
+class _ActiveScan {
+  final String barcode;
+  final String? entryId;
+  final int photoCount;
+
+  const _ActiveScan({
+    required this.barcode,
+    this.entryId,
+    this.photoCount = 0,
+  });
+
+  _ActiveScan copyWith({String? entryId, int? photoCount}) => _ActiveScan(
+        barcode: barcode,
+        entryId: entryId ?? this.entryId,
+        photoCount: photoCount ?? this.photoCount,
+      );
+}
+
 class BarcodeScanScreen extends StatefulWidget {
   const BarcodeScanScreen({super.key});
 
@@ -26,18 +47,30 @@ class BarcodeScanScreen extends StatefulWidget {
 
 class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     with WidgetsBindingObserver {
-  // ─── STATE ────────────────────────────────────────────────
+  // ─── STATE (murni logika, TIDAK memicu rebuild) ────────────
+  // Field-field ini sengaja bukan bagian dari build(), jadi diubah
+  // langsung tanpa setState() supaya tidak memicu rebuild seluruh layar.
   bool _scanning = true;
   String? _lastCode;
-  DateTime? _lastScanTime;
-  int _scanCount = 0;
   bool _processingScan = false;
   bool _sheetOpen = false;
   bool _resumeScheduled = false;
 
-  String? _activeBarcode;
-  String? _activeEntryId;
-  int _batchPhotoCount = 0;
+  // ─── STATE (mempengaruhi UI) ────────────────────────────────
+  // Dipindahkan ke ValueNotifier agar hanya widget yang benar-benar
+  // butuh nilai ini yang rebuild (via ValueListenableBuilder),
+  // bukan seluruh Scaffold/Stack lewat setState().
+  final ValueNotifier<_ActiveScan?> _activeScanVN = ValueNotifier(null);
+  final ValueNotifier<int> _scanCountVN = ValueNotifier(0);
+
+  // ─── DEBOUNCE SCANNER ───────────────────────────────────────
+  // Timer-based debounce: setelah sebuah barcode berhasil diproses,
+  // semua deteksi berikutnya diabaikan selama jendela ini. Ini
+  // menggantikan pengecekan `DateTime.now().difference(...)` manual
+  // (lebih murah, tidak alokasi objek DateTime tiap frame) dan tetap
+  // jadi lapisan pengaman di atas `DetectionSpeed.noDuplicates`.
+  Timer? _debounceTimer;
+  static const Duration _debounceDuration = Duration(milliseconds: 1000);
 
   // ─── DEPENDENCIES ─────────────────────────────────────────
   final StorageService _storage = StorageService();
@@ -77,6 +110,9 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _debounceTimer?.cancel();
+    _activeScanVN.dispose();
+    _scanCountVN.dispose();
     try {
       _scannerController.stop();
     } catch (_) {}
@@ -95,12 +131,13 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         try {
           _scannerController.stop();
         } catch (_) {}
-        setState(() => _scanning = false);
+        // Flag logika murni — tidak dipakai di build(), jadi tanpa setState().
+        _scanning = false;
         debugPrint('📱 App background: scanner stopped');
       }
     } else if (state == AppLifecycleState.resumed) {
       if (!_scanning && !_sheetOpen) {
-        _resumeScanning();
+        unawaited(_resumeScanning());
         debugPrint('📱 App foreground: scanner resumed');
       }
     }
@@ -152,14 +189,21 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   }
 
   // ─── SCANNER CONTROL ──────────────────────────────────────
-
+  //
+  // `_scanning` HANYA boleh bernilai true jika kamera benar-benar
+  // berhasil start. Sebelumnya nilai ini di-set true tanpa syarat di
+  // akhir fungsi, walau `start()` gagal — akibatnya _onDetect() bisa
+  // "percaya" scanner aktif padahal kamera mati. Sekarang eksplisit
+  // dilacak lewat `started`.
   Future<void> _resumeScanning() async {
     if (!mounted) return;
     if (_resumeScheduled || _processingScan) return;
 
     _resumeScheduled = true;
+    bool started = false;
     try {
       await _scannerController.start();
+      started = true;
       // Beri jeda singkat untuk autofokus pada device tertentu
       await Future.delayed(const Duration(milliseconds: 50));
     } catch (e) {
@@ -169,53 +213,60 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         if (status.isGranted) {
           try {
             await _scannerController.start();
+            started = true;
             await Future.delayed(const Duration(milliseconds: 50));
-          } catch (_) {}
+          } catch (e2) {
+            debugPrint('⚠️ Resume scanner gagal setelah izin diberikan: $e2');
+          }
         }
       }
     } finally {
+      // WAJIB dibersihkan di semua jalur (sukses/gagal/exception) supaya
+      // _resumeScanning tidak pernah terkunci "sedang berjalan" selamanya.
       _resumeScheduled = false;
     }
 
     if (!mounted) return;
-    setState(() {
-      _scanning = true;
-    });
+    _scanning = started;
+    if (!started) {
+      debugPrint('⚠️ Scanner tidak berhasil di-resume, tetap dalam status berhenti.');
+    }
   }
 
   // ─── BARCODE DETECTION ────────────────────────────────────
-
-  Future<void> _onDetect(BarcodeCapture capture) async {
+  //
+  // Callback ini HARUS tetap ringan: hanya validasi cepat + guard,
+  // lalu melempar (enqueue) pekerjaan berat ke worker async terpisah
+  // via `unawaited(...)`. Tidak ada `await` di sini sama sekali, jadi
+  // tidak ada celah race antara guard dan penguncian state — semuanya
+  // terjadi sinkron dalam satu giliran event loop sebelum frame kamera
+  // berikutnya bisa memicu callback ini lagi.
+  void _onDetect(BarcodeCapture capture) {
     if (!_scanning || _processingScan) return;
-
-    _processingScan = true;
+    if (_debounceTimer?.isActive ?? false) return;
 
     final barcode = capture.barcodes.isNotEmpty ? capture.barcodes.first : null;
-    if (barcode == null || barcode.rawValue == null) {
-      _processingScan = false;
-      return;
-    }
+    final code = barcode?.rawValue;
+    if (barcode == null || code == null || code.isEmpty) return;
 
-    final code = barcode.rawValue!;
-    final format = barcode.format.name;
+    // Kunci state secara sinkron SEBELUM melempar pekerjaan berat,
+    // supaya frame berikutnya langsung ditolak oleh guard di atas.
+    _processingScan = true;
+    _scanning = false;
+    _debounceTimer = Timer(_debounceDuration, () {});
+    _lastCode = code;
+    _activeScanVN.value = _ActiveScan(barcode: code);
 
-    // Debounce 2 detik sebagai lapisan keamanan (bersama DetectionSpeed.noDuplicates)
-    if (_lastCode == code &&
-        _lastScanTime != null &&
-        DateTime.now().difference(_lastScanTime!).inSeconds < 2) {
-      _processingScan = false;
-      return;
-    }
-    _lastScanTime = DateTime.now();
+    unawaited(_processDetectedBarcode(code: code, format: barcode.format.name));
+  }
 
-    // Reset state barcode baru
-    setState(() {
-      _scanning = false;
-      _lastCode = code;
-      _activeBarcode = code;
-      _batchPhotoCount = 0;
-    });
-
+  // Semua pekerjaan berat (DB, lokasi, stop kamera) tinggal di sini,
+  // berjalan async di belakang tanpa memblokir callback deteksi kamera
+  // atau frame UI berikutnya.
+  Future<void> _processDetectedBarcode({
+    required String code,
+    required String format,
+  }) async {
     try {
       HapticFeedback.mediumImpact();
 
@@ -232,22 +283,28 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         locationName: (locState != null && locState.address.isNotEmpty) ? locState.address : null,
       );
       await _storage.add(entry);
+      // Update alamat final berjalan di background, tidak ditunggu di sini.
       if (gpsOn) unawaited(_attachLocationUpdate(entry.id));
 
       if (!mounted) return;
-      setState(() {
-        _scanCount++;
-        _activeEntryId = entry.id;
-      });
+      _scanCountVN.value++;
+      _activeScanVN.value = _activeScanVN.value?.copyWith(entryId: entry.id);
 
-      // Hentikan scanner sambil menunggu aksi user
       try {
         await _scannerController.stop();
       } catch (_) {}
     } catch (e) {
-      debugPrint('❌ Error _onDetect: $e');
+      debugPrint('❌ Error _processDetectedBarcode: $e');
+      // Pulihkan SEMUA state terkait supaya layar tidak tersangkut di
+      // banner "barcode aktif" tanpa entry, dan barcode yang sama bisa
+      // discan ulang setelah scanner benar-benar jalan lagi.
+      _lastCode = null;
+      _activeScanVN.value = null;
       if (mounted) await _resumeScanning();
     } finally {
+      // WAJIB direset di semua jalur (sukses/gagal) — kalau tidak,
+      // _processingScan bisa tersangkut `true` selamanya dan mengunci
+      // scanner permanen.
       _processingScan = false;
     }
   }
@@ -255,7 +312,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   // ─── MANUAL INPUT ─────────────────────────────────────────
 
   void _showManualInput() {
-    if (_processingScan || _activeBarcode != null) return;
+    if (_processingScan || _activeScanVN.value != null) return;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -265,21 +322,19 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       ),
       builder: (_) => _ManualInputDialog(
         onSubmitted: (code) {
-          _processManualCode(code);
+          unawaited(_processManualCode(code));
         },
       ),
     );
   }
 
   Future<void> _processManualCode(String code) async {
-    if (_processingScan || _activeBarcode != null) return;
+    if (_processingScan || _activeScanVN.value != null) return;
 
-    setState(() {
-      _scanning = false;
-      _lastCode = code;
-      _activeBarcode = code;
-      _batchPhotoCount = 0;
-    });
+    _processingScan = true;
+    _scanning = false;
+    _lastCode = code;
+    _activeScanVN.value = _ActiveScan(barcode: code);
 
     try {
       HapticFeedback.mediumImpact();
@@ -300,17 +355,19 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       if (gpsOn) unawaited(_attachLocationUpdate(entry.id));
 
       if (!mounted) return;
-      setState(() {
-        _scanCount++;
-        _activeEntryId = entry.id;
-      });
+      _scanCountVN.value++;
+      _activeScanVN.value = _activeScanVN.value?.copyWith(entryId: entry.id);
 
       try {
         await _scannerController.stop();
       } catch (_) {}
     } catch (e) {
       debugPrint('❌ Error _processManualCode: $e');
+      _lastCode = null;
+      _activeScanVN.value = null;
       if (mounted) await _resumeScanning();
+    } finally {
+      _processingScan = false;
     }
   }
 
@@ -320,13 +377,14 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   // scan tetap terasa instan. Begitu PodLocationService selesai geocode
   // (atau timeout), entry di-update dengan lat/lon/alamat final.
   // Sengaja tidak bergantung pada `mounted`/context — ini murni tulis ke
-  // database, aman dipanggil walau layar sudah berpindah/dibuang.
+  // database, aman dipanggil walau layar sudah berpindah/dibuang, dan
+  // berjalan independen (fire-and-forget) dari worker deteksi barcode.
   Future<void> _attachLocationUpdate(String entryId) async {
-    final locState = await PodLocationService.instance.awaitAddressReady(
-      timeout: const Duration(seconds: 10),
-    );
-    if (!locState.hasPosition) return;
     try {
+      final locState = await PodLocationService.instance.awaitAddressReady(
+        timeout: const Duration(seconds: 10),
+      );
+      if (!locState.hasPosition) return;
       final stored = await _storage.getEntry(entryId);
       if (stored == null) return; // entry sudah dihapus (mis. reset scan)
       final updated = stored.copyWith(
@@ -341,91 +399,103 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   }
 
   // ─── NAVIGATION HELPERS ──────────────────────────────────
+  //
+  // Reset state & resume scanner dipindah ke `finally` supaya tetap
+  // jalan walau Navigator.push melempar exception (mis. route builder
+  // error) — sebelumnya kegagalan di sini bisa membuat layar tersangkut
+  // dengan barcode aktif dan scanner tidak pernah di-resume.
 
   Future<void> _goToPhotoScan() async {
-    if (_activeBarcode == null || _activeEntryId == null) return;
+    final active = _activeScanVN.value;
+    if (active == null || active.entryId == null) return;
 
-    final result = await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => PhotoScanScreen(
-          barcode: _activeBarcode,
-          entryId: _activeEntryId,
+    try {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PhotoScanScreen(
+            barcode: active.barcode,
+            entryId: active.entryId,
+          ),
         ),
-      ),
-    );
-
-    if (!mounted) return;
-
-    final photoCount = result?['count'] ?? 0;
-
-    // Satu setState untuk semua perubahan
-    setState(() {
-      _batchPhotoCount = photoCount;
-      _activeBarcode = null;
-      _activeEntryId = null;
-      _lastCode = null; // reset agar barcode yang sama bisa discan lagi
-    });
-
-    await _resumeScanning();
+      );
+    } catch (e) {
+      debugPrint('❌ Error navigasi ke foto scan: $e');
+    } finally {
+      if (mounted) {
+        _lastCode = null;
+        _activeScanVN.value = null;
+        await _resumeScanning();
+      }
+    }
   }
 
   Future<void> _goToVideoScan() async {
-    if (_activeBarcode == null) return;
+    final active = _activeScanVN.value;
+    if (active == null) return;
 
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => VideoScanScreen(
-          barcode: _activeBarcode,
+    try {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => VideoScanScreen(
+            barcode: active.barcode,
+          ),
         ),
-      ),
-    );
-
-    if (!mounted) return;
-
-    // Reset semua state
-    setState(() {
-      _activeBarcode = null;
-      _activeEntryId = null;
-      _batchPhotoCount = 0;
-      _lastCode = null; // reset agar barcode yang sama bisa discan lagi
-    });
-
-    await _resumeScanning();
+      );
+    } catch (e) {
+      debugPrint('❌ Error navigasi ke video scan: $e');
+    } finally {
+      if (mounted) {
+        _lastCode = null;
+        _activeScanVN.value = null;
+        await _resumeScanning();
+      }
+    }
   }
 
   // ─── WATERMARK SETTINGS ──────────────────────────────────
 
   void _openWatermarkSettings() {
-    setState(() => _sheetOpen = true);
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: AppTheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (_) => const WatermarkSettingsSheet(),
-    ).whenComplete(() {
-      if (mounted) setState(() => _sheetOpen = false);
-    });
+    _sheetOpen = true;
+    try {
+      showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: AppTheme.surface,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        builder: (_) => const WatermarkSettingsSheet(),
+      ).whenComplete(() {
+        // whenComplete() selalu jalan baik sheet ditutup normal maupun
+        // Future-nya reject, jadi _sheetOpen tidak pernah tersangkut true.
+        _sheetOpen = false;
+      });
+    } catch (e) {
+      debugPrint('❌ Error membuka pengaturan watermark: $e');
+      _sheetOpen = false;
+    }
   }
 
   // ─── BUILD ──────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
-    final showWatermark = _activeBarcode == null;
-
     return Scaffold(
       appBar: AppBar(
-        title: Text('Scanner ($_scanCount)'),
+        title: ValueListenableBuilder<int>(
+          valueListenable: _scanCountVN,
+          builder: (context, count, _) => Text('Scanner ($count)'),
+        ),
         actions: [
-          IconButton(
-            onPressed: (_activeBarcode != null) ? null : _showManualInput,
-            icon: const Icon(Icons.keyboard, color: Colors.white),
-            tooltip: 'Input Manual',
+          ValueListenableBuilder<_ActiveScan?>(
+            valueListenable: _activeScanVN,
+            builder: (context, active, _) => IconButton(
+              onPressed: active != null ? null : _showManualInput,
+              icon: const Icon(Icons.keyboard, color: Colors.white),
+              tooltip: 'Input Manual',
+            ),
           ),
           IconButton(
             onPressed: () {
@@ -462,148 +532,167 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       ),
       body: Stack(
         children: [
-          MobileScanner(
-            controller: _scannerController,
-            onDetect: _onDetect,
+          // Kamera scanner — widget terpisah, tidak pernah rebuild akibat
+          // perubahan state layar ini (activeScan/scanCount), hanya
+          // repaint dari stream kamera itu sendiri.
+          RepaintBoundary(
+            child: MobileScanner(
+              controller: _scannerController,
+              onDetect: _onDetect,
+            ),
           ),
-          // Watermark info (tampil hanya saat tidak ada barcode aktif)
-          if (showWatermark)
-            Positioned(
-              top: 12, left: 0, right: 0,
-              child: ListenableBuilder(
-                listenable: _wmSettings,
-                builder: (context, _) {
-                  if (_wmSettings.operatorName.isEmpty && !_wmSettings.hasLogo)
-                    return const SizedBox.shrink();
-                  return Center(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: const Color(0xAA000000),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: AppTheme.accent.withOpacity(0.4)),
+          // Seluruh overlay yang bergantung pada barcode aktif dibungkus
+          // satu ValueListenableBuilder, jadi hanya rebuild saat status
+          // scan berubah (bukan tiap kali _scanCountVN berubah dsb).
+          ValueListenableBuilder<_ActiveScan?>(
+            valueListenable: _activeScanVN,
+            builder: (context, active, _) {
+              final showWatermark = active == null;
+              return Stack(
+                children: [
+                  // Watermark info (tampil hanya saat tidak ada barcode aktif)
+                  if (showWatermark)
+                    Positioned(
+                      top: 12, left: 0, right: 0,
+                      child: ListenableBuilder(
+                        listenable: _wmSettings,
+                        builder: (context, _) {
+                          if (_wmSettings.operatorName.isEmpty && !_wmSettings.hasLogo) {
+                            return const SizedBox.shrink();
+                          }
+                          return Center(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: const Color(0xAA000000),
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(color: AppTheme.accent.withOpacity(0.4)),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (_wmSettings.operatorName.isNotEmpty) ...[
+                                    const Icon(Icons.person, color: AppTheme.accent, size: 12),
+                                    const Gap(5),
+                                    Text(
+                                      _wmSettings.operatorName,
+                                      style: const TextStyle(
+                                        color: AppTheme.accent,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                  if (_wmSettings.hasLogo) ...[
+                                    if (_wmSettings.operatorName.isNotEmpty) const Gap(8),
+                                    const Icon(Icons.business, color: Colors.white54, size: 12),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          );
+                        },
                       ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (_wmSettings.operatorName.isNotEmpty) ...[
-                            const Icon(Icons.person, color: AppTheme.accent, size: 12),
-                            const Gap(5),
-                            Text(
-                              _wmSettings.operatorName,
-                              style: const TextStyle(
-                                color: AppTheme.accent,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
+                    ),
+                  // Overlay bingkai scan (hanya saat tidak ada barcode aktif)
+                  if (active == null)
+                    const Positioned.fill(
+                      child: IgnorePointer(child: _ScanFrameOverlay()),
+                    ),
+                  // Banner barcode aktif
+                  if (active != null)
+                    Positioned(
+                      top: 12, left: 0, right: 0,
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(horizontal: 20),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.75),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: AppTheme.accent.withOpacity(0.4)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.qr_code, color: AppTheme.accent, size: 18),
+                            const Gap(8),
+                            Expanded(
+                              child: Text(
+                                active.barcode,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 14,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const Gap(8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: AppTheme.accent.withOpacity(0.2),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                '${active.photoCount} foto',
+                                style: const TextStyle(
+                                  color: AppTheme.accent,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
                             ),
                           ],
-                          if (_wmSettings.hasLogo) ...[
-                            if (_wmSettings.operatorName.isNotEmpty) const Gap(8),
-                            const Icon(Icons.business, color: Colors.white54, size: 12),
-                          ],
+                        ),
+                      ),
+                    ),
+                  // Tombol aksi (muncul saat barcode aktif)
+                  if (active != null && active.entryId != null)
+                    Positioned(
+                      bottom: 40, left: 0, right: 0,
+                      child: Column(
+                        children: [
+                          TextButton.icon(
+                            onPressed: _goToPhotoScan,
+                            icon: const Icon(Icons.camera_alt, color: Colors.white70, size: 18),
+                            label: const Text(
+                              'Ambil Foto',
+                              style: TextStyle(color: Colors.white70, fontSize: 13),
+                            ),
+                            style: TextButton.styleFrom(
+                              backgroundColor: const Color(0x88000000),
+                              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20),
+                                side: const BorderSide(color: Colors.white24),
+                              ),
+                            ),
+                          ),
+                          const Gap(8),
+                          TextButton.icon(
+                            onPressed: _goToVideoScan,
+                            icon: const Icon(Icons.videocam, color: Colors.white70, size: 18),
+                            label: const Text(
+                              'Rekam Video',
+                              style: TextStyle(color: Colors.white70, fontSize: 13),
+                            ),
+                            style: TextButton.styleFrom(
+                              backgroundColor: const Color(0x88000000),
+                              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20),
+                                side: const BorderSide(color: Colors.white24),
+                              ),
+                            ),
+                          ),
                         ],
                       ),
                     ),
-                  );
-                },
-              ),
-            ),
-          // Overlay bingkai scan (hanya saat tidak ada barcode aktif)
-          if (_activeBarcode == null)
-            const Positioned.fill(
-              child: IgnorePointer(child: _ScanFrameOverlay()),
-            ),
-          // Banner barcode aktif
-          if (_activeBarcode != null)
-            Positioned(
-              top: 12, left: 0, right: 0,
-              child: Container(
-                margin: const EdgeInsets.symmetric(horizontal: 20),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.75),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppTheme.accent.withOpacity(0.4)),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.qr_code, color: AppTheme.accent, size: 18),
-                    const Gap(8),
-                    Expanded(
-                      child: Text(
-                        '$_activeBarcode',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    const Gap(8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: AppTheme.accent.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        '$_batchPhotoCount foto',
-                        style: const TextStyle(
-                          color: AppTheme.accent,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          // Tombol aksi (muncul saat barcode aktif)
-          if (_activeBarcode != null && _activeEntryId != null)
-            Positioned(
-              bottom: 40, left: 0, right: 0,
-              child: Column(
-                children: [
-                  TextButton.icon(
-                    onPressed: _goToPhotoScan,
-                    icon: const Icon(Icons.camera_alt, color: Colors.white70, size: 18),
-                    label: const Text(
-                      'Ambil Foto',
-                      style: TextStyle(color: Colors.white70, fontSize: 13),
-                    ),
-                    style: TextButton.styleFrom(
-                      backgroundColor: const Color(0x88000000),
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(20),
-                        side: const BorderSide(color: Colors.white24),
-                      ),
-                    ),
-                  ),
-                  const Gap(8),
-                  TextButton.icon(
-                    onPressed: _goToVideoScan,
-                    icon: const Icon(Icons.videocam, color: Colors.white70, size: 18),
-                    label: const Text(
-                      'Rekam Video',
-                      style: TextStyle(color: Colors.white70, fontSize: 13),
-                    ),
-                    style: TextButton.styleFrom(
-                      backgroundColor: const Color(0x88000000),
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(20),
-                        side: const BorderSide(color: Colors.white24),
-                      ),
-                    ),
-                  ),
                 ],
-              ),
-            ),
+              );
+            },
+          ),
         ],
       ),
     );
