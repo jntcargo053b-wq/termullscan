@@ -1,13 +1,19 @@
 // ============================================================
-// lib/watermark/layouts/professional_layout.dart (REFACTORED + FIX SPACING)
+// lib/watermark/layouts/professional_layout.dart
+// ============================================================
+// DISELARASKAN DENGAN STANDAR TimestampLayout:
+//  - Bar bawah solid (bukan gradient) dengan cursorY stacking
+//  - Baris meta, waktu (jam besar + tanggal + HARI), lokasi
+//  - Badge "INPUT MANUAL", brand + tagline, kode verifikasi
+//    vertikal — sama seperti timestamp_layout.dart
+// Identitas visual "Professional" tetap dipertahankan lewat:
+//  - Format label:value (bukan emoji) untuk KODE BARANG & OPERATOR
+//  - Accent bar vertikal di sisi kiri bar sebagai penanda korporat
 // ============================================================
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-import 'package:gap/gap.dart';
-import 'base_layout.dart';
-import 'layout_metrics.dart';
 import '../models/watermark_data.dart';
 import '../watermark_style.dart';
 import '../watermark_settings.dart';
@@ -15,6 +21,8 @@ import '../helpers/layout_helper.dart';
 import '../helpers/text_helper.dart';
 import '../helpers/watermark_typography.dart';
 import '../widgets/logo_widget.dart';
+import 'base_layout.dart';
+import 'layout_metrics.dart';
 
 class ProfessionalLayout extends WatermarkLayout {
   @override
@@ -23,17 +31,62 @@ class ProfessionalLayout extends WatermarkLayout {
   @override
   WatermarkStyle get style => WatermarkStyle.professional;
 
+  // ─── KONSTANTA ──────────────────────────────────────────────────
   static const Color _accentColor = Color(0xFF4FA8E8);
 
-  // ─── KONSTANTA SPASI ──────────────────────────────────────────
-  static const double _rowSpacingMultiplier = 1.8; // ✅ Perbaikan: spasi antar baris lebih besar
-  static const double _labelValueOffset = 0.78;   // offset value terhadap label
-  static const double _topPaddingFactor = 0.85;
-  static const double _bottomPaddingFactor = 0.7;
-  static const double _logoCardScale = 0.25;
-  static const double _logoCardRadiusScale = 0.8;
-  static const double _accentBarWidthScale = 0.004;
+  // Skala font (sama pola dengan TimestampLayout)
+  static const double _timeScale = 0.11;
+  static const double _metaScale = 0.032;
+  static const double _dateScale = 0.034;
+  static const double _dayScale = 0.028;
+  static const double _addressScale = 0.030;
+  static const double _brandScale = 0.042;
+  static const double _taglineScale = 0.024;
+  static const double _codeScale = 0.020;
+  static const double _manualScale = 0.95;
+  static const double _logoScale = 0.6;
+  static const double _dividerScale = 0.006;
+  static const double _accentBarWidthScale = 0.006;
 
+  // Spacing / padding factors
+  static const double _timeRowPadding = 1.25;
+  static const double _addressLineSpacing = 1.3;
+  static const double _metaLineSpacing = 1.3;
+  static const double _barVerticalPadding = 1.6;
+  static const double _topPaddingFactor = 0.7;
+  static const double _dividerSpacing = 0.5;
+  static const double _dateSpacing = 0.02;
+  static const double _logoReserveScale = 0.6;
+  static const double _codeVerticalOffset = 0.55;
+  static const double _accentBarLeftInset = 1.4; // jarak accent bar dari tepi kiri (dalam padding)
+  static const double _textLeftInset = 2.6; // jarak teks dari tepi kiri setelah accent bar (dalam padding)
+
+  // Opacity
+  static const double _opacityMeta = 0.9;
+  static const double _opacityOperator = 0.85;
+  static const double _opacityDay = 0.75;
+  static const double _opacityBrand = 0.9;
+  static const double _opacityCode = 0.85;
+  static const double _opacityLogo = 0.95;
+  static const double _shadowOpacity = 0.6;
+
+  // ─── HARI INDONESIA ────────────────────────────────────────────
+  static const List<String> _hariIndo = [
+    'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu',
+  ];
+
+  static String _dayName(DateTime dt) => _hariIndo[dt.weekday - 1];
+
+  // ─── GENERATE VERIFICATION CODE ──────────────────────────────
+  static String _generateVerificationCode(WatermarkData data) {
+    final seed = '${data.timestamp.millisecondsSinceEpoch}'
+        '${data.operatorName}${data.barcodeValue ?? ''}';
+    final hash = seed.codeUnits.fold<int>(0, (p, c) => (p * 31 + c) & 0x7FFFFFFF);
+    final code = hash.toRadixString(36).toUpperCase();
+    return code.padLeft(10, 'X').substring(0, 10);
+  }
+
+  // ─── COMPUTE METRICS ───────────────────────────────────────────
   @override
   LayoutMetrics computeMetrics({
     required double photoWidth,
@@ -43,44 +96,40 @@ class ProfessionalLayout extends WatermarkLayout {
     final baseSize = LayoutHelper.getBaseSize(photoWidth, photoHeight);
     final padding = LayoutHelper.padding(baseSize);
 
-    int rowCount = 1; // timestamp
-    if (data.hasBarcode) rowCount++;
-    if (data.hasOperator) rowCount++;
-    rowCount++; // location
+    final metaFontSize = baseSize * _metaScale;
+    final metaLineH = metaFontSize * _metaLineSpacing;
+    final timeFontSize = baseSize * _timeScale;
+    final addressFontSize = baseSize * _addressScale;
+    final addressLineH = addressFontSize * _addressLineSpacing;
 
-    final fontSz = data.fontSize;
-    // ✅ Perbaikan: gunakan multiplier yang lebih besar untuk spasi antar baris
-    final lineH = fontSz * _rowSpacingMultiplier;
+    int metaLines = 0;
+    if (data.hasBarcode) metaLines++;
+    if (data.hasOperator) metaLines++;
 
-    // Barcode memiliki font lebih besar, jadi butuh extra space
-    final barcodeFontSize = WatermarkTypography.barcode(fontSz);
-    final barcodeLineH = barcodeFontSize * _rowSpacingMultiplier;
-    final barcodeBonus = data.hasBarcode ? (barcodeLineH - lineH) : 0.0;
-
-    final overlayHeight = math.max(
-      photoHeight * 0.14,
-      rowCount * lineH + barcodeBonus + padding * 2.0,
-    );
+    final barHeight = (metaLines * metaLineH) +
+        timeFontSize * _timeRowPadding +
+        addressLineH * 2 +
+        padding * _barVerticalPadding;
 
     final logoMaxSize = WatermarkTypography.logo(baseSize);
-    final rightReserved = logoMaxSize + padding * 1.4;
-    final accentBarSpace = baseSize * 0.006 + padding * 0.5;
-    final textW = photoWidth - padding * 2 - rightReserved - accentBarSpace;
+
+    final accentBarSpace = baseSize * _accentBarWidthScale + padding * 0.5;
 
     return LayoutMetrics(
       baseSize: baseSize,
       padding: padding,
-      fontSize: fontSz,
-      lineHeight: lineH,
-      stripHeight: overlayHeight,
+      fontSize: timeFontSize,
+      lineHeight: addressLineH,
+      stripHeight: barHeight,
       logoMaxSize: logoMaxSize,
-      textRowCount: rowCount,
+      textRowCount: metaLines + 3,
       canvasWidth: photoWidth,
       canvasHeight: photoHeight,
-      textAvailableWidth: textW,
+      textAvailableWidth: photoWidth - padding * 2 - accentBarSpace,
     );
   }
 
+  // ─── PAINT ON CANVAS ──────────────────────────────────────────
   @override
   void paintOnCanvas({
     required ui.Canvas canvas,
@@ -94,10 +143,10 @@ class ProfessionalLayout extends WatermarkLayout {
     // Gambar foto
     canvas.drawImageRect(
       srcImage,
-      Rect.fromLTWH(0, 0, photoWidth, photoHeight),
-      Rect.fromLTWH(0, 0, photoWidth, photoHeight),
-      Paint()
-        ..filterQuality = FilterQuality.high
+      ui.Rect.fromLTWH(0, 0, photoWidth, photoHeight),
+      ui.Rect.fromLTWH(0, 0, photoWidth, photoHeight),
+      ui.Paint()
+        ..filterQuality = ui.FilterQuality.high
         ..isAntiAlias = true,
     );
 
@@ -111,6 +160,7 @@ class ProfessionalLayout extends WatermarkLayout {
     );
   }
 
+  // ─── PAINT WATERMARK ONLY ────────────────────────────────────
   @override
   void paintWatermarkOnly({
     required ui.Canvas canvas,
@@ -137,206 +187,344 @@ class ProfessionalLayout extends WatermarkLayout {
     required ui.Image? logoImage,
     required WatermarkData data,
   }) {
-    final padding = metrics.padding;
     final baseSize = metrics.baseSize;
-    final overlayHeight = metrics.stripHeight;
-    double overlayTop;
-    TextAlign textAlign;
-    final bool overlayAtBottom;
+    final padding = metrics.padding;
+    final barHeight = metrics.stripHeight;
+    final barTop = photoHeight - barHeight;
+    final bgOpacity = data.backgroundOpacity.clamp(0.4, 1.0);
 
-    switch (data.position) {
-      case WatermarkPosition.bottomRight:
-        overlayTop = photoHeight - overlayHeight;
-        textAlign = TextAlign.right;
-        overlayAtBottom = true;
-        break;
-      case WatermarkPosition.bottomLeft:
-        overlayTop = photoHeight - overlayHeight;
-        textAlign = TextAlign.left;
-        overlayAtBottom = true;
-        break;
-      case WatermarkPosition.topRight:
-        overlayTop = 0;
-        textAlign = TextAlign.right;
-        overlayAtBottom = false;
-        break;
-      case WatermarkPosition.topLeft:
-        overlayTop = 0;
-        textAlign = TextAlign.left;
-        overlayAtBottom = false;
-        break;
-      default:
-        overlayTop = photoHeight - overlayHeight;
-        textAlign = TextAlign.right;
-        overlayAtBottom = true;
-    }
-
-    // ─── BACKGROUND GRADIEN ──────────────────────────────────
-    final gradientPaint = Paint()
-      ..shader = ui.Gradient.linear(
-        Offset(0, overlayTop),
-        Offset(0, overlayTop + overlayHeight),
-        overlayAtBottom
-            ? [
-                Colors.black.withOpacity(0.0),
-                Colors.black.withOpacity(data.backgroundOpacity * 0.55),
-                Colors.black.withOpacity(data.backgroundOpacity),
-              ]
-            : [
-                Colors.black.withOpacity(data.backgroundOpacity),
-                Colors.black.withOpacity(data.backgroundOpacity * 0.55),
-                Colors.black.withOpacity(0.0),
-              ],
-        overlayAtBottom ? [0.0, 0.45, 1.0] : [0.0, 0.55, 1.0],
-      );
+    // ─── BAR BAWAH ──────────────────────────────────────────────
     canvas.drawRect(
-      Rect.fromLTWH(0, overlayTop, photoWidth, overlayHeight),
-      gradientPaint,
+      ui.Rect.fromLTWH(0, barTop, photoWidth, barHeight),
+      ui.Paint()..color = Colors.black.withOpacity(bgOpacity),
     );
 
-    // ─── GARIS PEMISAH ──────────────────────────────────────
-    final dividerY = overlayAtBottom ? overlayTop : overlayTop + overlayHeight;
-    canvas.drawLine(
-      Offset(0, dividerY),
-      Offset(photoWidth, dividerY),
-      Paint()
-        ..color = Colors.white.withOpacity(0.10)
-        ..strokeWidth = 1,
-    );
-
-    // ─── LAYOUT: TEKS + LOGO ──────────────────────────────────
-    final logoMaxSize = metrics.logoMaxSize;
+    // ─── ACCENT BAR (identitas Professional) ────────────────────
     final accentBarW = math.max(2.0, baseSize * _accentBarWidthScale);
-    final accentBarSpace = accentBarW + padding * 0.5;
-    final logoReserve = (logoImage != null) ? logoMaxSize + padding * 1.4 : 0.0;
-    final textContentWidth = photoWidth - padding * 2 - logoReserve - accentBarSpace;
-
-    final double textX = textAlign == TextAlign.left
-        ? padding + accentBarSpace
-        : photoWidth - padding - textContentWidth;
-    double textY = overlayTop + padding * _topPaddingFactor;
-
-    // ─── ACCENT BAR ──────────────────────────────────────────
-    final barX = textAlign == TextAlign.left
-        ? padding
-        : photoWidth - padding - accentBarW;
-    final barcodeFontSize = data.hasBarcode
-        ? WatermarkTypography.barcode(data.fontSize)
-        : data.fontSize;
-    final barcodeLineH = barcodeFontSize * _rowSpacingMultiplier;
-    final normalLineH = data.fontSize * _rowSpacingMultiplier;
-    final barcodeBonus = data.hasBarcode ? (barcodeLineH - normalLineH) : 0.0;
-    final textBlockHeight =
-        metrics.textRowCount * normalLineH + barcodeBonus;
     canvas.drawRect(
-      Rect.fromLTWH(
-        barX,
-        overlayTop + padding * 0.7,
+      ui.Rect.fromLTWH(
+        padding * _accentBarLeftInset,
+        barTop + padding * 0.7,
         accentBarW,
-        textBlockHeight,
+        barHeight - padding * 1.4,
       ),
-      Paint()..color = _accentColor.withOpacity(0.9),
+      ui.Paint()..color = _accentColor.withOpacity(0.9),
     );
 
-    // ─── FUNGSI GAMBAR 1 BARIS (LABEL + VALUE) ──────────────
-    void drawLabelValue(String label, String value, Color valueColor, {bool emphasize = false}) {
-      final valueFontSize = emphasize
-          ? WatermarkTypography.barcode(data.fontSize)
-          : WatermarkTypography.body(data.fontSize);
-      final labelFontSize = WatermarkTypography.caption(data.fontSize);
+    final leftX = padding * _textLeftInset;
+    final availW = photoWidth - leftX - padding;
 
-      // ✅ PERBAIKAN: Hitung tinggi baris berdasarkan konten
-      // Value di-offset ke bawah sebesar valueFontSize * _labelValueOffset
-      // Total tinggi = offset + tinggi value
-      final labelHeight = WatermarkTypography.lineHeight(labelFontSize);
-      final valueHeight = WatermarkTypography.lineHeight(valueFontSize);
-      final totalHeightNeeded = (valueFontSize * _labelValueOffset) + valueHeight;
-      final rowLineHeight = math.max(labelHeight, totalHeightNeeded) + 4; // +4 padding
+    double cursorY = barTop + padding * _topPaddingFactor;
 
-      // Label (uppercase, abu-abu, kecil)
-      final labelY = textY + (rowLineHeight - labelHeight) / 2;
+    // ─── META ────────────────────────────────────────────────────
+    cursorY = _drawMeta(canvas, data, metrics, leftX, availW, cursorY);
+
+    // ─── TIME ────────────────────────────────────────────────────
+    cursorY = _drawTime(canvas, data, metrics, leftX, baseSize, cursorY);
+
+    // ─── LOCATION ───────────────────────────────────────────────
+    _drawLocation(canvas, data, metrics, leftX, availW, baseSize, cursorY, logoImage);
+
+    // ─── MANUAL BADGE ───────────────────────────────────────────
+    _drawManualBadge(canvas, data, padding, baseSize, barTop, photoWidth);
+
+    // ─── LOGO ────────────────────────────────────────────────────
+    _drawLogo(canvas, logoImage, metrics, padding, photoWidth, photoHeight);
+
+    // ─── BRAND ──────────────────────────────────────────────────
+    _drawBrand(canvas, data, padding, photoWidth, baseSize);
+
+    // ─── VERIFICATION CODE ─────────────────────────────────────
+    _drawVerification(canvas, data, padding, baseSize, photoWidth, barTop);
+  }
+
+  // ─── HELPERS ──────────────────────────────────────────────────
+
+  double _drawMeta(
+    ui.Canvas canvas,
+    WatermarkData data,
+    LayoutMetrics metrics,
+    double leftX,
+    double availW,
+    double cursorY,
+  ) {
+    final metaFontSize = metrics.baseSize * _metaScale;
+    final metaLineH = metaFontSize * _metaLineSpacing;
+
+    if (data.hasBarcode) {
       TextHelper.paintText(
         canvas: canvas,
-        text: label.toUpperCase(),
-        x: textX,
-        y: labelY,
-        maxWidth: textContentWidth,
-        color: Colors.white.withOpacity(0.45),
-        fontSize: labelFontSize,
+        text: 'KODE BARANG: ${data.barcodeValue}',
+        x: leftX,
+        y: cursorY,
+        maxWidth: availW,
+        color: Colors.white.withOpacity(_opacityMeta),
+        fontSize: metaFontSize,
         fontWeight: FontWeight.w700,
         maxLines: 1,
-        textAlign: textAlign,
         fontFamily: data.fontFamily,
       );
-
-      // Value (besar, bold, warna sesuai)
-      final valueY = textY + (valueFontSize * _labelValueOffset);
-      TextHelper.paintText(
-        canvas: canvas,
-        text: value,
-        x: textX,
-        y: valueY,
-        maxWidth: textContentWidth,
-        color: valueColor,
-        fontSize: valueFontSize,
-        fontWeight: emphasize ? FontWeight.w800 : FontWeight.w600,
-        maxLines: 1,
-        textAlign: textAlign,
-        fontFamily: data.fontFamily,
-      );
-
-      textY += rowLineHeight;
-    }
-
-    // ─── RENDER BARIS ──────────────────────────────────────────
-    if (data.hasBarcode) {
-      drawLabelValue('KODE BARANG', data.barcodeValue ?? '', Colors.white, emphasize: true);
+      cursorY += metaLineH;
     }
     if (data.hasOperator) {
-      drawLabelValue('OPERATOR', data.operatorName, Colors.white.withOpacity(0.92));
-    }
-    drawLabelValue('WAKTU', data.formattedTimestamp, Colors.white.withOpacity(0.80));
-    drawLabelValue('LOKASI', data.displayLocation, Colors.white.withOpacity(0.70));
-
-    // ─── LOGO ──────────────────────────────────────────────────
-    if (logoImage != null) {
-      final logoMaxH = logoMaxSize;
-      final logoW = logoImage.width.toDouble();
-      final logoH = logoImage.height.toDouble();
-      final scale = math.min(logoMaxH / logoW, logoMaxH / logoH);
-      final drawW = logoW * scale;
-      final drawH = logoH * scale;
-      double logoX = textAlign == TextAlign.left
-          ? photoWidth - padding - drawW
-          : padding;
-      double logoY = overlayAtBottom
-          ? photoHeight - padding - drawH
-          : padding;
-
-      final cardPad = drawW * _logoCardScale;
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(
-            logoX - cardPad,
-            logoY - cardPad,
-            drawW + cardPad * 2,
-            drawH + cardPad * 2,
-          ),
-          Radius.circular(cardPad * _logoCardRadiusScale),
-        ),
-        Paint()..color = Colors.black.withOpacity(0.35),
-      );
-
-      LogoWidget.paint(
+      TextHelper.paintText(
         canvas: canvas,
-        logoImage: logoImage,
-        x: logoX,
-        y: logoY,
-        maxWidth: drawW,
-        maxHeight: drawH,
-        opacity: 1.0,
+        text: 'OPERATOR: ${data.operatorName}',
+        x: leftX,
+        y: cursorY,
+        maxWidth: availW,
+        color: Colors.white.withOpacity(_opacityOperator),
+        fontSize: metaFontSize,
+        fontWeight: FontWeight.w600,
+        maxLines: 1,
+        fontFamily: data.fontFamily,
       );
+      cursorY += metaLineH;
     }
+    return cursorY;
+  }
+
+  double _drawTime(
+    ui.Canvas canvas,
+    WatermarkData data,
+    LayoutMetrics metrics,
+    double leftX,
+    double baseSize,
+    double cursorY,
+  ) {
+    final timeFontSize = metrics.fontSize;
+    final rowTop = cursorY;
+    final padding = metrics.padding;
+
+    // Jam
+    final timeTp = TextPainter(
+      text: TextSpan(
+        text: _hhmm(data.timestamp),
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: timeFontSize,
+          fontWeight: FontWeight.w800,
+          fontFamily: data.fontFamily,
+          height: 1.0,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    timeTp.paint(canvas, ui.Offset(leftX, rowTop));
+
+    // Divider
+    final dividerX = leftX + timeTp.width + padding * _dividerSpacing;
+    final dividerH = timeFontSize * 0.95;
+    canvas.drawRect(
+      ui.Rect.fromLTWH(dividerX, rowTop + (timeTp.height - dividerH) / 2, baseSize * _dividerScale, dividerH),
+      ui.Paint()..color = _accentColor,
+    );
+
+    // Tanggal & Hari
+    final dateColX = dividerX + baseSize * _dateSpacing;
+    final dateFontSize = baseSize * _dateScale;
+    final dayFontSize = baseSize * _dayScale;
+
+    final dateTp = TextPainter(
+      text: TextSpan(
+        text: _ddmmyyyy(data.timestamp),
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: dateFontSize,
+          fontWeight: FontWeight.w600,
+          fontFamily: data.fontFamily,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    dateTp.paint(canvas, ui.Offset(dateColX, rowTop));
+
+    final dayTp = TextPainter(
+      text: TextSpan(
+        text: _dayName(data.timestamp),
+        style: TextStyle(
+          color: Colors.white.withOpacity(_opacityDay),
+          fontSize: dayFontSize,
+          fontWeight: FontWeight.w400,
+          fontFamily: data.fontFamily,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    dayTp.paint(canvas, ui.Offset(dateColX, rowTop + dateTp.height));
+
+    return rowTop + timeTp.height + padding * _topPaddingFactor;
+  }
+
+  void _drawLocation(
+    ui.Canvas canvas,
+    WatermarkData data,
+    LayoutMetrics metrics,
+    double leftX,
+    double availW,
+    double baseSize,
+    double cursorY,
+    ui.Image? logoImage,
+  ) {
+    final addressFontSize = baseSize * _addressScale;
+    final logoReserve = (logoImage != null) ? metrics.logoMaxSize * _logoReserveScale : 0.0;
+
+    TextHelper.paintText(
+      canvas: canvas,
+      text: data.displayLocation,
+      x: leftX,
+      y: cursorY,
+      maxWidth: availW - logoReserve,
+      color: Colors.white,
+      fontSize: addressFontSize,
+      fontWeight: FontWeight.w600,
+      maxLines: 2,
+      fontFamily: data.fontFamily,
+    );
+  }
+
+  void _drawManualBadge(
+    ui.Canvas canvas,
+    WatermarkData data,
+    double padding,
+    double baseSize,
+    double barTop,
+    double photoWidth,
+  ) {
+    if (!data.isManual) return;
+
+    final metaFontSize = baseSize * _metaScale;
+    final manualTp = TextPainter(
+      text: TextSpan(
+        text: 'INPUT MANUAL',
+        style: TextStyle(
+          color: const Color(0xFFFFB74D),
+          fontSize: metaFontSize * _manualScale,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.5,
+          fontFamily: data.fontFamily,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    manualTp.paint(
+      canvas,
+      ui.Offset(photoWidth - padding - manualTp.width, barTop + padding * _topPaddingFactor),
+    );
+  }
+
+  void _drawLogo(
+    ui.Canvas canvas,
+    ui.Image? logoImage,
+    LayoutMetrics metrics,
+    double padding,
+    double photoWidth,
+    double photoHeight,
+  ) {
+    if (logoImage == null) return;
+
+    final logoSize = metrics.logoMaxSize * _logoScale;
+    final logoW = logoImage.width.toDouble();
+    final logoH = logoImage.height.toDouble();
+    final scale = math.min(logoSize / logoW, logoSize / logoH);
+    final drawW = logoW * scale;
+    final drawH = logoH * scale;
+
+    LogoWidget.paint(
+      canvas: canvas,
+      logoImage: logoImage,
+      x: photoWidth - padding - drawW,
+      y: photoHeight - padding - drawH,
+      maxWidth: drawW,
+      maxHeight: drawH,
+      opacity: _opacityLogo,
+    );
+  }
+
+  void _drawBrand(
+    ui.Canvas canvas,
+    WatermarkData data,
+    double padding,
+    double photoWidth,
+    double baseSize,
+  ) {
+    final brandText = data.companyName.isNotEmpty ? data.companyName : 'TermulScan';
+    final brandFontSize = baseSize * _brandScale;
+    final taglineFontSize = baseSize * _taglineScale;
+    final shadow = TextHelper.softShadow(opacity: _shadowOpacity, blur: 4);
+
+    final brandTp = TextPainter(
+      text: TextSpan(
+        text: brandText,
+        style: TextStyle(
+          color: _accentColor,
+          fontSize: brandFontSize,
+          fontWeight: FontWeight.w800,
+          fontFamily: data.fontFamily,
+          shadows: shadow,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.right,
+    )..layout(maxWidth: photoWidth - padding * 2);
+    brandTp.paint(canvas, ui.Offset(photoWidth - padding - brandTp.width, padding * _topPaddingFactor));
+
+    final taglineTp = TextPainter(
+      text: TextSpan(
+        text: 'Dokumentasi Resmi',
+        style: TextStyle(
+          color: Colors.white.withOpacity(_opacityBrand),
+          fontSize: taglineFontSize,
+          fontWeight: FontWeight.w400,
+          fontFamily: data.fontFamily,
+          shadows: shadow,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.right,
+    )..layout(maxWidth: photoWidth - padding * 2);
+    taglineTp.paint(
+      canvas,
+      ui.Offset(
+        photoWidth - padding - taglineTp.width,
+        padding * _topPaddingFactor + brandTp.height + 2,
+      ),
+    );
+  }
+
+  void _drawVerification(
+    ui.Canvas canvas,
+    WatermarkData data,
+    double padding,
+    double baseSize,
+    double photoWidth,
+    double barTop,
+  ) {
+    final code = _generateVerificationCode(data);
+    final shadow = TextHelper.softShadow(opacity: _shadowOpacity, blur: 4);
+
+    final vertTp = TextPainter(
+      text: TextSpan(
+        text: '$code   •   TERMULSCAN VERIFIED',
+        style: TextStyle(
+          color: Colors.white.withOpacity(_opacityCode),
+          fontSize: baseSize * _codeScale,
+          fontWeight: FontWeight.w500,
+          letterSpacing: 1.0,
+          fontFamily: data.fontFamily,
+          shadows: shadow,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    canvas.save();
+    final vertX = photoWidth - padding * _codeVerticalOffset;
+    final vertYBottom = barTop - padding * _topPaddingFactor;
+    canvas.translate(vertX, vertYBottom);
+    canvas.rotate(-math.pi / 2);
+    vertTp.paint(canvas, ui.Offset(0, -vertTp.height / 2));
+    canvas.restore();
   }
 
   // ─── PREVIEW ──────────────────────────────────────────────────
@@ -348,19 +536,15 @@ class ProfessionalLayout extends WatermarkLayout {
     double previewWidth = 300,
     double previewHeight = 400,
   }) {
+    // Gunakan computeMetrics() agar ukuran konsisten dengan export
     final metrics = computeMetrics(
       photoWidth: previewWidth,
       photoHeight: previewHeight,
       data: previewData,
     );
-
-    final overlayFractionHeight = metrics.stripHeight / previewHeight;
-    final isBottom = previewData.position == WatermarkPosition.bottomRight ||
-        previewData.position == WatermarkPosition.bottomLeft ||
-        (previewData.position != WatermarkPosition.topLeft &&
-            previewData.position != WatermarkPosition.topRight);
-    final isLeftAligned = previewData.position == WatermarkPosition.bottomLeft ||
-        previewData.position == WatermarkPosition.topLeft;
+    final baseSize = metrics.baseSize;
+    final barHeight = metrics.stripHeight;
+    final padding = metrics.padding;
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(6),
@@ -368,6 +552,7 @@ class ProfessionalLayout extends WatermarkLayout {
         aspectRatio: previewWidth / previewHeight,
         child: Stack(
           children: [
+            // Background
             Container(
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
@@ -380,63 +565,201 @@ class ProfessionalLayout extends WatermarkLayout {
                 child: Icon(Icons.image, color: Colors.white12, size: 28),
               ),
             ),
-            Align(
-              alignment: isBottom ? Alignment.bottomCenter : Alignment.topCenter,
-              child: FractionallySizedBox(
-                heightFactor: overlayFractionHeight.clamp(0.18, 0.9),
-                widthFactor: 1.0,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: isBottom ? Alignment.topCenter : Alignment.bottomCenter,
-                      end: isBottom ? Alignment.bottomCenter : Alignment.topCenter,
-                      colors: [
-                        Colors.black.withOpacity(0.0),
-                        Colors.black.withOpacity(
-                          (previewData.backgroundOpacity).clamp(0.0, 1.0),
-                        ),
-                      ],
+            // Brand badge
+            Positioned(
+              top: 8,
+              right: 8,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    previewData.companyName.isNotEmpty
+                        ? previewData.companyName
+                        : 'TermulScan',
+                    style: TextStyle(
+                      color: _accentColor,
+                      fontSize: baseSize * _brandScale,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    mainAxisAlignment: isLeftAligned
-                        ? MainAxisAlignment.start
-                        : MainAxisAlignment.end,
-                    children: [
-                      if (isLeftAligned) ...[
-                        _buildAccentBar(),
-                        const Gap(8),
-                        Expanded(child: _buildTextColumn(previewData, isLeftAligned)),
-                      ] else ...[
-                        Expanded(child: _buildTextColumn(previewData, isLeftAligned)),
-                        const Gap(8),
-                        _buildAccentBar(),
-                      ],
-                      if (hasLogo && logoPath != null && logoPath.isNotEmpty) ...[
-                        const Gap(8),
-                        Container(
-                          padding: const EdgeInsets.all(4),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.10),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Image.file(
-                            File(logoPath),
-                            width: metrics.logoMaxSize * 0.55,
-                            height: metrics.logoMaxSize * 0.55,
-                            fit: BoxFit.contain,
-                            errorBuilder: (_, __, ___) =>
-                                const Icon(Icons.business, color: Colors.white38, size: 14),
-                          ),
-                        ),
-                      ],
-                    ],
+                  Text(
+                    'Dokumentasi Resmi',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(_opacityBrand),
+                      fontSize: baseSize * _taglineScale,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // Verification code (vertical)
+            Positioned(
+              right: 3,
+              top: previewHeight * 0.35,
+              bottom: previewHeight * 0.32,
+              child: RotatedBox(
+                quarterTurns: 3,
+                child: Center(
+                  child: Text(
+                    '${_generateVerificationCode(previewData)} • VERIFIED',
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(_opacityCode),
+                      fontSize: baseSize * _codeScale,
+                      letterSpacing: 0.5,
+                    ),
                   ),
                 ),
               ),
             ),
+            // Bottom bar
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: barHeight,
+              child: Container(
+                padding: EdgeInsets.symmetric(
+                  horizontal: padding,
+                  vertical: padding * _topPaddingFactor,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(
+                    previewData.backgroundOpacity.clamp(0.4, 1.0),
+                  ),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Accent bar (identitas Professional)
+                    Container(
+                      width: 3,
+                      margin: const EdgeInsets.only(right: 8),
+                      decoration: BoxDecoration(
+                        color: _accentColor,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    Expanded(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (previewData.hasBarcode)
+                            Text(
+                              'KODE BARANG: ${previewData.barcodeValue}',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(_opacityMeta),
+                                fontSize: baseSize * _metaScale,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          if (previewData.hasOperator)
+                            Text(
+                              'OPERATOR: ${previewData.operatorName}',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(_opacityOperator),
+                                fontSize: baseSize * _metaScale,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          const SizedBox(height: 4),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _hhmm(previewData.timestamp),
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: baseSize * _timeScale,
+                                  fontWeight: FontWeight.w800,
+                                  height: 1.0,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Container(
+                                width: baseSize * _dividerScale,
+                                height: baseSize * _timeScale * 0.95,
+                                color: _accentColor,
+                              ),
+                              const SizedBox(width: 6),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    _ddmmyyyy(previewData.timestamp),
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: baseSize * _dateScale,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  Text(
+                                    _dayName(previewData.timestamp),
+                                    style: TextStyle(
+                                      color: Colors.white.withOpacity(_opacityDay),
+                                      fontSize: baseSize * _dayScale,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  previewData.displayLocation,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: baseSize * _addressScale,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                              if (hasLogo && logoPath != null && logoPath.isNotEmpty) ...[
+                                const SizedBox(width: 6),
+                                ClipRect(
+                                  child: Image.file(
+                                    File(logoPath),
+                                    width: metrics.logoMaxSize * _logoScale,
+                                    height: metrics.logoMaxSize * _logoScale,
+                                    fit: BoxFit.contain,
+                                    errorBuilder: (_, __, ___) =>
+                                        const Icon(Icons.business, color: Colors.white38, size: 14),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                          // Badge "INPUT MANUAL"
+                          if (previewData.isManual)
+                            Align(
+                              alignment: Alignment.topRight,
+                              child: Padding(
+                                padding: const EdgeInsets.only(top: 2),
+                                child: Text(
+                                  'INPUT MANUAL',
+                                  style: TextStyle(
+                                    color: const Color(0xFFFFB74D),
+                                    fontSize: baseSize * _metaScale * _manualScale,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            // Label layout
             Positioned(
               top: 6,
               left: 6,
@@ -463,101 +786,10 @@ class ProfessionalLayout extends WatermarkLayout {
     );
   }
 
-  Widget _buildAccentBar() {
-    return Container(
-      width: 2.5,
-      height: 36,
-      decoration: BoxDecoration(
-        color: _accentColor,
-        borderRadius: BorderRadius.circular(2),
-      ),
-    );
-  }
+  // ─── HELPERS ──────────────────────────────────────────────────
+  static String _hhmm(DateTime dt) =>
+      '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
 
-  Widget _buildTextColumn(WatermarkData previewData, bool isLeftAligned) {
-    return Column(
-      crossAxisAlignment:
-          isLeftAligned ? CrossAxisAlignment.start : CrossAxisAlignment.end,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (previewData.hasBarcode)
-          _PreviewField(
-            label: 'KODE BARANG',
-            value: previewData.barcodeValue ?? '',
-            valueColor: Colors.white,
-            bold: true,
-            alignEnd: !isLeftAligned,
-          ),
-        if (previewData.hasOperator)
-          _PreviewField(
-            label: 'OPERATOR',
-            value: previewData.operatorName,
-            valueColor: Colors.white.withOpacity(0.92),
-            alignEnd: !isLeftAligned,
-          ),
-        _PreviewField(
-          label: 'WAKTU',
-          value: previewData.formattedTimestamp,
-          valueColor: Colors.white.withOpacity(0.80),
-          alignEnd: !isLeftAligned,
-        ),
-        _PreviewField(
-          label: 'LOKASI',
-          value: previewData.displayLocation,
-          valueColor: Colors.white.withOpacity(0.70),
-          alignEnd: !isLeftAligned,
-        ),
-      ],
-    );
-  }
-}
-
-class _PreviewField extends StatelessWidget {
-  final String label;
-  final String value;
-  final Color valueColor;
-  final bool bold;
-  final bool alignEnd;
-
-  const _PreviewField({
-    required this.label,
-    required this.value,
-    required this.valueColor,
-    this.bold = false,
-    this.alignEnd = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 3),
-      child: Column(
-        crossAxisAlignment:
-            alignEnd ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            label,
-            style: TextStyle(
-              color: Colors.white.withOpacity(0.45),
-              fontSize: 6.5,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.6,
-            ),
-          ),
-          Text(
-            value,
-            style: TextStyle(
-              color: valueColor,
-              fontSize: bold ? 10.5 : 9.5,
-              fontWeight: bold ? FontWeight.w800 : FontWeight.w500,
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: alignEnd ? TextAlign.right : TextAlign.left,
-          ),
-        ],
-      ),
-    );
-  }
+  static String _ddmmyyyy(DateTime dt) =>
+      '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}';
 }
