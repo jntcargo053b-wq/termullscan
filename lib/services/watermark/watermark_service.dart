@@ -308,7 +308,12 @@ class VideoWatermarkService {
             final raw = sd['rotation'];
             final rot = raw is num ? raw.toInt() : int.tryParse('$raw') ?? 0;
             if (rot != 0) {
-              int finalRot = rot < 0 ? _normalizeRotation(rot) : _normalizeRotation(rot);
+              // PENTING: side_data (Display Matrix) pakai konvensi tanda
+              // terbalik dari tag 'rotate' legacy. av_display_rotation_get()
+              // mengembalikan sudut CCW; harus dinegasikan untuk mendapat
+              // "derajat CW yang dibutuhkan" (konvensi yang sama dipakai
+              // FFmpeg CLI sendiri di auto-rotate filter: theta = -av_display_rotation_get(...)).
+              int finalRot = _normalizeRotation(-rot);
               debugPrint('🔄 Rotasi dari side_data: ${rot} → normalisasi: $finalRot°');
               return finalRot;
             }
@@ -446,12 +451,15 @@ class VideoWatermarkService {
     String videoFilter = '';
     final rot = dims.rotation;
 
+    // rot merepresentasikan "derajat searah jarum jam (CW) yang dibutuhkan
+    // agar tampil benar" (konvensi sama dgn tag 'rotate' & FFmpeg auto-rotate).
+    // transpose=1 = 90° CW, transpose=2 = 90° CCW.
     if (rot == 90) {
-      videoFilter += 'transpose=2,';
-      debugPrint('🔄 Mapping rotasi 90° → transpose=2 (CW)');
-    } else if (rot == 270) {
       videoFilter += 'transpose=1,';
-      debugPrint('🔄 Mapping rotasi 270° → transpose=1 (CCW)');
+      debugPrint('🔄 Mapping rotasi 90° → transpose=1 (CW)');
+    } else if (rot == 270) {
+      videoFilter += 'transpose=2,';
+      debugPrint('🔄 Mapping rotasi 270° → transpose=2 (CCW)');
     } else if (rot == 180) {
       videoFilter += 'transpose=2,transpose=2,';
       debugPrint('🔄 Mapping rotasi 180° → transpose=2,transpose=2');
