@@ -223,6 +223,7 @@ class VideoWatermarkService {
           "-vf \"$drawText\" "
           "-c:a ${keepAudio ? 'copy' : 'an'} "
           "-c:v libx264 -preset fast -crf 23 "
+          "-metadata:s:v:0 rotate=0 "
           "-y '$outputPath'";
 
       debugPrint('🎬 FFmpeg fallback command: $command');
@@ -415,8 +416,22 @@ class VideoWatermarkService {
       entry.latitude ?? '',
       entry.longitude ?? '',
     ].join('|');
-    final hash = parts.hashCode.abs();
-    return hash.toRadixString(16).padLeft(16, '0');
+    return '${_stableHash(parts).toRadixString(16).padLeft(16, '0')}_${parts.length}';
+  }
+
+  /// Hash FNV-1a 64-bit sederhana (tanpa dependency tambahan). Jauh lebih
+  /// kecil risiko tabrakannya dibanding Dart String.hashCode bawaan (yang
+  /// hanya menjamin distribusi baik untuk HashMap, bukan untuk dipakai
+  /// sebagai kunci cache/identitas file). Panjang string asli ikut disertakan
+  /// di nama file sebagai lapisan pembeda tambahan.
+  static int _stableHash(String input) {
+    const int fnvPrime = 0x100000001b3;
+    int hash = 0xcbf29ce484222325;
+    for (final codeUnit in input.codeUnits) {
+      hash ^= codeUnit;
+      hash = (hash * fnvPrime) & 0xFFFFFFFFFFFFFFF; // batasi ke 60 bit agar aman di Dart int
+    }
+    return hash.abs();
   }
 
   static Future<Directory> _getCacheDirectory() async {
@@ -505,6 +520,15 @@ class VideoWatermarkService {
       ...filterArgs,
       ...encoderArgs,
       '-pix_fmt', 'yuv420p',
+      // PENTING: FFmpeg secara default ikut menyalin metadata stream dari
+      // input (termasuk tag 'rotate' lama) ke output, WALAUPUN piksel video
+      // sudah dibetulkan lewat filter transpose di atas. Kalau tidak
+      // dibersihkan, tag rotasi basi ini tetap menempel di file output —
+      // pemutar video yang longgar (preview di dalam app) tetap tampil benar,
+      // tapi Galeri/Google Photos yang ketat soal metadata akan memutar ULANG
+      // videonya berdasarkan tag basi itu, sehingga video tampak berputar
+      // saat disimpan/dilihat di galeri padahal pikselnya sudah benar.
+      '-metadata:s:v:0', 'rotate=0',
       '-movflags', '+faststart',
       '-shortest',
       '-y',
