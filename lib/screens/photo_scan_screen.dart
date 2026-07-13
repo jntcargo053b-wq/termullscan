@@ -581,6 +581,9 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       _isCapturing = true;
     });
 
+    String? pendingPath;
+    String? watermarkedPath;
+
     try {
       // ─── Ambil file asli (tanpa maxWidth/imageQuality) ──
       final xfile = await _picker.pickImage(
@@ -589,17 +592,27 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       );
       if (!mounted) return;
       if (xfile != null) {
-        final previewResult = await _showPreview(xfile, MediaType.photo);
+        // ─── Pindahkan ke pending ─────────────────────────
+        pendingPath = await _saveToPending(xfile);
+        try { await File(xfile.path).delete(); } catch (_) {}
+
+        // ─── ✅ Render watermark SEBELUM preview ──────────
+        setState(() => _statusText = 'Menambahkan watermark...');
+        final previewIndex = _nextPhotoIndex;
+        watermarkedPath = await _prepareWatermarkedPhoto(pendingPath, previewIndex);
+        if (!mounted) return;
+
+        final previewResult = await _showPreview(XFile(watermarkedPath), MediaType.photo);
         if (previewResult == 'save') {
-          // ─── Pindahkan ke pending ─────────────────────────
-          final pendingPath = await _saveToPending(xfile);
           final photoIndex = _nextPhotoIndex++;
+          final finalWatermarkedPath = watermarkedPath;
+          final finalPendingPath = pendingPath;
 
           _taskQueue.add(
             label: 'Foto $photoIndex',
             priority: TaskPriority.high,
             maxRetries: 3,
-            work: () => _processPhoto(pendingPath, photoIndex),
+            work: () => _finalizePhoto(finalWatermarkedPath, finalPendingPath, photoIndex),
             onSuccess: (path) {
               if (mounted) {
                 setState(() {
@@ -614,8 +627,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                   Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
                 }
               }
-              // Hapus pending file setelah sukses
-              try { File(pendingPath).delete(); } catch (_) {}
             },
             onError: (error) {
               if (mounted) {
@@ -624,20 +635,28 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                   Navigator.pop(context, {'error': error.toString()});
                 }
               }
-              try { File(pendingPath).delete(); } catch (_) {}
+              try { File(finalWatermarkedPath).delete(); } catch (_) {}
+              try { File(finalPendingPath).delete(); } catch (_) {}
             },
           );
           if (!widget.batchMode) {
-            setState(() => _statusText = 'Memproses foto...');
+            setState(() => _statusText = 'Menyimpan foto...');
           }
         } else {
-          // Retake → hapus file
-          try { await File(xfile.path).delete(); } catch (_) {}
+          // Retake → hapus file pending & watermark
+          try { await File(watermarkedPath).delete(); } catch (_) {}
+          try { await File(pendingPath).delete(); } catch (_) {}
           if (mounted) setState(() => _statusText = 'Dibatalkan');
         }
       }
     } catch (e) {
-      _showError('Gagal membuka kamera');
+      _showError('Gagal memproses foto: $e');
+      if (watermarkedPath != null) {
+        try { await File(watermarkedPath).delete(); } catch (_) {}
+      }
+      if (pendingPath != null) {
+        try { await File(pendingPath).delete(); } catch (_) {}
+      }
     } finally {
       _processingRequest = false;
       if (mounted) {
@@ -658,6 +677,9 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       _isCapturing = true;
     });
 
+    String? pendingPath;
+    String? watermarkedPath;
+
     try {
       // ─── Ambil file asli dari galeri ────────────────────
       final xfile = await _picker.pickImage(
@@ -666,16 +688,26 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       );
       if (!mounted) return;
       if (xfile != null) {
-        final previewResult = await _showPreview(xfile, MediaType.photo);
+        pendingPath = await _saveToPending(xfile);
+        try { await File(xfile.path).delete(); } catch (_) {}
+
+        // ─── ✅ Render watermark SEBELUM preview ──────────
+        setState(() => _statusText = 'Menambahkan watermark...');
+        final previewIndex = _nextPhotoIndex;
+        watermarkedPath = await _prepareWatermarkedPhoto(pendingPath, previewIndex);
+        if (!mounted) return;
+
+        final previewResult = await _showPreview(XFile(watermarkedPath), MediaType.photo);
         if (previewResult == 'save') {
-          final pendingPath = await _saveToPending(xfile);
           final photoIndex = _nextPhotoIndex++;
+          final finalWatermarkedPath = watermarkedPath;
+          final finalPendingPath = pendingPath;
 
           _taskQueue.add(
             label: 'Foto dari Galeri $photoIndex',
             priority: TaskPriority.high,
             maxRetries: 3,
-            work: () => _processPhoto(pendingPath, photoIndex),
+            work: () => _finalizePhoto(finalWatermarkedPath, finalPendingPath, photoIndex),
             onSuccess: (path) {
               if (mounted) {
                 setState(() {
@@ -690,7 +722,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                   Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
                 }
               }
-              try { File(pendingPath).delete(); } catch (_) {}
             },
             onError: (error) {
               if (mounted) {
@@ -699,19 +730,27 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                   Navigator.pop(context, {'error': error.toString()});
                 }
               }
-              try { File(pendingPath).delete(); } catch (_) {}
+              try { File(finalWatermarkedPath).delete(); } catch (_) {}
+              try { File(finalPendingPath).delete(); } catch (_) {}
             },
           );
           if (!widget.batchMode) {
-            setState(() => _statusText = 'Memproses foto...');
+            setState(() => _statusText = 'Menyimpan foto...');
           }
         } else {
-          try { await File(xfile.path).delete(); } catch (_) {}
+          try { await File(watermarkedPath).delete(); } catch (_) {}
+          try { await File(pendingPath).delete(); } catch (_) {}
           if (mounted) setState(() => _statusText = 'Dibatalkan');
         }
       }
     } catch (e) {
-      _showError('Gagal membuka galeri');
+      _showError('Gagal memproses foto: $e');
+      if (watermarkedPath != null) {
+        try { await File(watermarkedPath).delete(); } catch (_) {}
+      }
+      if (pendingPath != null) {
+        try { await File(pendingPath).delete(); } catch (_) {}
+      }
     } finally {
       _processingRequest = false;
       if (mounted) {
@@ -724,46 +763,71 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   }
 
   // ─── Core processing logic ──────────────────────────────────
+  //
+  // ✅ REVISI ARSITEKTUR: watermark sekarang di-render SEBELUM preview
+  // ditampilkan (lihat _prepareWatermarkedPhoto, dipanggil dari _takePhoto
+  // & _pickFromGallery). Preview menampilkan file yang SUDAH ber-watermark,
+  // sehingga apa yang dilihat pengguna = persis apa yang akan disimpan.
+  // _finalizePhoto (dipicu saat pengguna menekan "Simpan") TIDAK lagi
+  // melakukan kompresi/watermark ulang — hanya memindahkan file yang sudah
+  // jadi ke storage internal + gallery. Ini menjamin tidak ada proses
+  // watermark ulang saat Save, dan file yang disimpan identik dengan yang
+  // ada di preview.
 
-  Future<String> _processPhoto(String imagePath, int photoIndex) async {
-    String? watermarkedPath;
-    String compressedPath = imagePath;
-    bool compressedIsTemp = false;
+  /// Kompresi + watermark, dipanggil SEBELUM preview ditampilkan.
+  /// Mengembalikan path foto yang sudah ber-watermark (siap ditampilkan
+  /// di preview & langsung disimpan tanpa proses ulang).
+  Future<String> _prepareWatermarkedPhoto(String pendingPath, int photoIndex) async {
+    // ─── 1. Verifikasi file input ──────────────────────────
+    final inputFile = File(pendingPath);
+    if (!await inputFile.exists()) {
+      throw Exception('File input tidak ditemukan: $pendingPath');
+    }
+    final inputSize = await inputFile.length();
+    if (inputSize == 0) {
+      throw Exception('File input kosong: $pendingPath');
+    }
+    debugPrint('📷 Input file OK: $pendingPath (${inputSize ~/ 1024}KB)');
 
+    // ─── 2. Kompresi & resize (ImageCompressor) ──────────
+    final compressedPath = await ImageCompressor.compressIfNeeded(pendingPath);
+    final compressedFile = File(compressedPath);
+    if (!await compressedFile.exists()) {
+      throw Exception('File hasil kompresi tidak ditemukan: $compressedPath');
+    }
+    final compressedSize = await compressedFile.length();
+    if (compressedSize == 0) {
+      throw Exception('File hasil kompresi kosong: $compressedPath');
+    }
+    debugPrint('✅ Kompresi OK: $compressedPath (${compressedSize ~/ 1024}KB)');
+
+    // ─── 3. Watermark ──────────────────────────────────────
+    final timestamp = DateTime.now();
+    final watermarkedPath = await _applyWatermark(compressedPath, timestamp, photoIndex);
+
+    final watermarkedFile = File(watermarkedPath);
+    if (!await watermarkedFile.exists()) {
+      throw Exception('File watermark tidak ditemukan: $watermarkedPath');
+    }
+    final watermarkSize = await watermarkedFile.length();
+    if (watermarkSize == 0) {
+      throw Exception('File watermark kosong: $watermarkedPath');
+    }
+    debugPrint('✅ Watermark OK (pre-preview): $watermarkedPath (${watermarkSize ~/ 1024}KB)');
+
+    return watermarkedPath;
+  }
+
+  /// Dipanggil setelah pengguna menekan "Simpan" di preview. Hanya
+  /// memindahkan file yang SUDAH ber-watermark ke storage internal &
+  /// gallery — TIDAK ada kompresi/watermark ulang di sini.
+  Future<String> _finalizePhoto(
+    String watermarkedPath,
+    String pendingPath,
+    int photoIndex,
+  ) async {
     try {
-      // ─── 1. Verifikasi file input ──────────────────────────
-      final inputFile = File(imagePath);
-      if (!await inputFile.exists()) {
-        throw Exception('File input tidak ditemukan: $imagePath');
-      }
-      final inputSize = await inputFile.length();
-      if (inputSize == 0) {
-        throw Exception('File input kosong: $imagePath');
-      }
-      debugPrint('📷 Input file OK: $imagePath (${inputSize ~/ 1024}KB)');
-
-      // ─── 2. Kompresi & resize (ImageCompressor) ──────────
-      compressedPath = await ImageCompressor.compressIfNeeded(imagePath);
-      compressedIsTemp = compressedPath != imagePath &&
-          await FileHelper.isTemporaryFile(compressedPath);
-
-      final compressedFile = File(compressedPath);
-      if (!await compressedFile.exists()) {
-        throw Exception('File hasil kompresi tidak ditemukan: $compressedPath');
-      }
-      final compressedSize = await compressedFile.length();
-      if (compressedSize == 0) {
-        throw Exception('File hasil kompresi kosong: $compressedPath');
-      }
-      debugPrint('✅ Kompresi OK: $compressedPath (${compressedSize ~/ 1024}KB)');
-
-      // ─── 3. Watermark ──────────────────────────────────────
-      final timestamp = DateTime.now();
-      watermarkedPath = await _applyWatermark(compressedPath, timestamp, photoIndex);
-
-      if (watermarkedPath == null) {
-        throw Exception('Watermark gagal menghasilkan file');
-      }
+      // ─── 1. Verifikasi file watermark (hasil dari preview) ──
       final watermarkedFile = File(watermarkedPath);
       if (!await watermarkedFile.exists()) {
         throw Exception('File watermark tidak ditemukan: $watermarkedPath');
@@ -772,9 +836,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       if (watermarkSize == 0) {
         throw Exception('File watermark kosong: $watermarkedPath');
       }
-      debugPrint('✅ Watermark OK: $watermarkedPath (${watermarkSize ~/ 1024}KB)');
 
-      // ─── 4. Simpan ke internal ────────────────────────────
+      // ─── 2. Simpan ke internal ────────────────────────────
       final name = _resolveFileName(photoIndex);
       final savedPath = await _storage.savePhoto(watermarkedPath, name: name);
       if (savedPath.isEmpty) {
@@ -786,14 +849,15 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       }
       debugPrint('✅ Internal save OK: $savedPath');
 
-      // ─── 5. Hapus watermark temp (hanya jika berbeda dan temporary) ──
-      if (watermarkedPath != savedPath &&
-          await FileHelper.isTemporaryFile(watermarkedPath) &&
-          await File(watermarkedPath).exists()) {
+      // ─── 3. Hapus file watermark temp & pending asli ──────
+      if (watermarkedPath != savedPath && await File(watermarkedPath).exists()) {
         try { await File(watermarkedPath).delete(); } catch (_) {}
       }
+      if (pendingPath != savedPath && await File(pendingPath).exists()) {
+        try { await File(pendingPath).delete(); } catch (_) {}
+      }
 
-      // ─── 6. Update database jika ada entryId ──────────────
+      // ─── 4. Update database jika ada entryId ──────────────
       if (widget.entryId != null) {
         final barcodeEntry = await _storage.getEntry(widget.entryId!);
         if (barcodeEntry != null) {
@@ -802,13 +866,13 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         }
       }
 
-      // ─── 7. Simpan ke gallery ──────────────────────────────
+      // ─── 5. Simpan ke gallery ──────────────────────────────
       final galleryOk = await _saveToGallery(savedPath);
       if (!galleryOk) {
         debugPrint('⚠️ Gagal ekspor ke gallery, file tetap tersimpan di internal');
       }
 
-      // ─── 8. Notifikasi batch ──────────────────────────────
+      // ─── 6. Notifikasi batch ──────────────────────────────
       if (widget.batchMode && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -820,31 +884,14 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       }
 
       return savedPath;
-
     } catch (e, stack) {
-      debugPrint('❌ Error processing photo #$photoIndex ($imagePath): $e\n$stack');
-      // Bersihkan file sisa
-      if (watermarkedPath != null && watermarkedPath != compressedPath) {
-        try { await File(watermarkedPath).delete(); } catch (_) {}
-      }
-      if (compressedIsTemp && compressedPath != imagePath) {
-        try { await File(compressedPath).delete(); } catch (_) {}
-      }
+      debugPrint('❌ Error finalisasi foto #$photoIndex ($watermarkedPath): $e\n$stack');
       rethrow;
-    } finally {
-      // Hapus file temporary hasil kompresi (bukan file pending asli)
-      if (compressedIsTemp && compressedPath != imagePath) {
-        try { await File(compressedPath).delete(); } catch (_) {}
-      }
-      // ⚠️ CATATAN: file pending (imagePath) SENGAJA TIDAK dihapus di sini.
-      // _processPhoto() dipanggil ulang oleh TaskQueue saat retry dengan
-      // path pending yang SAMA — jika dihapus di sini, percobaan retry
-      // berikutnya akan selalu gagal dengan "File input tidak ditemukan",
-      // menutupi penyebab kegagalan yang sebenarnya. Pembersihan file
-      // pending sudah ditangani di pemanggil (_takePhoto/_pickFromGallery)
-      // lewat callback onSuccess/onError, yang hanya jalan sekali setelah
-      // task benar-benar final (sukses atau gagal permanen).
     }
+    // ⚠️ CATATAN: watermarkedPath & pendingPath SENGAJA tidak dihapus di
+    // sini saat gagal — TaskQueue bisa retry _finalizePhoto dengan path
+    // yang sama. Pembersihan saat gagal permanen ditangani oleh
+    // onError di _takePhoto/_pickFromGallery.
   }
 
   // ─── Batch finish ───────────────────────────────────────────

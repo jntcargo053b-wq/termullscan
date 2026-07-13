@@ -24,6 +24,23 @@ import '../utils/file_helper.dart';
 import 'preview_screen.dart';
 import 'watermark_settings_sheet.dart';
 
+/// Hasil dari _prepareWatermarkedVideo: file video yang SUDAH siap
+/// (ber-watermark, atau raw jika watermark gagal) untuk ditampilkan
+/// langsung di preview dan disimpan apa adanya saat "Simpan" ditekan.
+class _VideoPrepResult {
+  final String path; // file final (watermark / raw) — inilah yang ditampilkan di preview & disimpan
+  final String originalPath; // file rekaman asli, dihapus setelah selesai
+  final int durationSeconds;
+  final bool watermarked;
+
+  const _VideoPrepResult({
+    required this.path,
+    required this.originalPath,
+    required this.durationSeconds,
+    required this.watermarked,
+  });
+}
+
 class VideoScanScreen extends StatefulWidget {
   final String? barcode;
   const VideoScanScreen({super.key, this.barcode});
@@ -138,8 +155,11 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       _statusText = 'Membuka kamera...';
     });
 
+    XFile? videoFile;
+    _VideoPrepResult? prep;
+
     try {
-      final XFile? videoFile = await _picker.pickVideo(
+      videoFile = await _picker.pickVideo(
         source: ImageSource.camera,
         maxDuration: const Duration(seconds: 20),
         preferredCameraDevice: CameraDevice.rear,
@@ -153,13 +173,20 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         return;
       }
 
-      final previewResult = await _showPreview(videoFile, MediaType.video);
+      // ─── ✅ Render watermark SEBELUM preview ──────────
+      // Preview akan menampilkan file HASIL watermark ini persis apa
+      // adanya, dan "Simpan" tidak akan memproses ulang.
+      prep = await _prepareWatermarkedVideo(videoFile);
+      if (!mounted) return;
+
+      final previewResult = await _showPreview(XFile(prep.path), MediaType.video);
       if (previewResult == 'save') {
+        final finalPrep = prep;
         _taskQueue.add(
           label: 'Video ${widget.barcode ?? ''}',
           priority: TaskPriority.high,
           maxRetries: 2,
-          work: () => _processVideo(videoFile),
+          work: () => _finalizeVideo(finalPrep),
           onSuccess: (entry) {
             if (!mounted) return;
             ScaffoldMessenger.of(context).showSnackBar(
@@ -177,10 +204,14 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         );
         setState(() {
           _isSaving = false;
-          _statusText = 'Video direkam, memproses di background...';
+          _statusText = 'Video siap, menyimpan di background...';
         });
       } else {
-        try { await File(videoFile.path).delete(); } catch (_) {}
+        // Retake → hapus hasil watermark & file rekaman asli
+        try { await File(prep.path).delete(); } catch (_) {}
+        if (prep.originalPath != prep.path) {
+          try { await File(prep.originalPath).delete(); } catch (_) {}
+        }
         setState(() {
           _isSaving = false;
           _statusText = 'Dibatalkan';
@@ -188,6 +219,14 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       }
     } catch (e) {
       debugPrint('❌ Gagal merekam video: $e');
+      if (prep != null) {
+        try { await File(prep.path).delete(); } catch (_) {}
+        if (prep.originalPath != prep.path) {
+          try { await File(prep.originalPath).delete(); } catch (_) {}
+        }
+      } else if (videoFile != null) {
+        try { await File(videoFile.path).delete(); } catch (_) {}
+      }
       if (mounted) {
         setState(() {
           _isSaving = false;
@@ -216,151 +255,169 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     }
   }
 
-  Future<ScanEntry> _processVideo(XFile videoFile) async {
+  // ✅ REVISI ARSITEKTUR: watermark video sekarang di-render SEBELUM
+  // preview ditampilkan (_prepareWatermarkedVideo, dipanggil dari
+  // _pickAndRecord). Preview menampilkan video yang SUDAH ber-watermark,
+  // sehingga apa yang diputar di preview = persis file yang akan disimpan.
+  // _finalizeVideo (dipicu saat "Simpan" ditekan) TIDAK lagi memanggil
+  // FFmpeg lagi — hanya memindahkan file yang sudah jadi ke storage
+  // internal, membuat thumbnail, ekspor gallery, dan mencatat entry DB.
+
+  /// Validasi + render watermark, dipanggil SEBELUM preview ditampilkan.
+  Future<_VideoPrepResult> _prepareWatermarkedVideo(XFile videoFile) async {
     final settings = context.read<WatermarkSettings>();
 
+    final file = File(videoFile.path);
+    if (!await file.exists()) throw Exception('File video tidak ditemukan');
+
+    final fileSize = await file.length();
+    if (fileSize > _maxVideoSizeBytes) {
+      await file.delete();
+      throw Exception('Video terlalu besar. Maks 50 MB.');
+    }
+
+    // 1. Durasi video
+    int durationSeconds = 0;
+    try {
+      final vc = VideoPlayerController.file(file);
+      await vc.initialize();
+      durationSeconds = vc.value.duration.inSeconds;
+      await vc.dispose();
+    } catch (_) {}
+
+    if (durationSeconds > 0 && durationSeconds < _minVideoDurationSeconds) {
+      await file.delete();
+      throw Exception(
+        'Video terlalu pendek (${durationSeconds}s). Minimal $_minVideoDurationSeconds detik.',
+      );
+    }
+
+    // 2. Output watermark di cache
+    final tempDir = await getTemporaryDirectory();
+    final wmOutputPath = '${tempDir.path}/wm_${DateTime.now().millisecondsSinceEpoch}.mp4';
+
+    _safeSetState(() {
+      _statusText = 'Menambahkan watermark...';
+      _progress = 0.0;
+    });
+
+    // ============================================================
+    // ✅ PERBAIKAN: Gunakan VideoWatermarkService (overlay PNG + fallback
+    // hw→sw encoder) — BUKAN VideoWatermarkRenderer lama yang memakai
+    // drawtext dengan urutan escaping salah (colon di-escape dulu baru
+    // backslash-nya di-escape ulang → filter FFmpeg jadi korup → selalu
+    // gagal parse → video jatuh ke jalur "simpan tanpa watermark").
+    // ============================================================
+    final wmLocState = _wmSettings.gpsWatermarkEnabled
+        ? PodLocationService.instance.currentState
+        : null;
+    final wmResult = await VideoWatermarkService.addWatermark(
+      inputPath: videoFile.path,
+      outputPath: wmOutputPath,
+      settings: settings,
+      keepAudio: true,
+      entry: ScanEntry(
+        id: _storage.generateId(),
+        type: ScanType.video,
+        value: widget.barcode ?? 'video_${DateTime.now().millisecondsSinceEpoch}',
+        timestamp: DateTime.now(),
+        latitude: wmLocState?.lat,
+        longitude: wmLocState?.lon,
+        locationName: (wmLocState != null && wmLocState.address.isNotEmpty) ? wmLocState.address : null,
+      ),
+      onProgress: (p) {
+        _safeSetState(() => _progress = p);
+      },
+    );
+
+    if (wmResult == null && VideoWatermarkService.lastError != null) {
+      debugPrint('🩺 Diagnosis watermark video: ${VideoWatermarkService.lastError}');
+    }
+
+    _safeSetState(() {
+      _progress = 1.0;
+      _statusText = wmResult != null ? 'Watermark selesai!' : 'Watermark gagal';
+    });
+
+    if (wmResult != null) {
+      return _VideoPrepResult(
+        path: wmResult,
+        originalPath: videoFile.path,
+        durationSeconds: durationSeconds,
+        watermarked: true,
+      );
+    }
+
+    // Watermark gagal → tetap tampilkan & simpan video mentah, dengan
+    // peringatan. Preview akan menunjukkan video TANPA watermark ini apa
+    // adanya, sehingga tidak ada kejutan saat Save.
+    final diagnosis = VideoWatermarkService.lastError;
+    debugPrint('❌ Watermark video gagal${diagnosis != null ? ': $diagnosis' : ''}');
+    if (mounted) {
+      _showError(diagnosis != null
+          ? 'Watermark gagal ($diagnosis). Video akan disimpan tanpa watermark.'
+          : 'Watermark gagal. Video akan disimpan tanpa watermark.');
+    }
+    return _VideoPrepResult(
+      path: videoFile.path,
+      originalPath: videoFile.path,
+      durationSeconds: durationSeconds,
+      watermarked: false,
+    );
+  }
+
+  /// Dipanggil setelah pengguna menekan "Simpan" di preview. Hanya
+  /// memindahkan file yang SUDAH jadi (watermark/raw) ke storage internal
+  /// & gallery — TIDAK ada render FFmpeg ulang di sini.
+  Future<ScanEntry> _finalizeVideo(_VideoPrepResult prep) async {
     String? finalPath;
     String? thumbnailPath;
-    int durationSeconds = 0;
     bool galleryOk = false;
     bool localCopyDeleted = false;
 
     try {
-      final file = File(videoFile.path);
-      if (!await file.exists()) throw Exception('File video tidak ditemukan');
-
-      final fileSize = await file.length();
-      if (fileSize > _maxVideoSizeBytes) {
-        await file.delete();
-        throw Exception('Video terlalu besar. Maks 50 MB.');
+      final preppedFile = File(prep.path);
+      if (!await preppedFile.exists()) {
+        throw Exception('File video (hasil preview) tidak ditemukan');
       }
 
-      // 1. Durasi video
-      try {
-        final vc = VideoPlayerController.file(file);
-        await vc.initialize();
-        durationSeconds = vc.value.duration.inSeconds;
-        await vc.dispose();
-      } catch (_) {}
+      _safeSetState(() => _statusText = 'Menyimpan video...');
+      final savedPath = await _storage.saveVideo(prep.path, name: widget.barcode);
+      if (savedPath.isEmpty) throw Exception('Gagal menyimpan video');
+      finalPath = savedPath;
 
-      if (durationSeconds > 0 && durationSeconds < _minVideoDurationSeconds) {
-        await file.delete();
-        throw Exception(
-          'Video terlalu pendek (${durationSeconds}s). Minimal $_minVideoDurationSeconds detik.',
-        );
-      }
+      thumbnailPath = await _generateThumbnail(savedPath);
 
-      // 2. Output watermark di cache
-      final tempDir = await getTemporaryDirectory();
-      final wmOutputPath = '${tempDir.path}/wm_${DateTime.now().millisecondsSinceEpoch}.mp4';
+      _safeSetState(() => _statusText = 'Ekspor ke Gallery...');
+      galleryOk = await _saveToGallery(savedPath);
 
-      _safeSetState(() {
-        _statusText = 'Menambahkan watermark...';
-        _progress = 0.0;
-      });
-
-      // ============================================================
-      // ✅ PERBAIKAN: Gunakan VideoWatermarkService (overlay PNG + fallback
-      // hw→sw encoder) — BUKAN VideoWatermarkRenderer lama yang memakai
-      // drawtext dengan urutan escaping salah (colon di-escape dulu baru
-      // backslash-nya di-escape ulang → filter FFmpeg jadi korup → selalu
-      // gagal parse → video jatuh ke jalur "simpan tanpa watermark").
-      // ============================================================
-      final wmLocState = _wmSettings.gpsWatermarkEnabled
-          ? PodLocationService.instance.currentState
-          : null;
-      final wmResult = await VideoWatermarkService.addWatermark(
-        inputPath: videoFile.path,
-        outputPath: wmOutputPath,
-        settings: settings,
-        keepAudio: true,
-        entry: ScanEntry(
-          id: _storage.generateId(),
-          type: ScanType.video,
-          value: widget.barcode ?? 'video_${DateTime.now().millisecondsSinceEpoch}',
-          timestamp: DateTime.now(),
-          latitude: wmLocState?.lat,
-          longitude: wmLocState?.lon,
-          locationName: (wmLocState != null && wmLocState.address.isNotEmpty) ? wmLocState.address : null,
-        ),
-        onProgress: (p) {
-          _safeSetState(() => _progress = p);
-        },
-      );
-
-      if (wmResult == null && VideoWatermarkService.lastError != null) {
-        debugPrint('🩺 Diagnosis watermark video: ${VideoWatermarkService.lastError}');
-      }
-
-      _safeSetState(() {
-        _progress = 1.0;
-        _statusText = wmResult != null ? 'Watermark selesai!' : 'Watermark gagal';
-      });
-
-      if (wmResult != null) {
-        // 4. Watermark berhasil
-        _safeSetState(() => _statusText = 'Menyimpan video...');
-        final savedPath = await _storage.saveVideo(wmResult, name: widget.barcode);
-        if (savedPath.isEmpty) throw Exception('Gagal menyimpan video watermark');
-        finalPath = savedPath;
-
-        thumbnailPath = await _generateThumbnail(savedPath);
-
-        _safeSetState(() => _statusText = 'Ekspor ke Gallery...');
-        galleryOk = await _saveToGallery(savedPath);
-
-        if (galleryOk) {
-          debugPrint('✅ Video berhasil diekspor ke gallery');
-        } else {
-          debugPrint('⚠️ Gagal ekspor ke gallery setelah percobaan, file tetap tersimpan di internal');
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Video tersimpan di internal, gagal ekspor ke gallery'),
-                backgroundColor: Colors.orange,
-              ),
-            );
-          }
-        }
-
-        await file.delete();
-        localCopyDeleted = await _maybeDeleteLocalCopy(savedPath, galleryOk);
-
-        _safeSetState(() => _statusText = galleryOk
-            ? (localCopyDeleted
-                ? 'Video tersimpan di Galeri (lokal dihapus)'
-                : 'Video tersimpan di internal & Gallery')
-            : 'Video tersimpan di internal (gagal ekspor)');
+      if (galleryOk) {
+        debugPrint('✅ Video berhasil diekspor ke gallery');
       } else {
-        // 5. Watermark gagal → simpan video mentah
-        final diagnosis = VideoWatermarkService.lastError;
-        debugPrint('❌ Watermark video gagal${diagnosis != null ? ': $diagnosis' : ''}');
-        _showError(diagnosis != null
-            ? 'Watermark gagal ($diagnosis). Video disimpan tanpa watermark.'
-            : 'Watermark gagal. Video disimpan tanpa watermark.');
-
-        _safeSetState(() => _statusText = 'Watermark gagal, menyimpan video mentah...');
-        final savedPath = await _storage.saveVideo(videoFile.path, name: widget.barcode);
-        if (savedPath.isEmpty) throw Exception('Gagal menyimpan video mentah');
-        finalPath = savedPath;
-
-        thumbnailPath = await _generateThumbnail(savedPath);
-        if (await file.exists()) await file.delete();
-
-        _safeSetState(() => _statusText = 'Ekspor ke Gallery...');
-        galleryOk = await _saveToGallery(savedPath);
-        localCopyDeleted = await _maybeDeleteLocalCopy(savedPath, galleryOk);
-
-        _safeSetState(() => _statusText = galleryOk
-            ? (localCopyDeleted
-                ? 'Video tersimpan di Galeri (lokal dihapus)'
-                : 'Video tersimpan (tanpa watermark) & Gallery')
-            : 'Video tersimpan (tanpa watermark), gagal ekspor ke Gallery');
+        debugPrint('⚠️ Gagal ekspor ke gallery setelah percobaan, file tetap tersimpan di internal');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Video tersimpan di internal, gagal ekspor ke gallery'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
       }
 
-      // 6. Simpan entry database
-      if (finalPath == null) throw Exception('Gagal menyimpan video');
+      localCopyDeleted = await _maybeDeleteLocalCopy(savedPath, galleryOk);
 
+      _safeSetState(() => _statusText = galleryOk
+          ? (localCopyDeleted
+              ? 'Video tersimpan di Galeri (lokal dihapus)'
+              : (prep.watermarked
+                  ? 'Video tersimpan di internal & Gallery'
+                  : 'Video tersimpan (tanpa watermark) & Gallery'))
+          : (prep.watermarked
+              ? 'Video tersimpan di internal (gagal ekspor)'
+              : 'Video tersimpan (tanpa watermark), gagal ekspor ke Gallery'));
+
+      // Simpan entry database
       final finalLocState = _wmSettings.gpsWatermarkEnabled
           ? PodLocationService.instance.currentState
           : null;
@@ -373,7 +430,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         longitude: finalLocState?.lon,
         locationName: (finalLocState != null && finalLocState.address.isNotEmpty) ? finalLocState.address : null,
         videoPath: finalPath,
-        videoDuration: durationSeconds,
+        videoDuration: prep.durationSeconds,
         videoThumbnail: thumbnailPath,
         galleryExported: galleryOk,
         videoLocalDeleted: localCopyDeleted,
@@ -382,7 +439,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
 
       return entry;
     } catch (e) {
-      debugPrint('❌ Error processing video: $e');
+      debugPrint('❌ Error finalisasi video: $e');
       _progress = 0.0;
       _safeSetState(() {});
       rethrow;
@@ -394,7 +451,10 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
           try { await File(f.path).delete(); } catch (_) {}
         }
       } catch (_) {}
-      await FileHelper.deleteIfExists(videoFile.path);
+      await FileHelper.deleteIfExists(prep.path);
+      if (prep.originalPath != prep.path) {
+        await FileHelper.deleteIfExists(prep.originalPath);
+      }
     }
   }
 
