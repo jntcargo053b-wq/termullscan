@@ -270,10 +270,14 @@ class VideoWatermarkService {
       }
     }
 
-    if (rotation == 0 && height > width) {
-      debugPrint('⚠️ Dimensi portrait tanpa metadata rotasi → asumsi 90°');
-      rotation = 90;
-    }
+    // CATATAN: sebelumnya di sini ada heuristik yang MEMAKSA rotation=90
+    // kalau height>width tanpa metadata rotasi. Itu SALAH — banyak video
+    // hasil rekam kamera modern sudah portrait secara native (tanpa tag
+    // 'rotate' maupun side_data karena memang tidak butuh rotasi apa pun).
+    // Memaksa transpose pada video yang sudah benar justru membuatnya
+    // miring. Kalau tidak ada metadata rotasi sama sekali, rotation harus
+    // tetap 0 (video dipakai apa adanya, tanpa transpose).
+    debugPrint('📐 Tidak ada metadata rotasi terdeteksi → rotation=0 (dipakai apa adanya)');
 
     return _VideoInfo(
       width: width,
