@@ -486,7 +486,18 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       entry: tempEntry,
     );
 
-    if (result != null && result != imagePath) {
+    if (result == null) {
+      // ✅ Sebelumnya kegagalan di sini diam-diam fallback ke foto tanpa
+      // watermark (return imagePath) — user tidak pernah tahu watermark-nya
+      // gagal. Sekarang dilempar sebagai error yang jelas, konsisten
+      // dengan jalur video (VideoWatermarkService.lastError).
+      final diagnosis = WatermarkRenderer.lastError;
+      throw Exception(
+        diagnosis != null ? 'Watermark foto gagal: $diagnosis' : 'Watermark foto gagal',
+      );
+    }
+
+    if (result != imagePath) {
       final file = File(imagePath);
       try {
         if (await FileHelper.isTemporaryFile(imagePath)) {
@@ -498,7 +509,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       }
     }
 
-    return result ?? imagePath;
+    return result;
   }
 
   // ─── ✅ PERBAIKAN: _saveToGallery dengan verifikasi & retry ──

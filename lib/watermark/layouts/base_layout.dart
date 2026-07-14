@@ -11,6 +11,14 @@ abstract class WatermarkLayout {
 
   WatermarkStyle? get style => null;
 
+  /// Apakah gaya ini bisa dipakai sebagai overlay PNG pada video.
+  /// Overlay video WAJIB berukuran identik dengan frame video, jadi
+  /// default true di sini hanya valid untuk layout yang canvas-nya
+  /// = ukuran foto/frame asli. Layout yang menambah border/strip di
+  /// sekeliling foto (sehingga canvasWidth/Height > photoWidth/Height,
+  /// mis. Polaroid) WAJIB override ini ke false.
+  bool get supportsVideoOverlay => true;
+
   LayoutMetrics computeMetrics({
     required double photoWidth,
     required double photoHeight,

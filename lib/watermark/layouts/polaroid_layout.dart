@@ -24,6 +24,14 @@ class PolaroidLayout extends WatermarkLayout {
   @override
   WatermarkStyle get style => WatermarkStyle.polaroid;
 
+  // ✅ Canvas Polaroid = foto + frame border + strip bawah (lihat
+  // computeMetrics: canvasW/H > photoWidth/Height), jadi TIDAK bisa
+  // dipakai sebagai overlay video (overlay wajib = ukuran frame asli).
+  // Video dengan gaya ini otomatis fallback ke watermark teks (drawtext)
+  // di VideoWatermarkService.
+  @override
+  bool get supportsVideoOverlay => false;
+
   static const double _frameBorderRatio = 0.018;
 
   @override

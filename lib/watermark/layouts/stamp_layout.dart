@@ -77,9 +77,6 @@ class StampLayout extends WatermarkLayout {
     required ui.Image? logoImage,
     required WatermarkData data,
   }) {
-    final padding = metrics.padding;
-    final baseSize = metrics.baseSize;
-
     canvas.drawImageRect(
       srcImage,
       Rect.fromLTWH(0, 0, photoWidth, photoHeight),
@@ -88,6 +85,52 @@ class StampLayout extends WatermarkLayout {
         ..filterQuality = FilterQuality.high
         ..isAntiAlias = true,
     );
+
+    _paint(
+      canvas: canvas,
+      metrics: metrics,
+      photoWidth: photoWidth,
+      photoHeight: photoHeight,
+      logoImage: logoImage,
+      data: data,
+    );
+  }
+
+  /// ✅ Gambar hanya elemen watermark (stamp badge, panel info, logo) tanpa
+  /// foto latar. Dipakai untuk overlay PNG transparan pada video — canvas
+  /// Stamp SELALU berukuran sama dengan foto/frame asli (lihat
+  /// computeMetrics: canvasWidth = photoWidth, canvasHeight = photoHeight),
+  /// jadi style ini kompatibel penuh dengan overlay video (beda dengan
+  /// Polaroid yang menambah border & strip sehingga canvas-nya lebih besar
+  /// dari foto/frame).
+  @override
+  void paintWatermarkOnly({
+    required ui.Canvas canvas,
+    required LayoutMetrics metrics,
+    required ui.Image? logoImage,
+    required WatermarkData data,
+  }) {
+    _paint(
+      canvas: canvas,
+      metrics: metrics,
+      photoWidth: metrics.canvasWidth,
+      photoHeight: metrics.canvasHeight,
+      logoImage: logoImage,
+      data: data,
+    );
+  }
+
+  // ─── INTERNAL PAINT (dipakai oleh paintOnCanvas & paintWatermarkOnly) ──
+  void _paint({
+    required ui.Canvas canvas,
+    required LayoutMetrics metrics,
+    required double photoWidth,
+    required double photoHeight,
+    required ui.Image? logoImage,
+    required WatermarkData data,
+  }) {
+    final padding = metrics.padding;
+    final baseSize = metrics.baseSize;
 
     final stampColor = data.isManual ? const Color(0xFFE67E22) : const Color(0xFF2E8B57);
     final stampLabel = data.isManual ? 'MANUAL' : 'VERIFIED';
