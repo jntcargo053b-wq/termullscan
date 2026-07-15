@@ -316,12 +316,14 @@ class VideoWatermarkService {
       outH = temp;
     }
 
-    String scaleFilter = '';
-    if (rotation == 90) scaleFilter += 'transpose=1,';
-    else if (rotation == 270) scaleFilter += 'transpose=2,';
-    else if (rotation == 180) scaleFilter += 'transpose=2,transpose=2,';
-
-    scaleFilter += 'setsar=1';
+    // Catatan: TIDAK menerapkan transpose manual di sini. FFmpeg (autorotate
+    // default, tanpa -noautorotate) sudah otomatis mengoreksi orientasi fisik
+    // frame berdasarkan metadata rotasi video (baik tag 'rotate' lama maupun
+    // 'displaymatrix' side_data baru), sehingga [0:v] yang masuk ke
+    // filter_complex sudah dalam orientasi tampil yang benar. Menambahkan
+    // transpose manual di sini akan menyebabkan rotasi ganda / salah arah
+    // (inilah penyebab bug video terputar 90°).
+    const String scaleFilter = 'setsar=1';
 
     return _Dimensions(
       outW: outW,
@@ -468,7 +470,6 @@ class VideoWatermarkService {
     }
 
     final arguments = <String>[
-      '-noautorotate',
       '-i', inputPath,
       '-i', overlayPath,
       ...filterArgs,
