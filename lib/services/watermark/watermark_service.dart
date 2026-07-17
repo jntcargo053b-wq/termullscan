@@ -1,5 +1,5 @@
 // lib/services/watermark/watermark_service.dart
-// VERSI FINAL - PRODUCTION READY (ALL ERRORS FIXED)
+// VERSI FINAL - COMPILE FIXED
 import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
@@ -184,7 +184,8 @@ class VideoWatermarkService {
       
       final session = _activeSessions[sessionId];
       if (session != null) {
-        FFmpegKit.cancel(session as FFmpegSession);
+        // FIX: Gunakan dynamic cast
+        FFmpegKit.cancel(session);
         if (kDebugMode) debugPrint('🛑 Cancel FFmpeg session: $sessionId');
         _activeSessions.remove(sessionId);
       }
@@ -391,6 +392,7 @@ class VideoWatermarkService {
           
           final callback = _progressCallbacks[sessionId];
           if (callback != null) {
+            // FIX: statistics adalah objek Statistics, punya getTime()
             final timeMs = statistics.getTime();
             if (timeMs > 0) {
               double progress = timeMs / (duration * 1000);
@@ -417,7 +419,7 @@ class VideoWatermarkService {
         if (!completer.isCompleted) {
           debugPrint('⏱️ Encoding timeout setelah $timeoutSeconds detik');
           if (session != null) {
-            FFmpegKit.cancel(session as FFmpegSession);
+            FFmpegKit.cancel(session);
           }
           _sessionLock.synchronized(() async {
             _activeSessions.remove(sessionId);
@@ -441,7 +443,7 @@ class VideoWatermarkService {
         _progressCallbacks.remove(sessionId);
       });
       if (session != null) {
-        try { FFmpegKit.cancel(session as FFmpegSession); } catch (_) {}
+        try { FFmpegKit.cancel(session); } catch (_) {}
       }
       return false;
     }
@@ -953,7 +955,49 @@ class VideoWatermarkService {
     return arguments;
   }
 
-  // ─── FALLBACK DRAWTEXT ──────────────────────────────────────
+  // ─── DIAGNOSIS ──────────────────────────────────────────────
+  static String _diagnoseFailure(String logs) {
+    final l = logs.toLowerCase();
+    if (l.contains('overlay.png') && (l.contains('no such file') || l.contains('invalid data found'))) {
+      return 'Overlay PNG watermark gagal dibuat/dibaca.';
+    }
+    if (l.contains('unknown encoder') || l.contains('encoder not found')) {
+      return 'Encoder tidak tersedia. Coba gunakan software encoder.';
+    }
+    if (l.contains('invalid argument') && l.contains('overlay')) {
+      return 'Argumen filter overlay tidak valid. Periksa ukuran watermark.';
+    }
+    if (l.contains('permission denied')) {
+      return 'Tidak ada izin baca/tulis.';
+    }
+    if (l.contains('moov atom not found') || l.contains('invalid data found')) {
+      return 'File video input korup.';
+    }
+    if (l.contains('cannot allocate memory')) {
+      return 'Memori tidak cukup. Turunkan resolusi atau bitrate.';
+    }
+    if (l.contains('broken pipe')) {
+      return 'Proses encoding terputus.';
+    }
+    if (l.contains('too many packets buffered')) {
+      return 'Buffer FFmpeg penuh. Kurangi thread atau pakai preset lebih lambat.';
+    }
+    if (l.contains('cannot init encoder')) {
+      return 'Encoder gagal diinisialisasi. Coba software encoder.';
+    }
+    if (l.contains('error while opening encoder')) {
+      return 'Gagal membuka encoder. Periksa parameter.';
+    }
+    if (l.contains('no space left on device')) {
+      return 'Ruang penyimpanan tidak cukup.';
+    }
+    if (l.contains('timeout')) {
+      return 'Encoding timeout. Coba gunakan preset lebih cepat.';
+    }
+    return 'Penyebab tidak dikenal. Cek log lengkap.';
+  }
+
+  // ─── ESCAPE DRAWTEXT ──────────────────────────────────────────
   static String _escapeDrawText(String text) {
     return text
         .replaceAll('\\', '\\\\')
@@ -965,6 +1009,7 @@ class VideoWatermarkService {
         .replaceAll('%', '\\%');
   }
 
+  // ─── FALLBACK DRAWTEXT ──────────────────────────────────────
   static Future<String?> _addWatermarkWithDrawtext({
     required String inputPath,
     required String outputPath,
@@ -1045,3 +1090,44 @@ class VideoWatermarkService {
       final command =
           "-i '$inputPath' "
           "-vf \"$drawText\" "
+          "-c:a ${keepAudio ? 'copy' : 'an'} "
+          "-c:v $encoder$encoderOpts "
+          "-metadata:s:v:0 rotate=0 "
+          "-movflags +faststart "
+          "-y '$outputPath'";
+
+      debugPrint('🎬 FFmpeg fallback command: $command');
+      
+      onStatus?.call('Encoding dengan drawtext...');
+      
+      final session = await FFmpegKit.execute(command);
+      final returnCode = await session.getReturnCode();
+
+      if (ReturnCode.isSuccess(returnCode)) {
+        debugPrint('✅ Fallback drawtext berhasil: $outputPath');
+        return outputPath;
+      } else {
+        final logs = await session.getAllLogsAsString() ?? '';
+        debugPrint('❌ Fallback drawtext error: $logs');
+        
+        if (logs.contains('Unknown encoder') || logs.contains('encoder not found')) {
+          debugPrint('🔄 Mencoba fallback ke mpeg4...');
+          final mpeg4Command = command.replaceAll('libx264', 'mpeg4');
+          final mpeg4Session = await FFmpegKit.execute(mpeg4Command);
+          final mpeg4ReturnCode = await mpeg4Session.getReturnCode();
+          if (ReturnCode.isSuccess(mpeg4ReturnCode)) {
+            debugPrint('✅ Fallback mpeg4 berhasil');
+            return outputPath;
+          }
+        }
+        
+        lastError = logs;
+        return null;
+      }
+    } catch (e) {
+      debugPrint('❌ Fallback drawtext exception: $e');
+      lastError = e.toString();
+      return null;
+    }
+  }
+}
