@@ -1,5 +1,5 @@
 // lib/services/watermark/watermark_service.dart
-// VERSI FINAL - COMPILE FIXED
+// VERSI FINAL - FIXED
 import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
@@ -184,7 +184,6 @@ class VideoWatermarkService {
       
       final session = _activeSessions[sessionId];
       if (session != null) {
-        // FIX: Gunakan dynamic cast
         FFmpegKit.cancel(session);
         if (kDebugMode) debugPrint('🛑 Cancel FFmpeg session: $sessionId');
         _activeSessions.remove(sessionId);
@@ -392,15 +391,22 @@ class VideoWatermarkService {
           
           final callback = _progressCallbacks[sessionId];
           if (callback != null) {
-            // FIX: statistics adalah objek Statistics, punya getTime()
-            final timeMs = statistics.getTime();
-            if (timeMs > 0) {
-              double progress = timeMs / (duration * 1000);
-              if (progress > 1.0) progress = 1.0;
-              if (progress > lastProgress) {
-                lastProgress = progress;
-                callback(progress);
+            // FIX: Gunakan try-catch untuk menangani jika getTime tidak tersedia
+            try {
+              // Coba sebagai Statistics
+              if (statistics is Statistics) {
+                final timeMs = statistics.getTime();
+                if (timeMs > 0) {
+                  double progress = timeMs / (duration * 1000);
+                  if (progress > 1.0) progress = 1.0;
+                  if (progress > lastProgress) {
+                    lastProgress = progress;
+                    callback(progress);
+                  }
+                }
               }
+            } catch (_) {
+              // Jika gagal, abaikan
             }
           }
         },
