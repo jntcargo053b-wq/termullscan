@@ -6,10 +6,23 @@
 //   accuracy threshold (terima sample) : 25m
 //   capture threshold (status Good)    : 15m  ← diperketat dari 25m
 //   excellent threshold                : 10m  ← diperketat dari 12m
-//   excellent max stdDev (cluster)     : 8m   ← BARU: cegah "akurasi bagus
+//   excellent max stdDev (cluster)     : 8m   ← cegah "akurasi bagus
 //                                                tapi titik lompat-lompat"
-//   excellent max radius (cluster)     : 12m  ← BARU: tambahan syarat Excellent
-//   outlier rejection                  : 2.5σ ← BARU: buang sampel liar
+//   excellent max radius (cluster)     : 12m  ← BARU: gating tambahan,
+//                                                stdDev bisa "diredam" oleh
+//                                                banyak titik rapat + 1 titik
+//                                                jauh; radius (jarak terjauh
+//                                                dari centroid) menutup celah itu
+//   outlier rejection (MAD-based)      : BARU — buang sampel yang secara
+//                                                statistik nyasar (multipath)
+//                                                SEBELUM dipakai hitung
+//                                                centroid/stdDev/radius,
+//                                                supaya satu sampel liar
+//                                                tidak "menyeret" cluster
+//   confidence score (0–1)             : BARU — gabungan akurasi + sebaran
+//                                                cluster + jumlah sampel +
+//                                                usia/kesegaran sampel,
+//                                                bukan cuma akurasi+jumlah
 //   hard timeout       : 12 detik
 //   target samples     : 3 (fast lock), max 10 untuk refine
 //   min sampel utk Excellent : 3 — TIDAK ADA fast-path 1 sampel lagi
@@ -74,9 +87,9 @@ class PodLockResult {
   final PodConfidence confidence;
   final PodSample bestRaw;
   final int samplesUsed;
-  final int samplesRejected; // BARU: jumlah sampel yang ditolak outlier
   final double clusterStdDevMeters;
   final double clusterRadiusMeters;
+  final int outliersRejected;
   final DateTime lockedAt;
 
   String get qualityLabel {
@@ -94,9 +107,9 @@ class PodLockResult {
     required this.confidence,
     required this.bestRaw,
     required this.samplesUsed,
-    required this.samplesRejected,
     required this.clusterStdDevMeters,
     required this.clusterRadiusMeters,
+    this.outliersRejected = 0,
     required this.lockedAt,
   });
 
@@ -113,16 +126,16 @@ class PodLockResult {
     confidence: confidence ?? this.confidence,
     bestRaw: bestRaw ?? this.bestRaw,
     samplesUsed: samplesUsed,
-    samplesRejected: samplesRejected,
     clusterStdDevMeters: clusterStdDevMeters,
     clusterRadiusMeters: clusterRadiusMeters,
+    outliersRejected: outliersRejected,
     lockedAt: lockedAt,
   );
 }
 
 // ── Cluster stats (internal) ──────────────────────────────────
 // Hasil perhitungan centroid + sebaran, dipakai bareng oleh _evaluate()
-// (untuk gating Excellent via stdDev & radius) dan _buildResult() (untuk hasil akhir),
+// (untuk gating Excellent via stdDev) dan _buildResult() (untuk hasil akhir),
 // supaya tidak dihitung dua kali dengan cara berbeda.
 class _ClusterStats {
   final double centroidLat;
@@ -131,7 +144,6 @@ class _ClusterStats {
   final double stdDevMeters;
   final double radiusMeters;
   final PodSample best;
-  final int rejectedCount; // BARU: jumlah sampel yang direject
 
   const _ClusterStats({
     required this.centroidLat,
@@ -140,7 +152,6 @@ class _ClusterStats {
     required this.stdDevMeters,
     required this.radiusMeters,
     required this.best,
-    required this.rejectedCount,
   });
 }
 
@@ -153,12 +164,18 @@ class PodGpsEngine {
   static const double _accuracyThreshold  = 25.0;  // terima sample ≤ 25m (urban Indonesia)
   static const double _captureThreshold   = 15.0;  // ambang "Good"/siap-capture — diperketat dari 25m
   static const double _excellentThreshold = 10.0;  // ambang "Excellent" — diperketat dari 12m
-  static const double _excellentMaxStdDev = 8.0;   // BARU: sebaran cluster maks utk Excellent
-  static const double _excellentMaxRadius = 12.0;  // BARU: radius cluster maks utk Excellent
-  static const double _outlierSigma       = 2.5;   // BARU: ambang outlier dalam satuan sigma
+  static const double _excellentMaxStdDev = 8.0;   // sebaran cluster (avg) maks utk Excellent
+  static const double _excellentMaxRadius = 12.0;  // BARU: jarak titik terjauh dari centroid maks
+                                                    // utk Excellent — stdDev bisa "diredam" beberapa
+                                                    // titik rapat, radius menutup celah 1 titik nyasar
   static const int    _targetSamples      = 3;     // min sampel utk Good & Excellent (tak ada fast-path 1 sampel)
   static const int    _maxWindow          = 10;    // simpan max 10 sample
   static const Duration _hardTimeout      = Duration(seconds: 12);
+
+  // BARU: outlier rejection (MAD-based)
+  static const int    _outlierMinSamples  = 4;     // di bawah ini, tak ada cukup data utk deteksi outlier yg aman
+  static const double _outlierMadFactor   = 3.0;   // ambang = medianDist + factor * MAD_scaled
+  static const double _outlierMinThreshold = 5.0;  // lantai ambang (m) — cegah over-reject saat cluster sangat rapat
 
   // distanceFilter: 0 saat acquiring, 5 setelah locked
   // (diatur oleh pod_location_service saat subscribe stream)
@@ -274,7 +291,8 @@ class PodGpsEngine {
     // Ambil sample dengan akurasi terbaik
     _window.sort((a, b) => a.accuracy.compareTo(b.accuracy));
     final best = _window.first;
-    final stats = _computeClusterStats();
+    final cleaned = _rejectOutliers(_window);
+    final stats = _computeClusterStats(cleaned);
 
     // CATATAN: fallback ini sengaja TIDAK mengikuti _captureThreshold (15m)
     // yang lebih ketat — ini adalah katup pengaman terakhir agar user tidak
@@ -284,7 +302,7 @@ class PodGpsEngine {
     _confidence = PodConfidence.good;
     _locked = true;
     _isFallbackLock = true;
-    _lockResult = _buildResult(_computeConfidenceScore(stats), stats);
+    _lockResult = _buildResult(0.6, stats, cleaned.length, _window.length - cleaned.length);
     if (kDebugMode) {
       debugPrint('PodGpsEngine: force lock acc=${best.accuracy.toStringAsFixed(1)}m [FALLBACK]');
     }
@@ -297,22 +315,32 @@ class PodGpsEngine {
       return;
     }
 
-    final stats  = _computeClusterStats();
+    // BARU: buang outlier statistik (MAD-based) SEBELUM dipakai untuk
+    // gating & centroid. Satu titik nyasar (multipath, refleksi gedung)
+    // tidak boleh menyeret centroid maupun lolos sebagai "sampel valid".
+    final cleaned = _rejectOutliers(_window);
+    final rejected = _window.length - cleaned.length;
+
+    final stats  = _computeClusterStats(cleaned);
     final avgAcc = stats.avgAccuracy;
     final stdDev = stats.stdDevMeters;
     final radius = stats.radiusMeters;
-    final n      = _window.length;
-    final rejected = stats.rejectedCount;
+    final n      = cleaned.length; // gating pakai jumlah sampel BERSIH, bukan mentah
 
     PodConfidence newConf;
 
-    // BARU: Excellent wajib memenuhi SEMUA syarat:
-    // 1. Minimal _targetSamples (3) sampel
-    // 2. Akurasi rata-rata ≤ _excellentThreshold (10m)
-    // 3. StdDev ≤ _excellentMaxStdDev (8m) — cegah titik lompat-lompat
-    // 4. Radius ≤ _excellentMaxRadius (12m) — cegah outlier yang lolos
-    if (n >= _targetSamples && 
-        avgAcc <= _excellentThreshold && 
+    // TIDAK ADA fast-path 1 sampel lagi — Excellent WAJIB minimal
+    // _targetSamples (3) sampel bersih, mencegah 1 sampel kebetulan akurat
+    // (mis. 6m) langsung dianggap "Terkunci".
+    //
+    // Excellent wajib stdDev (sebaran rata2 antar-sampel) DAN clusterRadius
+    // (jarak titik terjauh dari centroid) kecil. stdDev saja bisa "diredam"
+    // ketika mayoritas titik rapat tapi ada 1 titik nyasar jauh — radius
+    // menutup celah itu karena mengukur kasus terburuk, bukan rata-rata.
+    // Kalau salah satu gagal, turun jadi Good, bukan Fair, karena avgAcc
+    // sendiri tetap valid.
+    if (n >= _targetSamples &&
+        avgAcc <= _excellentThreshold &&
         stdDev <= _excellentMaxStdDev &&
         radius <= _excellentMaxRadius) {
       newConf = PodConfidence.excellent;
@@ -321,7 +349,7 @@ class PodGpsEngine {
       newConf = PodConfidence.good;
       _locked = true;
     } else if (n >= 1 && avgAcc <= _accuracyThreshold) {
-      // fair lebih inklusif: 1 sample sudah cukup untuk preview
+      // fair lebih inklusif: 1 sample bersih sudah cukup untuk preview
       newConf = PodConfidence.fair;
     } else {
       newConf = PodConfidence.poor;
@@ -330,7 +358,7 @@ class PodGpsEngine {
     _confidence = newConf;
 
     if (_confidence.canCapture || _window.isNotEmpty) {
-      _lockResult = _buildResult(_computeConfidenceScore(stats), stats);
+      _lockResult = _buildResult(_score(cleaned, stats), stats, cleaned.length, rejected);
     }
 
     if (_locked) {
@@ -340,80 +368,18 @@ class PodGpsEngine {
 
     if (kDebugMode) {
       debugPrint('PodGpsEngine: ${_confidence.label} | '
-          'n=$n avgAcc=${avgAcc.toStringAsFixed(1)}m stdDev=${stdDev.toStringAsFixed(1)}m '
-          'radius=${radius.toStringAsFixed(1)}m rejected=$rejected locked=$_locked');
+          'n=$n (rejected=$rejected) avgAcc=${avgAcc.toStringAsFixed(1)}m '
+          'stdDev=${stdDev.toStringAsFixed(1)}m radius=${radius.toStringAsFixed(1)}m locked=$_locked');
     }
-  }
-
-  // ── Confidence Score yang disempurnakan ─────────────────────
-  // Score 0-1 yang menggabungkan:
-  // - Akurasi (semakin kecil semakin baik)
-  // - Sebaran titik (stdDev & radius)
-  // - Jumlah sampel (semakin banyak semakin stabil)
-  // - Usia sampel (semakin fresh semakin baik)
-  double _computeConfidenceScore(_ClusterStats stats) {
-    if (_window.isEmpty) return 0.0;
-
-    final n = _window.length;
-    final avgAcc = stats.avgAccuracy.clamp(0.0, _accuracyThreshold);
-    final stdDev = stats.stdDevMeters.clamp(0.0, 20.0);
-    final radius = stats.radiusMeters.clamp(0.0, 30.0);
-    
-    // 1. Faktor akurasi (0-1): semakin kecil akurasi semakin tinggi
-    // Menggunakan kurva eksponensial untuk memberikan penalti lebih berat
-    // pada akurasi buruk
-    final accFactor = exp(-avgAcc / 15.0);
-    
-    // 2. Faktor stabilitas (0-1): stdDev dan radius kecil = stabil
-    // stdDev ideal ≤ 3m, radius ideal ≤ 5m
-    final stdDevFactor = exp(-stdDev / 4.0);
-    final radiusFactor = exp(-radius / 6.0);
-    final stabilityFactor = (stdDevFactor + radiusFactor) / 2.0;
-    
-    // 3. Faktor jumlah sampel (0-1): semakin banyak semakin baik
-    // target 5 sampel ideal, lebih dari itu diminishing returns
-    final sampleFactor = 1.0 - exp(-n / 3.5);
-    
-    // 4. Faktor kesegaran (0-1): sampel terbaru lebih berbobot
-    // Hitung rata-rata usia sampel dalam detik
-    final now = DateTime.now();
-    double totalAge = 0;
-    for (final s in _window) {
-      totalAge += now.difference(s.time).inMilliseconds.abs();
-    }
-    final avgAgeMs = totalAge / n;
-    final avgAgeSec = avgAgeMs / 1000.0;
-    // Usia ideal < 3 detik, penalti penuh di 15 detik
-    final freshnessFactor = exp(-avgAgeSec / 5.0);
-    
-    // 5. Faktor outlier (0-1): semakin banyak outlier yang direject semakin baik
-    final outlierFactor = _window.length > 0 
-        ? 1.0 - (stats.rejectedCount / (_window.length + stats.rejectedCount)).clamp(0.0, 0.5)
-        : 0.5;
-    
-    // Bobot masing-masing faktor
-    const wAcc = 0.30;
-    const wStability = 0.25;
-    const wSamples = 0.20;
-    const wFreshness = 0.15;
-    const wOutlier = 0.10;
-    
-    double score = (accFactor * wAcc) +
-                   (stabilityFactor * wStability) +
-                   (sampleFactor * wSamples) +
-                   (freshnessFactor * wFreshness) +
-                   (outlierFactor * wOutlier);
-    
-    // Bonus: jika Excellent, tambahkan boost
-    if (_confidence == PodConfidence.excellent) {
-      score = min(1.0, score + 0.1);
-    }
-    
-    return score.clamp(0.0, 1.0);
   }
 
   // ── Build result dari cluster stats yang sudah dihitung ─────
-  PodLockResult _buildResult(double score, _ClusterStats stats) {
+  PodLockResult _buildResult(
+    double score,
+    _ClusterStats stats,
+    int usedSamples,
+    int rejectedSamples,
+  ) {
     return PodLockResult(
       centroidLat: stats.centroidLat,
       centroidLon: stats.centroidLon,
@@ -421,12 +387,59 @@ class PodGpsEngine {
       confidenceScore: score,
       confidence: _confidence,
       bestRaw: stats.best,
-      samplesUsed: _window.length,
-      samplesRejected: stats.rejectedCount,
+      samplesUsed: usedSamples,
       clusterStdDevMeters: stats.stdDevMeters,
       clusterRadiusMeters: stats.radiusMeters,
+      outliersRejected: rejectedSamples,
       lockedAt: DateTime.now(),
     );
+  }
+
+  // ── Outlier rejection (MAD-based) ───────────────────────────
+  // Median Absolute Deviation lebih tahan terhadap outlier ekstrem
+  // dibanding mean/stdDev biasa (yang justru "tertarik" oleh outlier itu
+  // sendiri, membuatnya sulit dideteksi via stdDev). Sengaja konservatif:
+  //  - hanya aktif jika n >= _outlierMinSamples (butuh cukup data agar
+  //    deteksi statistik valid; dengan n kecil, "median" = sampel itu
+  //    sendiri sehingga rawan salah buang sampel yang justru benar)
+  //  - tidak pernah membuang sampel sampai di bawah _targetSamples,
+  //    supaya gating confidence tidak terjebak looping poor↔fair karena
+  //    window terus-menerus dikuras oleh false-positive rejection
+  //  - ambang punya lantai minimum (_outlierMinThreshold) agar cluster
+  //    yang memang sangat rapat (MAD≈0) tidak jadi over-agresif membuang
+  List<PodSample> _rejectOutliers(List<PodSample> input) {
+    if (input.length < _outlierMinSamples) return input;
+
+    final medLat = _median(input.map((s) => s.lat).toList());
+    final medLon = _median(input.map((s) => s.lon).toList());
+
+    final distances = input
+        .map((s) => _haversine(medLat, medLon, s.lat, s.lon))
+        .toList();
+
+    final medDist = _median(distances);
+    final mad = _median(distances.map((d) => (d - medDist).abs()).toList());
+    final madScaled = mad * 1.4826; // faktor skala MAD → stdDev (distribusi normal)
+
+    final threshold = max(medDist + _outlierMadFactor * madScaled, _outlierMinThreshold);
+
+    final filtered = <PodSample>[
+      for (var i = 0; i < input.length; i++)
+        if (distances[i] <= threshold) input[i],
+    ];
+
+    // Katup pengaman: jangan sampai gating jadi tak bisa lock sama sekali
+    if (filtered.length < _targetSamples) return input;
+    return filtered;
+  }
+
+  static double _median(List<double> values) {
+    if (values.isEmpty) return 0.0;
+    final sorted = List<double>.from(values)..sort();
+    final n = sorted.length;
+    final mid = n ~/ 2;
+    if (n.isOdd) return sorted[mid];
+    return (sorted[mid - 1] + sorted[mid]) / 2.0;
   }
 
   // ── Hitung centroid (weighted) + sebaran cluster ────────────
@@ -436,18 +449,14 @@ class PodGpsEngine {
   // Akurasi diklem minimum 1m agar sampel super-akurat tidak
   // mendominasi secara ekstrem (mis. pembagian oleh angka mendekati 0).
   //
-  // BARU: outlier rejection menggunakan sigma clipping dengan threshold _outlierSigma
-  // Sampel yang jaraknya > _outlierSigma * stdDev dari centroid akan dibuang
-  //
   // BARU: avgAccuracy juga menggunakan weighted average (bobot 1/accuracy²)
   // sehingga sampel dengan akurasi lebih baik lebih dominan
-  _ClusterStats _computeClusterStats() {
-    // Pertama hitung centroid awal dengan semua sampel
+  _ClusterStats _computeClusterStats(List<PodSample> samples) {
     double sumLatW = 0, sumLonW = 0, sumW = 0;
     double sumAccW = 0; // BARU: untuk weighted average akurasi
     PodSample? best;
 
-    for (final s in _window) {
+    for (final s in samples) {
       final clampedAcc = max(s.accuracy, 1.0);
       final w = 1.0 / (clampedAcc * clampedAcc);
       sumLatW += s.lat * w;
@@ -457,112 +466,57 @@ class PodGpsEngine {
       if (best == null || s.accuracy < best.accuracy) best = s;
     }
 
-    final n = _window.length;
-    double cLat = sumLatW / sumW;
-    double cLon = sumLonW / sumW;
+    final n = samples.length;
+    final cLat = sumLatW / sumW;
+    final cLon = sumLonW / sumW;
     final avgAcc = sumAccW / sumW; // BARU: weighted average, bukan rata-rata biasa
 
-    // Hitung stdDev awal dari centroid
+    // Std-dev dan radius dari centroid (weighted)
     double sumSq = 0, maxD = 0;
-    final distances = <double>[];
-    for (final s in _window) {
+    for (final s in samples) {
       final d = _haversine(cLat, cLon, s.lat, s.lon);
-      distances.add(d);
       sumSq += d * d;
       if (d > maxD) maxD = d;
     }
-    double stdDev = n > 1 ? sqrt(sumSq / n) : 0.0;
+    final stdDev = n > 1 ? sqrt(sumSq / n) : 0.0;
 
-    // ── Outlier Rejection (Sigma Clipping) ──
-    // Jika stdDev > 0 dan ada lebih dari 2 sampel, lakukan outlier rejection
-    List<PodSample> filteredSamples = List.from(_window);
-    int rejectedCount = 0;
-    
-    if (stdDev > 0.5 && n >= 3) {
-      final threshold = _outlierSigma * stdDev;
-      final newSamples = <PodSample>[];
-      
-      for (int i = 0; i < distances.length; i++) {
-        if (distances[i] <= threshold) {
-          newSamples.add(_window[i]);
-        } else {
-          rejectedCount++;
-          if (kDebugMode) {
-            debugPrint('PodGpsEngine: outlier rejected at ${distances[i].toStringAsFixed(1)}m '
-                '(threshold ${threshold.toStringAsFixed(1)}m)');
-          }
-        }
-      }
-      
-      // Hanya terima hasil filtering jika masih tersisa cukup sampel (≥ 2)
-      // dan tidak membuang terlalu banyak (> 50%)
-      if (newSamples.length >= 2 && rejectedCount <= n * 0.5) {
-        filteredSamples = newSamples;
-      } else {
-        // Jika terlalu banyak outlier, reset rejectedCount
-        rejectedCount = 0;
-      }
-    }
-
-    // ── Rehitungan centroid dengan data yang sudah difilter ──
-    // Hanya hitung ulang jika ada sampel yang dibuang
-    if (rejectedCount > 0 && filteredSamples.length < _window.length) {
-      sumLatW = 0; sumLonW = 0; sumW = 0;
-      sumAccW = 0; // BARU: reset weighted akurasi
-      best = null;
-      
-      for (final s in filteredSamples) {
-        final clampedAcc = max(s.accuracy, 1.0);
-        final w = 1.0 / (clampedAcc * clampedAcc);
-        sumLatW += s.lat * w;
-        sumLonW += s.lon * w;
-        sumW    += w;
-        sumAccW += s.accuracy * w; // BARU: akurasi dikali bobot
-        if (best == null || s.accuracy < best.accuracy) best = s;
-      }
-      
-      cLat = sumLatW / sumW;
-      cLon = sumLonW / sumW;
-      final avgAccFiltered = sumAccW / sumW; // BARU: weighted average setelah filtering
-      
-      // Hitung ulang stdDev dan radius
-      sumSq = 0; maxD = 0;
-      for (final s in filteredSamples) {
-        final d = _haversine(cLat, cLon, s.lat, s.lon);
-        sumSq += d * d;
-        if (d > maxD) maxD = d;
-      }
-      final m = filteredSamples.length;
-      stdDev = m > 1 ? sqrt(sumSq / m) : 0.0;
-      
-      // Update window dengan data yang sudah difilter
-      // Hanya jika jumlah sampel masih cukup
-      if (filteredSamples.length >= _targetSamples) {
-        _window.clear();
-        _window.addAll(filteredSamples);
-      }
-      
-      return _ClusterStats(
-        centroidLat: cLat,
-        centroidLon: cLon,
-        avgAccuracy: avgAccFiltered, // Gunakan weighted average setelah filtering
-        stdDevMeters: stdDev,
-        radiusMeters: maxD,
-        best: best!,
-        rejectedCount: rejectedCount,
-      );
-    }
-
-    // Jika tidak ada filtering, return hasil pertama
     return _ClusterStats(
       centroidLat: cLat,
       centroidLon: cLon,
-      avgAccuracy: avgAcc, // Sudah weighted
+      avgAccuracy: avgAcc, // Sekarang sudah weighted!
       stdDevMeters: stdDev,
       radiusMeters: maxD,
       best: best!,
-      rejectedCount: rejectedCount,
     );
+  }
+
+  // ── Score 0–1 ───────────────────────────────────────────────
+  // BARU: gabungan 4 faktor, bukan cuma akurasi+jumlah sampel.
+  //   1. fAcc     (bobot 0.35) — akurasi rata2 vs ambang penerimaan
+  //   2. fSpread  (bobot 0.25) — sebaran cluster (pakai yang TERBURUK
+  //      antara stdDev & radius, supaya 1 titik nyasar tetap menekan skor
+  //      walau stdDev rata2 masih kelihatan bagus)
+  //   3. fSample  (bobot 0.20) — jumlah sampel bersih vs target
+  //   4. fFresh   (bobot 0.20) — usia/kesegaran sampel: sampel yang "basi"
+  //      (delay dari OS/cache, atau sisa window lama) menurunkan skor
+  //      meski akurasi & sebaran-nya sendiri masih terlihat bagus
+  double _score(List<PodSample> samples, _ClusterStats stats) {
+    if (samples.isEmpty) return 0.0;
+
+    final fSample = (samples.length / _targetSamples).clamp(0.0, 1.0);
+    final fAcc    = (1.0 - (stats.avgAccuracy / _accuracyThreshold)).clamp(0.0, 1.0);
+
+    final worstSpread = max(stats.stdDevMeters, stats.radiusMeters);
+    final fSpread = (1.0 - (worstSpread / _accuracyThreshold)).clamp(0.0, 1.0);
+
+    final now = DateTime.now();
+    final avgAgeSec = samples
+            .map((s) => now.difference(s.time).inMilliseconds / 1000.0)
+            .reduce((a, b) => a + b) /
+        samples.length;
+    final fFresh = (1.0 - (avgAgeSec / _hardTimeout.inSeconds)).clamp(0.0, 1.0);
+
+    return fAcc * 0.35 + fSpread * 0.25 + fSample * 0.20 + fFresh * 0.20;
   }
 
   // ── Soft unlock ─────────────────────────────────────────────
