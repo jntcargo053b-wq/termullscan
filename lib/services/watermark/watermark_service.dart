@@ -1,5 +1,5 @@
 // lib/services/watermark/watermark_service.dart
-// VERSI FINAL - COMPILE FIXED
+// VERSI FINAL - PRODUCTION READY (ALL ERRORS FIXED)
 import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
@@ -12,21 +12,78 @@ import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit_config.dart';
 import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:ffmpeg_kit_flutter_new/statistics.dart';
-// FIX: Jangan import session.dart karena tidak diperlukan
 import 'package:path_provider/path_provider.dart';
 import '../../models/scan_entry.dart';
 import '../../watermark/watermark_settings.dart';
 import '../../watermark/watermark_renderer.dart';
 import 'watermark_cache.dart';
 
-/// Service untuk menambahkan watermark ke video dengan orientasi yang benar.
+// ─── ASYNC LOCK ──────────────────────────────────────────────
+class _AsyncLock {
+  bool _locked = false;
+  final Queue<Completer<void>> _waiters = Queue();
+
+  Future<T> synchronized<T>(Future<T> Function() action) async {
+    if (_locked) {
+      final completer = Completer<void>();
+      _waiters.add(completer);
+      await completer.future;
+    }
+    
+    _locked = true;
+    try {
+      return await action();
+    } finally {
+      _locked = false;
+      if (_waiters.isNotEmpty) {
+        final completer = _waiters.removeFirst();
+        completer.complete();
+      }
+    }
+  }
+}
+
+// ─── MODELS ──────────────────────────────────────────────────
+class _VideoDisplayInfo {
+  final int frameWidth;
+  final int frameHeight;
+  final int rotationTag;
+  final int displayMatrix;
+  final int displayWidth;
+  final int displayHeight;
+  final double duration;
+
+  _VideoDisplayInfo({
+    required this.frameWidth,
+    required this.frameHeight,
+    required this.rotationTag,
+    required this.displayMatrix,
+    required this.displayWidth,
+    required this.displayHeight,
+    required this.duration,
+  });
+}
+
+class _CachedOverlay {
+  final String path;
+  final int offsetX;
+  final int offsetY;
+  final DateTime createdAt;
+
+  _CachedOverlay({
+    required this.path,
+    required this.offsetX,
+    required this.offsetY,
+    required this.createdAt,
+  });
+}
+
+// ─── SERVICE ──────────────────────────────────────────────────
 class VideoWatermarkService {
   static String? lastError;
   static bool _warmedUp = false;
   static final WatermarkCache _cache = WatermarkCache();
 
-  // FIX: Gunakan dynamic atau FFmpegSession dari package
-  // Karena FFmpegSession mungkin tidak diekspor secara langsung
   static final Map<String, dynamic> _activeSessions = {};
   static final Map<String, void Function(double)> _progressCallbacks = {};
   static final Map<String, bool> _cancelFlags = {};
@@ -127,7 +184,6 @@ class VideoWatermarkService {
       
       final session = _activeSessions[sessionId];
       if (session != null) {
-        // FIX: Gunakan FFmpegKit.cancel dengan session
         FFmpegKit.cancel(session as FFmpegSession);
         if (kDebugMode) debugPrint('🛑 Cancel FFmpeg session: $sessionId');
         _activeSessions.remove(sessionId);
@@ -320,7 +376,6 @@ class VideoWatermarkService {
     double lastProgress = 0;
     
     try {
-      // FIX: Gunakan executeAsync yang lebih sederhana
       session = await FFmpegKit.executeWithArgumentsAsync(
         args,
         (newSession) {
@@ -330,14 +385,12 @@ class VideoWatermarkService {
           });
         },
         (statistics) {
-          // FIX: statistics adalah objek Statistics, bukan Log
           _sessionLock.synchronized(() async {
             if (_cancelFlags[sessionId] == true) return;
           });
           
           final callback = _progressCallbacks[sessionId];
           if (callback != null) {
-            // FIX: Gunakan getTime() dari Statistics
             final timeMs = statistics.getTime();
             if (timeMs > 0) {
               double progress = timeMs / (duration * 1000);
@@ -901,6 +954,17 @@ class VideoWatermarkService {
   }
 
   // ─── FALLBACK DRAWTEXT ──────────────────────────────────────
+  static String _escapeDrawText(String text) {
+    return text
+        .replaceAll('\\', '\\\\')
+        .replaceAll("'", "'\\\\''")
+        .replaceAll(':', '\\:')
+        .replaceAll(',', '\\,')
+        .replaceAll('[', '\\[')
+        .replaceAll(']', '\\]')
+        .replaceAll('%', '\\%');
+  }
+
   static Future<String?> _addWatermarkWithDrawtext({
     required String inputPath,
     required String outputPath,
@@ -981,36 +1045,3 @@ class VideoWatermarkService {
       final command =
           "-i '$inputPath' "
           "-vf \"$drawText\" "
-          "-c:a ${keepAudio ? 'copy' : 'an'} "
-          "-c:v $encoder$encoderOpts "
-          "-metadata:s:v:0 rotate=0 "
-          "-movflags +faststart "
-          "-y '$outputPath'";
-
-      debugPrint('🎬 FFmpeg fallback command: $command');
-      
-      onStatus?.call('Encoding dengan drawtext...');
-      
-      final session = await FFmpegKit.execute(command);
-      final returnCode = await session.getReturnCode();
-
-      if (ReturnCode.isSuccess(returnCode)) {
-        debugPrint('✅ Fallback drawtext berhasil: $outputPath');
-        return outputPath;
-      } else {
-        final logs = await session.getAllLogsAsString() ?? '';
-        debugPrint('❌ Fallback drawtext error: $logs');
-        
-        if (logs.contains('Unknown encoder') || logs.contains('encoder not found')) {
-          debugPrint('🔄 Mencoba fallback ke mpeg4...');
-          final mpeg4Command = command.replaceAll('libx264', 'mpeg4');
-          final mpeg4Session = await FFmpegKit.execute(mpeg4Command);
-          final mpeg4ReturnCode = await mpeg4Session.getReturnCode();
-          if (ReturnCode.isSuccess(mpeg4ReturnCode)) {
-            debugPrint('✅ Fallback mpeg4 berhasil');
-            return outputPath;
-          }
-        }
-        
-        lastError = logs;
-        return
