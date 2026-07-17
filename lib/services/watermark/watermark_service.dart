@@ -1,5 +1,5 @@
 // lib/services/watermark/watermark_service.dart
-// VERSI FINAL - FIXED
+// VERSI FINAL - COMPILE FIXED
 import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
@@ -375,6 +375,11 @@ class VideoWatermarkService {
     Timer? timeoutTimer;
     double lastProgress = 0;
     
+    // FIX: Simpan reference ke callback untuk digunakan di statistics callback
+    final localOnProgress = onProgress;
+    final localSessionId = sessionId;
+    final localDuration = duration;
+    
     try {
       session = await FFmpegKit.executeWithArgumentsAsync(
         args,
@@ -385,29 +390,23 @@ class VideoWatermarkService {
           });
         },
         (statistics) {
-          _sessionLock.synchronized(() async {
-            if (_cancelFlags[sessionId] == true) return;
-          });
-          
-          final callback = _progressCallbacks[sessionId];
-          if (callback != null) {
-            // FIX: Gunakan try-catch untuk menangani jika getTime tidak tersedia
-            try {
-              // Coba sebagai Statistics
-              if (statistics is Statistics) {
-                final timeMs = statistics.getTime();
-                if (timeMs > 0) {
-                  double progress = timeMs / (duration * 1000);
-                  if (progress > 1.0) progress = 1.0;
-                  if (progress > lastProgress) {
-                    lastProgress = progress;
-                    callback(progress);
-                  }
+          // FIX: Handle statistics dengan aman - gunakan try-catch
+          try {
+            // Coba akses getTime
+            final timeMs = (statistics as dynamic).getTime();
+            if (timeMs != null && timeMs > 0) {
+              final callback = _progressCallbacks[sessionId];
+              if (callback != null) {
+                double progress = timeMs / (duration * 1000);
+                if (progress > 1.0) progress = 1.0;
+                if (progress > lastProgress) {
+                  lastProgress = progress;
+                  callback(progress);
                 }
               }
-            } catch (_) {
-              // Jika gagal, abaikan
             }
+          } catch (_) {
+            // Jika gagal (misalnya statistics adalah Log), abaikan
           }
         },
         (log) {
