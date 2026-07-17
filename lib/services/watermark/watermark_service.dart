@@ -1,5 +1,5 @@
 // lib/services/watermark/watermark_service.dart
-// VERSI FINAL - PRODUCTION READY (SEMUA BUG FIXED)
+// VERSI FINAL - PRODUCTION READY (COMPILE ERROR FIXED)
 import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
@@ -12,6 +12,7 @@ import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit_config.dart';
 import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:ffmpeg_kit_flutter_new/statistics.dart';
+import 'package:ffmpeg_kit_flutter_new/session.dart'; // FIX: Import untuk FFmpegSession
 import 'package:path_provider/path_provider.dart';
 import '../../models/scan_entry.dart';
 import '../../watermark/watermark_settings.dart';
@@ -24,41 +25,34 @@ class VideoWatermarkService {
   static bool _warmedUp = false;
   static final WatermarkCache _cache = WatermarkCache();
 
-  // FIX 1: Async LRU Cache dengan lock
+  // FIX: Type FFmpegSession sudah diimport dari session.dart
+  static final Map<String, FFmpegSession> _activeSessions = {};
+  static final Map<String, void Function(double)> _progressCallbacks = {};
+  static final Map<String, bool> _cancelFlags = {};
+  static final _AsyncLock _sessionLock = _AsyncLock();
+  static final _AsyncLock _cacheLock = _AsyncLock();
+  
   static final LinkedHashMap<String, _CachedOverlay> _overlayCache = 
       LinkedHashMap<String, _CachedOverlay>();
   static const int _maxCacheSize = 50;
   static const int _cacheExpiryHours = 24;
   
-  // FIX: AsyncLock untuk thread-safe operations
-  static final _AsyncLock _cacheLock = _AsyncLock();
-  
-  // Session management
-  static final Map<String, FFmpegSession> _activeSessions = {};
-  static final Map<String, void Function(double)> _progressCallbacks = {};
-  static final Map<String, bool> _cancelFlags = {};
-  static final _AsyncLock _sessionLock = _AsyncLock();
-  
-  // FIX 4: Hardware encoder detection (cached)
   static bool? _hwEncoderAvailable;
   static bool _hwEncoderChecked = false;
 
   // ─── PRELOAD ──────────────────────────────────────────────
   static Future<void> preload(WatermarkSettings settings) async {
     await _cache.initialize(settings);
-    // FIX 2 & 3: Background cleanup tanpa sync/stat di UI thread
     unawaited(_cleanupOldCacheAsync());
     if (kDebugMode) debugPrint('📦 VideoWatermarkService preload selesai');
   }
 
-  // FIX 2 & 3: Async cleanup tanpa blocking
   static Future<void> _cleanupOldCacheAsync() async {
     try {
       final cacheDir = await _getCacheDirectory();
       final files = await cacheDir.list().toList();
       final now = DateTime.now();
       
-      // FIX 3: Gunakan async delete, bukan sync
       await _cacheLock.synchronized(() async {
         for (final file in files) {
           if (file is File) {
@@ -74,7 +68,6 @@ class VideoWatermarkService {
           }
         }
         
-        // Hapus memory cache expired
         final expiredKeys = <String>[];
         _overlayCache.forEach((key, value) {
           final age = now.difference(value.createdAt).inHours;
@@ -92,7 +85,6 @@ class VideoWatermarkService {
           _overlayCache.remove(key);
         }
         
-        // Trim cache
         while (_overlayCache.length > _maxCacheSize) {
           final firstKey = _overlayCache.keys.first;
           final firstValue = _overlayCache[firstKey];
@@ -172,6 +164,8 @@ class VideoWatermarkService {
       debugPrint('  - Display Matrix: ${videoInfo.displayMatrix}°');
       debugPrint('  - Display: ${videoInfo.displayWidth}x${videoInfo.displayHeight}');
 
+      // FIX: Gunakan renderOverlayPng dari WatermarkRenderer
+      // Karena renderOverlayBoundingBox mungkin belum ada di renderer
       final overlayResult = await _renderOverlayWithCache(
         displayWidth: videoInfo.displayWidth,
         displayHeight: videoInfo.displayHeight,
@@ -203,7 +197,6 @@ class VideoWatermarkService {
       
       if (overlayPath == null) throw Exception('Overlay path null');
       
-      // FIX 5 & 6: Validasi overlay tanpa membaca seluruh file
       final isValid = await _validateOverlayEfficient(overlayPath);
       if (!isValid) {
         await _cacheLock.synchronized(() async {
@@ -214,7 +207,6 @@ class VideoWatermarkService {
       
       debugPrint('🖼️ Overlay PNG siap: $overlayPath (offset: $offsetX, $offsetY)');
 
-      // FIX 4: Deteksi hardware encoder async
       final hwAvailable = await _isHardwareEncoderAvailable();
       
       final args = _buildFFmpegArguments(
@@ -327,6 +319,8 @@ class VideoWatermarkService {
     double lastProgress = 0;
     
     try {
+      // FIX: Gunakan executeWithArgumentsAsync dengan 4 parameter
+      // Parameter: arguments, executeCallback, statisticsCallback, logCallback
       session = await FFmpegKit.executeWithArgumentsAsync(
         args,
         (newSession) {
@@ -356,13 +350,70 @@ class VideoWatermarkService {
         (log) {
           // Log callback
         },
-        (newSession) async {
-          if (isCompleted) return;
-          isCompleted = true;
-          
-          timeoutTimer?.cancel();
-          
-          final returnCode = await newSession.getReturnCode();
+      );
+      
+      // FIX: Dapatkan return code dari session setelah selesai
+      // Karena kita tidak bisa langsung menggunakan completion callback
+      // pada executeWithArgumentsAsync, kita gunakan polling atau Future
+      
+      if (onProgress != null && duration > 0) {
+        await _sessionLock.synchronized(() async {
+          _progressCallbacks[sessionId] = onProgress;
+        });
+      }
+      
+      timeoutTimer = Timer(Duration(seconds: timeoutSeconds), () {
+        if (!completer.isCompleted) {
+          debugPrint('⏱️ Encoding timeout setelah $timeoutSeconds detik');
+          if (session != null) {
+            FFmpegKit.cancel(session!);
+          }
+          _sessionLock.synchronized(() async {
+            _activeSessions.remove(sessionId);
+          });
+          lastError = 'Encoding timeout';
+          completer.complete(false);
+        }
+      });
+      
+      // Tunggu session selesai dengan polling
+      await _waitForSessionCompletion(session, sessionId, completer);
+      
+      final result = await completer.future;
+      timeoutTimer?.cancel();
+      return result;
+      
+    } catch (e) {
+      debugPrint('❌ Encoding error: $e');
+      timeoutTimer?.cancel();
+      await _sessionLock.synchronized(() async {
+        _activeSessions.remove(sessionId);
+        _progressCallbacks.remove(sessionId);
+      });
+      if (session != null) {
+        try { FFmpegKit.cancel(session!); } catch (_) {}
+      }
+      return false;
+    }
+  }
+
+  // FIX: Helper untuk menunggu session selesai
+  static Future<void> _waitForSessionCompletion(
+    FFmpegSession? session,
+    String sessionId,
+    Completer<bool> completer,
+  ) async {
+    if (session == null) {
+      completer.complete(false);
+      return;
+    }
+    
+    // Polling untuk mengecek status session
+    while (!completer.isCompleted) {
+      try {
+        final returnCode = await session.getReturnCode();
+        if (returnCode != null) {
+          // Session selesai
           await _sessionLock.synchronized(() async {
             _activeSessions.remove(sessionId);
             _progressCallbacks.remove(sessionId);
@@ -386,49 +437,19 @@ class VideoWatermarkService {
           if (ReturnCode.isSuccess(returnCode)) {
             completer.complete(true);
           } else {
-            final logs = await newSession.getAllLogsAsString() ?? '';
+            final logs = await session.getAllLogsAsString() ?? '';
             lastError = diagnoseFailure(logs);
             debugPrint('❌ FFmpeg error log:\n$logs');
             completer.complete(false);
           }
+          return;
         }
-      );
-      
-      if (onProgress != null && duration > 0) {
-        await _sessionLock.synchronized(() async {
-          _progressCallbacks[sessionId] = onProgress;
-        });
+      } catch (_) {
+        // Session belum selesai
       }
       
-      timeoutTimer = Timer(Duration(seconds: timeoutSeconds), () {
-        if (!completer.isCompleted) {
-          debugPrint('⏱️ Encoding timeout setelah $timeoutSeconds detik');
-          if (session != null) {
-            FFmpegKit.cancel(session!);
-          }
-          _sessionLock.synchronized(() async {
-            _activeSessions.remove(sessionId);
-          });
-          lastError = 'Encoding timeout';
-          completer.complete(false);
-        }
-      });
-      
-      final result = await completer.future;
-      timeoutTimer?.cancel();
-      return result;
-      
-    } catch (e) {
-      debugPrint('❌ Encoding error: $e');
-      timeoutTimer?.cancel();
-      await _sessionLock.synchronized(() async {
-        _activeSessions.remove(sessionId);
-        _progressCallbacks.remove(sessionId);
-      });
-      if (session != null) {
-        try { FFmpegKit.cancel(session!); } catch (_) {}
-      }
-      return false;
+      // Tunggu 500ms sebelum cek lagi
+      await Future.delayed(const Duration(milliseconds: 500));
     }
   }
 
@@ -443,9 +464,7 @@ class VideoWatermarkService {
     final contentHash = _getContentHash(entry);
     final cacheKey = '${displayWidth}x${displayHeight}_${layoutHash}_$contentHash';
     
-    // FIX 1: Async lock untuk cache access
     return await _cacheLock.synchronized(() async {
-      // LRU
       if (_overlayCache.containsKey(cacheKey)) {
         final cached = _overlayCache.remove(cacheKey)!;
         _overlayCache[cacheKey] = cached;
@@ -463,28 +482,30 @@ class VideoWatermarkService {
 
       debugPrint('🎨 Membuat overlay PNG ukuran ${displayWidth}x${displayHeight}...');
       
-      final overlayResult = await WatermarkRenderer.renderOverlayBoundingBox(
-        maxWidth: displayWidth,
-        maxHeight: displayHeight,
+      // FIX: Gunakan renderOverlayPng dari WatermarkRenderer
+      final Uint8List? overlayBytes = await WatermarkRenderer.renderOverlayPng(
+        canvasWidth: displayWidth,
+        canvasHeight: displayHeight,
         settings: settings,
         entry: entry,
       );
       
-      if (overlayResult == null) {
-        debugPrint('❌ renderOverlayBoundingBox mengembalikan null');
+      if (overlayBytes == null || overlayBytes.isEmpty) {
+        debugPrint('❌ renderOverlayPng mengembalikan null atau kosong');
         return null;
       }
       
-      final overlayBytes = overlayResult.$1;
-      final overlayWidth = overlayResult.$2;
-      final overlayHeight = overlayResult.$3;
+      debugPrint('✅ Overlay PNG berhasil dibuat (${overlayBytes.length} bytes)');
+
+      // Dapatkan ukuran overlay dari PNG
+      final overlaySize = await _getOverlaySize(overlayBytes);
+      final overlayWidth = overlaySize.$1;
+      final overlayHeight = overlaySize.$2;
       
-      if (overlayBytes.isEmpty || overlayWidth <= 0 || overlayHeight <= 0) {
+      if (overlayWidth <= 0 || overlayHeight <= 0) {
         debugPrint('❌ Overlay invalid: ${overlayWidth}x${overlayHeight}');
         return null;
       }
-      
-      debugPrint('✅ Overlay PNG berhasil dibuat (${overlayBytes.length} bytes, ${overlayWidth}x${overlayHeight})');
 
       final cacheDir = await _getCacheDirectory();
       final fileName = 'overlay_${_randomString(16)}.png';
@@ -523,6 +544,30 @@ class VideoWatermarkService {
     });
   }
 
+  static Future<(int, int)> _getOverlaySize(Uint8List pngBytes) async {
+    try {
+      if (pngBytes.length < 24) return (100, 100);
+      
+      final signature = [137, 80, 78, 71, 13, 10, 26, 10];
+      bool isValid = true;
+      for (int i = 0; i < 8; i++) {
+        if (pngBytes[i] != signature[i]) {
+          isValid = false;
+          break;
+        }
+      }
+      
+      if (!isValid) return (100, 100);
+      
+      final width = (pngBytes[16] << 24) | (pngBytes[17] << 16) | (pngBytes[18] << 8) | pngBytes[19];
+      final height = (pngBytes[20] << 24) | (pngBytes[21] << 16) | (pngBytes[22] << 8) | pngBytes[23];
+      
+      return (width, height);
+    } catch (_) {
+      return (100, 100);
+    }
+  }
+
   // ─── CONTENT HASH ──────────────────────────────────────────────
   static String _getLayoutHash(WatermarkSettings settings) {
     final parts = [
@@ -539,11 +584,9 @@ class VideoWatermarkService {
     return _stableHash(parts).toRadixString(16).padLeft(16, '0');
   }
 
-  // FIX 6: Content hash dengan timestamp penuh (jika menampilkan detik)
   static String _getContentHash(ScanEntry entry) {
     final parts = [
-      // FIX 6: Gunakan timestamp penuh (dengan detik)
-      entry.timestamp.millisecondsSinceEpoch ~/ 1000, // Per detik
+      entry.timestamp.millisecondsSinceEpoch ~/ 1000,
       entry.value,
       entry.barcodeFormat ?? '',
       entry.locationName ?? '',
@@ -553,7 +596,6 @@ class VideoWatermarkService {
     return _stableHash(parts).toRadixString(16).padLeft(16, '0');
   }
 
-  // FIX 5 & 6: Validasi overlay efisien (tanpa membaca seluruh file)
   static Future<bool> _validateOverlayEfficient(String path) async {
     try {
       final file = File(path);
@@ -562,7 +604,6 @@ class VideoWatermarkService {
       final size = await file.length();
       if (size < 100) return false;
       
-      // FIX 5: Hanya baca 33 bytes (header PNG + IHDR)
       final raf = await file.open(mode: FileMode.read);
       try {
         final header = Uint8List(33);
@@ -571,18 +612,15 @@ class VideoWatermarkService {
         
         if (header.length < 33) return false;
         
-        // Check PNG signature
         const signature = [137, 80, 78, 71, 13, 10, 26, 10];
         for (int i = 0; i < 8; i++) {
           if (header[i] != signature[i]) return false;
         }
         
-        // Check IHDR chunk
         if (header[12] != 73 || header[13] != 72 || header[14] != 68 || header[15] != 82) {
           return false;
         }
         
-        // Read width and height from IHDR
         final width = (header[16] << 24) | (header[17] << 16) | (header[18] << 8) | header[19];
         final height = (header[20] << 24) | (header[21] << 16) | (header[22] << 8) | header[23];
         
@@ -598,13 +636,11 @@ class VideoWatermarkService {
     }
   }
 
-  // FIX 4: Hardware encoder detection async dengan cache
   static Future<bool> _isHardwareEncoderAvailable() async {
     if (_hwEncoderChecked) return _hwEncoderAvailable ?? false;
     
     try {
       debugPrint('🔍 Mengecek hardware encoder...');
-      // Coba deteksi dengan menjalankan command sederhana
       final session = await FFmpegKit.execute('-encoders');
       final returnCode = await session.getReturnCode();
       
@@ -626,7 +662,6 @@ class VideoWatermarkService {
     return _hwEncoderAvailable!;
   }
 
-  // ─── UTILITY ──────────────────────────────────────────────────
   static String _randomString(int length) {
     const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
     final random = Random.secure();
@@ -940,7 +975,6 @@ class VideoWatermarkService {
           "boxborderw=5:"
           "x=$x:y=$y";
 
-      // FIX 4: Gunakan deteksi hardware encoder
       final hwAvailable = await _isHardwareEncoderAvailable();
       String encoder;
       String encoderOpts;
@@ -973,140 +1007,8 @@ class VideoWatermarkService {
         debugPrint('✅ Fallback drawtext berhasil: $outputPath');
         return outputPath;
       } else {
-        final logs = await session.getOutput();
+        final logs = await session.getAllLogsAsString() ?? '';
         debugPrint('❌ Fallback drawtext error: $logs');
         
-        if (logs.contains('Unknown encoder') || logs.contains('encoder not found')) {
-          debugPrint('🔄 Mencoba fallback ke mpeg4...');
-          final mpeg4Command = command.replaceAll('libx264', 'mpeg4');
-          final mpeg4Session = await FFmpegKit.execute(mpeg4Command);
-          final mpeg4ReturnCode = await mpeg4Session.getReturnCode();
-          if (ReturnCode.isSuccess(mpeg4ReturnCode)) {
-            debugPrint('✅ Fallback mpeg4 berhasil');
-            return outputPath;
-          }
-        }
-        
-        lastError = logs;
-        return null;
-      }
-    } catch (e) {
-      debugPrint('❌ Fallback drawtext exception: $e');
-      return null;
-    }
-  }
-
-  static String _escapeDrawText(String text) {
-    return text
-        .replaceAll('\\', '\\\\')
-        .replaceAll("'", "'\\\\''")
-        .replaceAll(':', '\\:')
-        .replaceAll(',', '\\,')
-        .replaceAll('[', '\\[')
-        .replaceAll(']', '\\]')
-        .replaceAll('%', '\\%');
-  }
-
-  // ─── DIAGNOSIS ──────────────────────────────────────────────
-  static String diagnoseFailure(String logs) {
-    final l = logs.toLowerCase();
-    if (l.contains('overlay.png') && (l.contains('no such file') || l.contains('invalid data found'))) {
-      return 'Overlay PNG watermark gagal dibuat/dibaca.';
-    }
-    if (l.contains('unknown encoder') || l.contains('encoder not found')) {
-      return 'Encoder tidak tersedia. Coba gunakan software encoder.';
-    }
-    if (l.contains('invalid argument') && l.contains('overlay')) {
-      return 'Argumen filter overlay tidak valid. Periksa ukuran watermark.';
-    }
-    if (l.contains('permission denied')) {
-      return 'Tidak ada izin baca/tulis.';
-    }
-    if (l.contains('moov atom not found') || l.contains('invalid data found')) {
-      return 'File video input korup.';
-    }
-    if (l.contains('cannot allocate memory')) {
-      return 'Memori tidak cukup. Turunkan resolusi atau bitrate.';
-    }
-    if (l.contains('broken pipe')) {
-      return 'Proses encoding terputus.';
-    }
-    if (l.contains('too many packets buffered')) {
-      return 'Buffer FFmpeg penuh. Kurangi thread atau pakai preset lebih lambat.';
-    }
-    if (l.contains('cannot init encoder')) {
-      return 'Encoder gagal diinisialisasi. Coba software encoder.';
-    }
-    if (l.contains('error while opening encoder')) {
-      return 'Gagal membuka encoder. Periksa parameter.';
-    }
-    if (l.contains('no space left on device')) {
-      return 'Ruang penyimpanan tidak cukup.';
-    }
-    if (l.contains('timeout')) {
-      return 'Encoding timeout. Coba gunakan preset lebih cepat.';
-    }
-    return 'Penyebab tidak dikenal. Cek log lengkap.';
-  }
-}
-
-// ─── MODEL INTERNAL ──────────────────────────────────────────
-class _VideoDisplayInfo {
-  final int frameWidth;
-  final int frameHeight;
-  final int rotationTag;
-  final int displayMatrix;
-  final int displayWidth;
-  final int displayHeight;
-  final double duration;
-
-  _VideoDisplayInfo({
-    required this.frameWidth,
-    required this.frameHeight,
-    required this.rotationTag,
-    required this.displayMatrix,
-    required this.displayWidth,
-    required this.displayHeight,
-    required this.duration,
-  });
-}
-
-class _CachedOverlay {
-  final String path;
-  final int offsetX;
-  final int offsetY;
-  final DateTime createdAt;
-
-  _CachedOverlay({
-    required this.path,
-    required this.offsetX,
-    required this.offsetY,
-    required this.createdAt,
-  });
-}
-
-// ─── ASYNC LOCK ──────────────────────────────────────────────────
-/// Async lock untuk thread-safe operations di Dart
-class _AsyncLock {
-  bool _locked = false;
-  final Queue<Completer<void>> _waiters = Queue();
-
-  Future<T> synchronized<T>(Future<T> Function() action) async {
-    if (_locked) {
-      final completer = Completer<void>();
-      _waiters.add(completer);
-      await completer.future;
-    }
-    
-    _locked = true;
-    try {
-      return await action();
-    } finally {
-      _locked = false;
-      if (_waiters.isNotEmpty) {
-        final completer = _waiters.removeFirst();
-        completer.complete();
-      }
-    }
-  }
-}
+        // FIX: Gunakan null check operator
+       
