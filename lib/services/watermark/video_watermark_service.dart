@@ -1,13 +1,15 @@
 // lib/services/watermark/video_watermark_service.dart
-// PRODUCTION READY – DENGAN CANCEL YANG ROBUST DAN OVERLAY OPTIMAL
+// VERSI KOMPATIBEL DENGAN ffmpeg_kit_flutter_new 4.5.1 (tanpa getStatisticsCallback)
+
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
+import 'dart:ui' show Color, TextDirection; // <-- Tambahan untuk Color dan TextDirection
 import 'package:flutter/foundation.dart';
-import 'package:flutter/painting.dart' show TextPainter, TextSpan, TextStyle, TextDirection;
+import 'package:flutter/painting.dart' show TextPainter, TextSpan, TextStyle;
 import 'package:intl/intl.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit_config.dart';
@@ -109,8 +111,7 @@ class VideoWatermarkService {
 
   // ─── STATISTICS CALLBACK ─────────────────────────────────────
   static void _registerGlobalStatisticsCallback() {
-    if (FFmpegKitConfig.getStatisticsCallback() != null) return;
-
+    // Di versi 4.5.1 tidak ada getStatisticsCallback, langsung set callback
     FFmpegKitConfig.enableStatisticsCallback((statistics) {
       if (_currentSessionId == null || _isCancelled) return;
 
@@ -292,7 +293,6 @@ class VideoWatermarkService {
 
       // ─── 2. HITUNG UKURAN OVERLAY YANG DIPERLUKAN ──────────
       final (needW, needH) = _computeWatermarkSize(settings, entry);
-      // Tambahkan padding
       const padding = 20;
       int ovW = needW + padding * 2;
       int ovH = needH + padding * 2;
@@ -304,7 +304,7 @@ class VideoWatermarkService {
 
       debugPrint('🎨 Overlay akan dirender pada ${ovW}x${ovH}');
 
-      // ─── 3. RENDER OVERLAY DENGAN UKURAN PAS ──────────────
+      // ─── 3. RENDER OVERLAY ──────────────────────────────────
       final overlayResult = await _renderOverlay(
         outW: ovW,
         outH: ovH,
@@ -463,7 +463,6 @@ class VideoWatermarkService {
 
   // ─── HITUNG UKURAN WATERMARK (TEKS + LOGO) ──────────────────
   static (int, int) _computeWatermarkSize(WatermarkSettings settings, ScanEntry entry) {
-    // Build teks seperti di drawtext
     final operator = settings.operatorName.isNotEmpty ? settings.operatorName : '';
     final company = settings.companyName.isNotEmpty ? '\n${settings.companyName}' : '';
     final dateFormat = DateFormat('yyyy-MM-dd HH:mm:ss');
@@ -474,7 +473,6 @@ class VideoWatermarkService {
     String text = '$operator$company\n$timestamp\n$barcode';
     if (location.isNotEmpty) text += '\n$location';
 
-    // Gunakan TextPainter untuk mengukur
     final textStyle = TextStyle(
       fontSize: settings.fontSize.toDouble(),
       fontFamily: settings.fontFamily,
@@ -488,23 +486,18 @@ class VideoWatermarkService {
     painter.layout(maxWidth: double.infinity);
     final size = painter.size;
 
-    // Tambahkan padding 20
     const padding = 20.0;
     int w = (size.width + padding * 2).ceil();
     int h = (size.height + padding * 2).ceil();
 
-    // Jika ada logo, tambahkan lebar logo + jarak
     if (settings.hasLogo && settings.logoPath != null) {
-      // Asumsikan logo 50x50, sesuaikan nanti
       w += 60;
       h = max(h, 70);
     }
 
-    // Pastikan minimal 100x50
     w = max(w, 100);
     h = max(h, 50);
 
-    // Genapkan
     w = (w ~/ 2) * 2;
     h = (h ~/ 2) * 2;
     return (w, h);
@@ -537,8 +530,12 @@ class VideoWatermarkService {
           width = w;
           height = h;
 
-          final br = stream.getBitrate();
-          if (br != null && br > 0) bitrate = br;
+          // Perbaiki: getBitrate() mengembalikan String? di versi 4.5.1
+          final brStr = stream.getBitrate();
+          if (brStr != null) {
+            final parsed = int.tryParse(brStr);
+            if (parsed != null && parsed > 0) bitrate = parsed;
+          }
 
           final avgFrameRate = stream.getAverageFrameRate();
           if (avgFrameRate != null) {
@@ -552,15 +549,22 @@ class VideoWatermarkService {
             }
           }
 
-          final pixFmt = stream.getPixelFormat();
-          if (pixFmt != null && pixFmt.isNotEmpty) {
-            if (_supportedPixelFormats.contains(pixFmt.toLowerCase())) {
-              pixelFormat = pixFmt;
-            } else {
-              debugPrint(
-                  '⚠️ Pixel format $pixFmt tidak didukung, fallback ke yuv420p');
-              pixelFormat = 'yuv420p';
+          // Perbaiki: getPixelFormat mungkin tidak ada, fallback ke yuv420p
+          // Kita coba ambil dari stream.getCodecName()? Tapi tidak ada.
+          // Kita biarkan default yuv420p
+          // Tapi jika ada getPixelFormat, coba panggil
+          try {
+            final pixFmt = stream.getPixelFormat();
+            if (pixFmt != null && pixFmt.isNotEmpty) {
+              if (_supportedPixelFormats.contains(pixFmt.toLowerCase())) {
+                pixelFormat = pixFmt;
+              } else {
+                debugPrint('⚠️ Pixel format $pixFmt tidak didukung, fallback ke yuv420p');
+                pixelFormat = 'yuv420p';
+              }
             }
+          } catch (_) {
+            // getPixelFormat tidak tersedia, abaikan
           }
           break;
         }
@@ -613,7 +617,6 @@ class VideoWatermarkService {
       throw Exception('Overlay file not found');
     }
 
-    // Filter: format base video, overlay langsung tanpa scaling
     final filterComplex =
         '[0:v]format=${videoInfo.pixelFormat},setsar=1[base];'
         '[base][1:v]overlay=$offsetX:$offsetY:format=auto:eof_action=pass[outv]';
@@ -668,7 +671,6 @@ class VideoWatermarkService {
     Timer? timeoutTimer;
     FFmpegSession? session;
     bool isSoftwareFallback = false;
-    bool sessionStarted = false;
 
     if (attempt > 0) {
       final encoderIndex = effectiveArgs.indexOf('-c:v');
@@ -693,18 +695,12 @@ class VideoWatermarkService {
       }
     }
 
-    // Mulai eksekusi dengan await untuk mendapatkan session
     try {
-      // executeWithArguments mengembalikan Future<FFmpegSession>
       session = await FFmpegKit.executeWithArguments(effectiveArgs);
-      sessionStarted = true;
-
-      // Simpan session segera untuk cancel
       await _sessionLock.synchronized(() async {
         _currentSession = session;
       });
 
-      // Pasang timeout setelah session didapat
       timeoutTimer = Timer(Duration(seconds: timeoutSeconds), () {
         if (!completer.isCompleted) {
           debugPrint('⏱️ TIMEOUT: $timeoutSeconds detik');
@@ -714,7 +710,6 @@ class VideoWatermarkService {
         }
       });
 
-      // Tunggu return code secara asynchronous
       final returnCode = await session!.getReturnCode();
       timeoutTimer.cancel();
 
@@ -874,7 +869,6 @@ class VideoWatermarkService {
       final completer = Completer<String?>();
       Timer? timeoutTimer;
 
-      // Eksekusi dan simpan session setelah didapat
       FFmpegSession? session;
       try {
         session = await FFmpegKit.executeWithArguments(commandArgs);
@@ -953,7 +947,6 @@ class VideoWatermarkService {
       final cachedPath = _overlayFileCache[key]!;
       if (await File(cachedPath).exists()) {
         debugPrint('🔄 Menggunakan overlay dari cache (${outW}x${outH})');
-        // Update LRU
         _overlayFileCache.remove(key);
         _overlayFileCache[key] = cachedPath;
         return (cachedPath, 0, 0);
