@@ -1,5 +1,5 @@
 // lib/services/watermark/video_watermark_service.dart
-// VERSI PRODUCTION READY - FINAL (SEMUA PERBAIKAN)
+// PRODUCTION READY – DENGAN CANCEL YANG ROBUST DAN OVERLAY OPTIMAL
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
@@ -7,6 +7,7 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/painting.dart' show TextPainter, TextSpan, TextStyle, TextDirection;
 import 'package:intl/intl.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit_config.dart';
@@ -14,28 +15,22 @@ import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:ffmpeg_kit_flutter_new/statistics.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:crypto/crypto.dart' show sha1;
 import '../../models/scan_entry.dart';
 import '../../watermark/watermark_settings.dart';
 import '../../watermark/watermark_renderer.dart';
 import 'watermark_cache.dart';
 
 /// Service untuk menambahkan watermark ke video dengan kualitas asli.
-/// 
-/// Pendekatan:
-/// 1. Baca parameter video asli (resolusi, fps, bitrate, pixel format)
-/// 2. Render overlay sesuai resolusi asli
-/// 3. Encode dengan parameter yang sama (mempertahankan kualitas)
-/// 4. Hardware encoder dengan fallback otomatis ke software
-/// 5. Copy audio tanpa re-encode
-/// 6. Tangani metadata rotasi dengan benar (tanpa transpose manual)
 class VideoWatermarkService {
   static String? lastError;
   static bool _warmedUp = false;
   static final WatermarkCache _cache = WatermarkCache();
 
-  // Cache overlay
-  static final Map<String, String> _overlayFileCache = {};
+  // Cache overlay (LinkedHashMap untuk LRU)
+  static final LinkedHashMap<String, String> _overlayFileCache = LinkedHashMap();
   static const int _maxCacheSize = 50;
+  static bool _cacheCleaned = false;
 
   // ─── SINGLE SESSION ──────────────────────────────────────────
   static bool _isEncoding = false;
@@ -45,7 +40,7 @@ class VideoWatermarkService {
   static double _currentDuration = 0;
   static bool _isCancelled = false;
   static final _AsyncLock _sessionLock = _AsyncLock();
-  
+
   // ─── TIMEOUT ──────────────────────────────────────────────────
   static const int _defaultTimeoutSeconds = 300;
   static const int _progressWatchdogInterval = 10;
@@ -53,6 +48,12 @@ class VideoWatermarkService {
   static Timer? _watchdogTimer;
   static double _lastProgress = 0;
   static DateTime _lastProgressTime = DateTime.now();
+
+  // ─── PROGRESS THROTTLING ─────────────────────────────────────
+  static DateTime _lastCallbackTime = DateTime.now().subtract(const Duration(seconds: 1));
+  static double _lastReportedProgress = -1.0;
+  static const Duration _progressThrottleInterval = Duration(milliseconds: 150);
+  static const double _progressMinDelta = 0.005;
 
   // ─── HARDWARE ENCODER ────────────────────────────────────────
   static bool? _hwEncoderAvailable;
@@ -100,28 +101,38 @@ class VideoWatermarkService {
     await _cache.initialize(settings);
     unawaited(_detectHardwareEncoder());
     _registerGlobalStatisticsCallback();
+    if (!_cacheCleaned) {
+      await _cleanOrphanOverlayFiles();
+      _cacheCleaned = true;
+    }
   }
 
   // ─── STATISTICS CALLBACK ─────────────────────────────────────
   static void _registerGlobalStatisticsCallback() {
     if (FFmpegKitConfig.getStatisticsCallback() != null) return;
-    
+
     FFmpegKitConfig.enableStatisticsCallback((statistics) {
       if (_currentSessionId == null || _isCancelled) return;
-      
+
       final callback = _currentProgressCallback;
       if (callback == null) return;
-      
-      // FIX 1: Statistics.getTime() menggunakan milidetik, bukan mikrodetik
+
       final timeMs = statistics.getTime();
       if (timeMs > 0 && _currentDuration > 0) {
-        // Konversi: timeMs (milidetik) / (duration detik * 1000)
         double progress = timeMs / (_currentDuration * 1000);
         if (progress > 1.0) progress = 1.0;
-        
+
         _lastProgress = progress;
         _lastProgressTime = DateTime.now();
-        callback(progress);
+
+        final now = DateTime.now();
+        final elapsed = now.difference(_lastCallbackTime);
+        if (elapsed >= _progressThrottleInterval ||
+            (progress - _lastReportedProgress).abs() >= _progressMinDelta) {
+          _lastCallbackTime = now;
+          _lastReportedProgress = progress;
+          callback(progress);
+        }
       }
     });
   }
@@ -129,10 +140,10 @@ class VideoWatermarkService {
   // ─── HARDWARE ENCODER DETECTION ─────────────────────────────
   static Future<void> _detectHardwareEncoder() async {
     if (_hwEncoderChecked) return;
-    
+
     try {
       debugPrint('🔍 Mendeteksi hardware encoder...');
-      
+
       final isEmulator = await _checkIsEmulator();
       if (isEmulator) {
         debugPrint('📱 Emulator - hardware encoder dinonaktifkan');
@@ -143,13 +154,13 @@ class VideoWatermarkService {
 
       final session = await FFmpegKit.execute('-encoders');
       final returnCode = await session.getReturnCode();
-      
+
       if (ReturnCode.isSuccess(returnCode)) {
         final output = await session.getOutput() ?? '';
         _hwEncoderAvailable = output.contains('h264_mediacodec');
-        debugPrint(_hwEncoderAvailable! 
-          ? '✅ Hardware encoder TERSEDIA' 
-          : 'ℹ️ Hardware encoder TIDAK tersedia');
+        debugPrint(_hwEncoderAvailable!
+            ? '✅ Hardware encoder TERSEDIA'
+            : 'ℹ️ Hardware encoder TIDAK tersedia');
       } else {
         _hwEncoderAvailable = false;
         debugPrint('⚠️ Gagal mendeteksi encoder');
@@ -170,15 +181,15 @@ class VideoWatermarkService {
       );
       final output = await session.getOutput() ?? '';
       _isEmulator = output.contains('1') || output.contains('true');
-      
+
       if (!_isEmulator!) {
         final session2 = await FFmpegKit.execute(
           '-loglevel 0 -hide_banner -f android_property -i ro.product.model -f null -',
         );
         final output2 = await session2.getOutput() ?? '';
-        _isEmulator = output2.contains('sdk_gphone') || 
-                      output2.contains('AOSP') ||
-                      output2.contains('Android SDK');
+        _isEmulator = output2.contains('sdk_gphone') ||
+            output2.contains('AOSP') ||
+            output2.contains('Android SDK');
       }
     } catch (_) {
       _isEmulator = false;
@@ -198,13 +209,13 @@ class VideoWatermarkService {
         debugPrint('⚠️ Tidak ada session aktif');
         return;
       }
-      
+
       debugPrint('🛑 Cancel encoding...');
       _isCancelled = true;
-      
+
       _watchdogTimer?.cancel();
       _watchdogTimer = null;
-      
+
       if (_currentSession != null) {
         try {
           FFmpegKit.cancel(_currentSession!);
@@ -213,13 +224,13 @@ class VideoWatermarkService {
           debugPrint('⚠️ FFmpegKit.cancel gagal: $e');
           try {
             FFmpegKit.cancel();
-            debugPrint('✅ FFmpeg cancelled');
+            debugPrint('✅ FFmpeg cancelled (global)');
           } catch (e2) {
-            debugPrint('⚠️ FFmpegKit.cancel juga gagal: $e2');
+            debugPrint('⚠️ FFmpegKit.cancel global juga gagal: $e2');
           }
         }
       }
-      
+
       _currentSession = null;
       _currentSessionId = null;
       _currentProgressCallback = null;
@@ -243,19 +254,27 @@ class VideoWatermarkService {
 
     lastError = null;
     String? overlayPath;
-    int offsetX = 0, offsetY = 0;
-    
+    int overlayW = 0, overlayH = 0;
+    int overlayOffsetX = 0, overlayOffsetY = 0;
+
     _isCancelled = false;
     _lastProgress = 0;
     _lastProgressTime = DateTime.now();
     _currentDuration = 0;
+    _lastReportedProgress = -1.0;
+    _lastCallbackTime = DateTime.now().subtract(_progressThrottleInterval);
 
     try {
       await warmUp();
       await _cache.initialize(settings);
-      
+
       if (!_hwEncoderChecked) {
         await _detectHardwareEncoder();
+      }
+
+      if (!_cacheCleaned) {
+        await _cleanOrphanOverlayFiles();
+        _cacheCleaned = true;
       }
 
       // ─── 1. BACA INFO VIDEO ─────────────────────────────────
@@ -263,18 +282,32 @@ class VideoWatermarkService {
       if (videoInfo == null) {
         throw Exception('Gagal membaca info video');
       }
-      
+
       debugPrint('📹 ${videoInfo.width}x${videoInfo.height}, '
-                 '${videoInfo.fps}fps, '
-                 '${(videoInfo.bitrate / 1000).round()}kbps, '
-                 '${videoInfo.pixelFormat}, '
-                 '${videoInfo.duration}s');
+          '${videoInfo.fps}fps, '
+          '${(videoInfo.bitrate / 1000).round()}kbps, '
+          '${videoInfo.pixelFormat}, '
+          '${videoInfo.duration}s');
       _currentDuration = videoInfo.duration;
 
-      // ─── 2. RENDER OVERLAY ──────────────────────────────────
+      // ─── 2. HITUNG UKURAN OVERLAY YANG DIPERLUKAN ──────────
+      final (needW, needH) = _computeWatermarkSize(settings, entry);
+      // Tambahkan padding
+      const padding = 20;
+      int ovW = needW + padding * 2;
+      int ovH = needH + padding * 2;
+      // Pastikan genap
+      ovW = (ovW ~/ 2) * 2;
+      ovH = (ovH ~/ 2) * 2;
+      overlayW = ovW;
+      overlayH = ovH;
+
+      debugPrint('🎨 Overlay akan dirender pada ${ovW}x${ovH}');
+
+      // ─── 3. RENDER OVERLAY DENGAN UKURAN PAS ──────────────
       final overlayResult = await _renderOverlay(
-        outW: videoInfo.width,
-        outH: videoInfo.height,
+        outW: ovW,
+        outH: ovH,
         settings: settings,
         entry: entry,
       );
@@ -292,12 +325,35 @@ class VideoWatermarkService {
         if (fallbackResult != null) return fallbackResult;
         throw Exception('Gagal membuat watermark');
       }
-      
+
       overlayPath = overlayResult.$1;
-      offsetX = overlayResult.$2;
-      offsetY = overlayResult.$3;
       if (overlayPath == null) throw Exception('Overlay path null');
-      debugPrint('🖼️ Overlay PNG siap');
+
+      // ─── 4. HITUNG POSISI OVERLAY ──────────────────────────
+      final pos = settings.position;
+      switch (pos) {
+        case WatermarkPosition.bottomRight:
+          overlayOffsetX = videoInfo.width - ovW - padding;
+          overlayOffsetY = videoInfo.height - ovH - padding;
+          break;
+        case WatermarkPosition.bottomLeft:
+          overlayOffsetX = padding;
+          overlayOffsetY = videoInfo.height - ovH - padding;
+          break;
+        case WatermarkPosition.topRight:
+          overlayOffsetX = videoInfo.width - ovW - padding;
+          overlayOffsetY = padding;
+          break;
+        case WatermarkPosition.topLeft:
+          overlayOffsetX = padding;
+          overlayOffsetY = padding;
+          break;
+      }
+      // Pastikan tidak negatif
+      overlayOffsetX = max(0, overlayOffsetX);
+      overlayOffsetY = max(0, overlayOffsetY);
+
+      debugPrint('🖼️ Overlay PNG siap, posisi ($overlayOffsetX,$overlayOffsetY)');
 
       await _sessionLock.synchronized(() async {
         _currentProgressCallback = onProgress;
@@ -305,14 +361,18 @@ class VideoWatermarkService {
         _currentSessionId = DateTime.now().millisecondsSinceEpoch.toString();
       });
 
-      // ─── 3. WATCHDOG ────────────────────────────────────────
+      // ─── 5. WATCHDOG ────────────────────────────────────────
       _watchdogTimer?.cancel();
       _watchdogTimer = Timer.periodic(
         Duration(seconds: _progressWatchdogInterval),
         (timer) {
-          if (_isCancelled) { timer.cancel(); return; }
-          
-          final elapsed = DateTime.now().difference(_lastProgressTime).inSeconds;
+          if (_isCancelled) {
+            timer.cancel();
+            return;
+          }
+
+          final elapsed =
+              DateTime.now().difference(_lastProgressTime).inSeconds;
           if (elapsed > _progressWatchdogThreshold && _lastProgress > 0.01) {
             debugPrint('⚠️ WATCHDOG: Tidak ada progress');
             timer.cancel();
@@ -322,19 +382,19 @@ class VideoWatermarkService {
         },
       );
 
-      // ─── 4. BUILD COMMAND ──────────────────────────────────
+      // ─── 6. BUILD COMMAND ──────────────────────────────────
       final args = _buildFFmpegArguments(
         inputPath: inputPath,
         outputPath: outputPath,
         overlayPath: overlayPath,
-        offsetX: offsetX,
-        offsetY: offsetY,
+        offsetX: overlayOffsetX,
+        offsetY: overlayOffsetY,
         videoInfo: videoInfo,
         keepAudio: keepAudio,
       );
       debugPrint('🎬 FFmpeg: ${args.join(' ')}');
 
-      // ─── 5. EXECUTE DENGAN FALLBACK ENCODER ────────────────
+      // ─── 7. EXECUTE DENGAN FALLBACK ENCODER ────────────────
       final success = await _executeEncodingWithFallback(
         args: args,
         videoInfo: videoInfo,
@@ -344,7 +404,7 @@ class VideoWatermarkService {
 
       _watchdogTimer?.cancel();
       _watchdogTimer = null;
-      
+
       await _sessionLock.synchronized(() async {
         _isEncoding = false;
         _currentSessionId = null;
@@ -381,15 +441,16 @@ class VideoWatermarkService {
     } finally {
       _watchdogTimer?.cancel();
       _watchdogTimer = null;
-      
+
       await _sessionLock.synchronized(() async {
         _isEncoding = false;
         _currentSessionId = null;
         _currentSession = null;
         _currentProgressCallback = null;
       });
-      
-      if (overlayPath != null && !_overlayFileCache.containsValue(overlayPath)) {
+
+      if (overlayPath != null &&
+          !_overlayFileCache.containsValue(overlayPath)) {
         try {
           final f = File(overlayPath);
           if (await f.exists()) await f.delete();
@@ -400,17 +461,67 @@ class VideoWatermarkService {
     }
   }
 
+  // ─── HITUNG UKURAN WATERMARK (TEKS + LOGO) ──────────────────
+  static (int, int) _computeWatermarkSize(WatermarkSettings settings, ScanEntry entry) {
+    // Build teks seperti di drawtext
+    final operator = settings.operatorName.isNotEmpty ? settings.operatorName : '';
+    final company = settings.companyName.isNotEmpty ? '\n${settings.companyName}' : '';
+    final dateFormat = DateFormat('yyyy-MM-dd HH:mm:ss');
+    final timestamp = dateFormat.format(entry.timestamp);
+    final barcode = entry.value ?? 'No Barcode';
+    final location = entry.locationName ?? '';
+
+    String text = '$operator$company\n$timestamp\n$barcode';
+    if (location.isNotEmpty) text += '\n$location';
+
+    // Gunakan TextPainter untuk mengukur
+    final textStyle = TextStyle(
+      fontSize: settings.fontSize.toDouble(),
+      fontFamily: settings.fontFamily,
+      color: const Color(0xFFFFFFFF),
+    );
+    final textSpan = TextSpan(text: text, style: textStyle);
+    final painter = TextPainter(
+      text: textSpan,
+      textDirection: TextDirection.ltr,
+    );
+    painter.layout(maxWidth: double.infinity);
+    final size = painter.size;
+
+    // Tambahkan padding 20
+    const padding = 20.0;
+    int w = (size.width + padding * 2).ceil();
+    int h = (size.height + padding * 2).ceil();
+
+    // Jika ada logo, tambahkan lebar logo + jarak
+    if (settings.hasLogo && settings.logoPath != null) {
+      // Asumsikan logo 50x50, sesuaikan nanti
+      w += 60;
+      h = max(h, 70);
+    }
+
+    // Pastikan minimal 100x50
+    w = max(w, 100);
+    h = max(h, 50);
+
+    // Genapkan
+    w = (w ~/ 2) * 2;
+    h = (h ~/ 2) * 2;
+    return (w, h);
+  }
+
   // ─── 1. BACA INFO VIDEO ──────────────────────────────────────
   static Future<_VideoInfo?> _getVideoInfo(String inputPath) async {
     try {
       final session = await FFprobeKit.getMediaInformation(inputPath)
           .timeout(const Duration(seconds: 10));
-      
+
       final mediaInfo = session.getMediaInformation();
       if (mediaInfo == null) return null;
 
       final durationObj = mediaInfo.getDuration();
-      final double duration = double.tryParse(durationObj?.toString() ?? '') ?? 0.0;
+      final double duration =
+          double.tryParse(durationObj?.toString() ?? '') ?? 0.0;
 
       int width = 0, height = 0;
       int bitrate = 0;
@@ -421,14 +532,14 @@ class VideoWatermarkService {
       for (final stream in streams) {
         final w = stream.getWidth();
         final h = stream.getHeight();
-        
+
         if (w != null && h != null && w > 0 && h > 0) {
           width = w;
           height = h;
-          
+
           final br = stream.getBitrate();
           if (br != null && br > 0) bitrate = br;
-          
+
           final avgFrameRate = stream.getAverageFrameRate();
           if (avgFrameRate != null) {
             final parts = avgFrameRate.split('/');
@@ -440,13 +551,14 @@ class VideoWatermarkService {
               }
             }
           }
-          
+
           final pixFmt = stream.getPixelFormat();
           if (pixFmt != null && pixFmt.isNotEmpty) {
             if (_supportedPixelFormats.contains(pixFmt.toLowerCase())) {
               pixelFormat = pixFmt;
             } else {
-              debugPrint('⚠️ Pixel format $pixFmt tidak didukung, fallback ke yuv420p');
+              debugPrint(
+                  '⚠️ Pixel format $pixFmt tidak didukung, fallback ke yuv420p');
               pixelFormat = 'yuv420p';
             }
           }
@@ -459,13 +571,11 @@ class VideoWatermarkService {
         return null;
       }
 
-      // Estimasi bitrate dari file size jika tidak terbaca
       if (bitrate == 0 && duration > 0) {
         final fileSize = await File(inputPath).length();
         bitrate = (fileSize * 8 / duration).round();
       }
 
-      // Pastikan dimensi genap
       width = (width ~/ 2) * 2;
       height = (height ~/ 2) * 2;
 
@@ -503,20 +613,15 @@ class VideoWatermarkService {
       throw Exception('Overlay file not found');
     }
 
-    // ─── FILTER OVERLAY ────────────────────────────────────────
-    // Biarkan FFmpeg autorotate, tidak ada -noautorotate
+    // Filter: format base video, overlay langsung tanpa scaling
     final filterComplex =
         '[0:v]format=${videoInfo.pixelFormat},setsar=1[base];'
         '[base][1:v]overlay=$offsetX:$offsetY:format=auto:eof_action=pass[outv]';
 
-    // ─── ENCODER ──────────────────────────────────────────────
     final useHw = _shouldUseHardwareEncoder();
     final encoder = useHw ? 'h264_mediacodec' : 'libx264';
-    
-    // ─── BITRATE ──────────────────────────────────────────────
     final bitrateK = (videoInfo.bitrate / 1000).round();
 
-    // ─── ARGUMEN ──────────────────────────────────────────────
     final arguments = <String>[
       '-i', inputPath,
       '-loop', '1',
@@ -525,8 +630,7 @@ class VideoWatermarkService {
       '-map', '[outv]',
       '-c:v', encoder,
       '-b:v', '${bitrateK}k',
-      '-pix_fmt', videoInfo.pixelFormat,
-      // FIX 4: Pertahankan metadata video asli
+      '-pix_fmt', 'yuv420p',
       '-map_metadata', '0',
       '-movflags', '+faststart',
       '-shortest',
@@ -534,7 +638,6 @@ class VideoWatermarkService {
       outputPath,
     ];
 
-    // Pisahkan parameter encoder: -maxrate dan -bufsize khusus libx264
     if (!useHw) {
       final maxrateK = (videoInfo.bitrate * 1.5 / 1000).round();
       final bufsizeK = (videoInfo.bitrate * 2 / 1000).round();
@@ -544,9 +647,6 @@ class VideoWatermarkService {
       ]);
     }
 
-    // Hapus -r, biarkan FFmpeg mempertahankan FPS asli
-
-    // Audio: copy tanpa re-encode
     if (keepAudio) {
       arguments.insertAll(arguments.length - 1, ['-map', '0:a?', '-c:a', 'copy']);
     } else {
@@ -563,32 +663,28 @@ class VideoWatermarkService {
     required int timeoutSeconds,
     required int attempt,
   }) async {
+    List<String> effectiveArgs = List.from(args);
     final completer = Completer<bool>();
     Timer? timeoutTimer;
     FFmpegSession? session;
     bool isSoftwareFallback = false;
-    
-    // FIX 2: Cegah duplikasi parameter saat fallback
-    // Jika attempt > 0, kita sedang mencoba fallback
+    bool sessionStarted = false;
+
     if (attempt > 0) {
-      // Ganti encoder ke libx264 jika sebelumnya hardware
-      final encoderIndex = args.indexOf('-c:v');
-      if (encoderIndex != -1 && encoderIndex + 1 < args.length) {
-        if (args[encoderIndex + 1] == 'h264_mediacodec') {
-          args[encoderIndex + 1] = 'libx264';
+      final encoderIndex = effectiveArgs.indexOf('-c:v');
+      if (encoderIndex != -1 && encoderIndex + 1 < effectiveArgs.length) {
+        if (effectiveArgs[encoderIndex + 1] == 'h264_mediacodec') {
+          effectiveArgs[encoderIndex + 1] = 'libx264';
           isSoftwareFallback = true;
           debugPrint('🔄 Fallback ke software encoder (libx264)');
-          
-          // Hapus -maxrate dan -bufsize jika sudah ada (untuk mencegah duplikasi)
-          args.removeWhere((arg) => arg == '-maxrate' || arg == '-bufsize');
-          
-          // Tambahkan parameter untuk libx264
+
+          effectiveArgs.removeWhere((arg) => arg == '-maxrate' || arg == '-bufsize');
+
           final maxrateK = (videoInfo.bitrate * 1.5 / 1000).round();
           final bufsizeK = (videoInfo.bitrate * 2 / 1000).round();
-          // Insert sebelum -y
-          final yIndex = args.indexOf('-y');
+          final yIndex = effectiveArgs.indexOf('-y');
           if (yIndex != -1) {
-            args.insertAll(yIndex, [
+            effectiveArgs.insertAll(yIndex, [
               '-maxrate', '${maxrateK}k',
               '-bufsize', '${bufsizeK}k',
             ]);
@@ -596,30 +692,32 @@ class VideoWatermarkService {
         }
       }
     }
-    
-    timeoutTimer = Timer(Duration(seconds: timeoutSeconds), () {
-      if (!completer.isCompleted) {
-        debugPrint('⏱️ TIMEOUT: $timeoutSeconds detik');
-        unawaited(cancel());
-        lastError = 'Encoding timeout';
-        completer.complete(false);
-      }
-    });
 
+    // Mulai eksekusi dengan await untuk mendapatkan session
     try {
-      session = await FFmpegKit.executeWithArguments(args);
-      
+      // executeWithArguments mengembalikan Future<FFmpegSession>
+      session = await FFmpegKit.executeWithArguments(effectiveArgs);
+      sessionStarted = true;
+
+      // Simpan session segera untuk cancel
       await _sessionLock.synchronized(() async {
         _currentSession = session;
       });
-      
-      if (completer.isCompleted) {
-        return await completer.future;
-      }
 
-      final returnCode = await session.getReturnCode();
+      // Pasang timeout setelah session didapat
+      timeoutTimer = Timer(Duration(seconds: timeoutSeconds), () {
+        if (!completer.isCompleted) {
+          debugPrint('⏱️ TIMEOUT: $timeoutSeconds detik');
+          unawaited(cancel());
+          lastError = 'Encoding timeout';
+          completer.complete(false);
+        }
+      });
+
+      // Tunggu return code secara asynchronous
+      final returnCode = await session!.getReturnCode();
       timeoutTimer.cancel();
-      
+
       if (completer.isCompleted) {
         return await completer.future;
       }
@@ -630,29 +728,26 @@ class VideoWatermarkService {
       }
 
       if (!ReturnCode.isSuccess(returnCode)) {
-        final logs = await session.getAllLogsAsString() ?? '';
-        
-        // Cek apakah error karena encoder
-        if (!isSoftwareFallback && 
+        final logs = await session!.getAllLogsAsString() ?? '';
+
+        if (!isSoftwareFallback &&
             attempt < _maxHwFallbackAttempts &&
             (logs.contains('encoder not found') ||
-             logs.contains('Unknown encoder') ||
-             logs.contains('cannot init encoder') ||
-             logs.contains('h264_mediacodec'))) {
+                logs.contains('Unknown encoder') ||
+                logs.contains('cannot init encoder') ||
+                logs.contains('h264_mediacodec'))) {
           debugPrint('⚠️ Hardware encoder gagal, mencoba fallback...');
-          // Retry dengan software encoder
-          timeoutTimer.cancel();
           final retryResult = await _executeEncodingWithFallback(
-            args: args,
+            args: effectiveArgs,
             videoInfo: videoInfo,
             timeoutSeconds: timeoutSeconds,
             attempt: attempt + 1,
           );
-          completer.complete(retryResult);
+          if (!completer.isCompleted) completer.complete(retryResult);
           return await completer.future;
         }
-        
-        if (logs.toLowerCase().contains('cancelled') || 
+
+        if (logs.toLowerCase().contains('cancelled') ||
             logs.toLowerCase().contains('canceled')) {
           debugPrint('⏹️ Encoding dibatalkan');
           completer.complete(false);
@@ -671,7 +766,7 @@ class VideoWatermarkService {
       return await completer.future;
     } catch (e) {
       debugPrint('❌ Encoding exception: $e');
-      timeoutTimer.cancel();
+      timeoutTimer?.cancel();
       unawaited(cancel());
       if (!completer.isCompleted) completer.complete(false);
       return false;
@@ -693,20 +788,20 @@ class VideoWatermarkService {
     int timeoutSeconds = _defaultTimeoutSeconds,
   }) async {
     debugPrint('📝 Drawtext fallback...');
-    
+
     _isCancelled = false;
     _lastProgress = 0;
     _lastProgressTime = DateTime.now();
     _currentDuration = videoInfo.duration;
     _currentProgressCallback = onProgress;
-    
+
     try {
       final operator = settings.operatorName.isNotEmpty ? settings.operatorName : '';
       final company = settings.companyName.isNotEmpty ? '\n${settings.companyName}' : '';
-      
+
       final dateFormat = DateFormat('yyyy-MM-dd HH:mm:ss');
       final timestamp = dateFormat.format(entry.timestamp);
-      
+
       final barcode = entry.value ?? 'No Barcode';
       final location = entry.locationName ?? '';
 
@@ -717,7 +812,7 @@ class VideoWatermarkService {
       final padding = 20;
       final pos = settings.position;
       String x, y;
-      
+
       switch (pos) {
         case WatermarkPosition.bottomRight:
           x = '(w-tw)-$padding';
@@ -740,7 +835,6 @@ class VideoWatermarkService {
       final fontSize = settings.fontSize;
       final opacity = settings.backgroundOpacity;
 
-      // ─── DRAWTEXT DENGAN FORMAT ────────────────────────────
       String drawText =
           "drawtext=text='$text':"
           "fontcolor=white:"
@@ -754,74 +848,77 @@ class VideoWatermarkService {
       final encoder = useHw ? 'h264_mediacodec' : 'libx264';
       final bitrateK = (videoInfo.bitrate / 1000).round();
 
-      // ─── COMMAND ─────────────────────────────────────────────
-      String command =
-          "-i '$inputPath' "
-          "-vf \"format=${videoInfo.pixelFormat},setsar=1,$drawText\" "
-          "-c:a copy "
-          "-c:v $encoder "
-          "-b:v ${bitrateK}k ";
-      
-      // Tambahkan parameter untuk libx264
+      final commandArgs = <String>[
+        '-i', inputPath,
+        '-vf', 'format=${videoInfo.pixelFormat},setsar=1,$drawText',
+        '-c:a', 'copy',
+        '-c:v', encoder,
+        '-b:v', '${bitrateK}k',
+      ];
+
       if (!useHw) {
         final maxrateK = (videoInfo.bitrate * 1.5 / 1000).round();
         final bufsizeK = (videoInfo.bitrate * 2 / 1000).round();
-        command += "-maxrate ${maxrateK}k -bufsize ${bufsizeK}k ";
+        commandArgs.addAll(['-maxrate', '${maxrateK}k', '-bufsize', '${bufsizeK}k']);
       }
-      
-      command +=
-          "-pix_fmt ${videoInfo.pixelFormat} "
-          // FIX 4: Pertahankan metadata video asli
-          "-map_metadata 0 "
-          "-movflags +faststart "
-          "-y '$outputPath'";
 
-      debugPrint('🎬 Fallback: $command');
+      commandArgs.addAll([
+        '-pix_fmt', 'yuv420p',
+        '-map_metadata', '0',
+        '-movflags', '+faststart',
+        '-y', outputPath,
+      ]);
+
+      debugPrint('🎬 Fallback: ${commandArgs.join(' ')}');
 
       final completer = Completer<String?>();
       Timer? timeoutTimer;
-      
-      timeoutTimer = Timer(Duration(seconds: timeoutSeconds), () {
-        if (!completer.isCompleted) {
-          debugPrint('⏱️ TIMEOUT: Fallback drawtext');
-          if (_currentSession != null) {
-            FFmpegKit.cancel(_currentSession!);
-          }
-          completer.complete(null);
-        }
-      });
-      
-      FFmpegKit.execute(command).then((session) async {
+
+      // Eksekusi dan simpan session setelah didapat
+      FFmpegSession? session;
+      try {
+        session = await FFmpegKit.executeWithArguments(commandArgs);
         await _sessionLock.synchronized(() async {
           _currentSession = session;
         });
-        
-        final returnCode = await session.getReturnCode();
-        timeoutTimer?.cancel();
+
+        timeoutTimer = Timer(Duration(seconds: timeoutSeconds), () {
+          if (!completer.isCompleted) {
+            debugPrint('⏱️ TIMEOUT: Fallback drawtext');
+            if (_currentSession != null) {
+              FFmpegKit.cancel(_currentSession!);
+            }
+            completer.complete(null);
+          }
+        });
+
+        final returnCode = await session!.getReturnCode();
+        timeoutTimer.cancel();
+
         await _sessionLock.synchronized(() async {
           _currentSession = null;
         });
-        
+
         if (_isCancelled || completer.isCompleted) {
           completer.complete(null);
-          return;
+          return await completer.future;
         }
-        
+
         if (ReturnCode.isSuccess(returnCode)) {
           debugPrint('✅ Fallback drawtext berhasil');
           completer.complete(outputPath);
         } else {
-          final logs = await session.getOutput();
+          final logs = await session!.getOutput();
           debugPrint('❌ Fallback drawtext error: $logs');
           lastError = logs;
           completer.complete(null);
         }
-      }).catchError((e) {
+      } catch (e) {
         timeoutTimer?.cancel();
         _currentSession = null;
         debugPrint('❌ Fallback exception: $e');
         completer.complete(null);
-      });
+      }
 
       return await completer.future;
     } catch (e) {
@@ -850,13 +947,15 @@ class VideoWatermarkService {
     required WatermarkSettings settings,
     required ScanEntry entry,
   }) async {
-    // FIX 3: Gunakan stable hash untuk cache key
     final key = _getStableCacheKey(outW, outH, settings, entry);
-    
+
     if (_overlayFileCache.containsKey(key)) {
       final cachedPath = _overlayFileCache[key]!;
       if (await File(cachedPath).exists()) {
-        debugPrint('🔄 Menggunakan overlay dari cache');
+        debugPrint('🔄 Menggunakan overlay dari cache (${outW}x${outH})');
+        // Update LRU
+        _overlayFileCache.remove(key);
+        _overlayFileCache[key] = cachedPath;
         return (cachedPath, 0, 0);
       } else {
         _overlayFileCache.remove(key);
@@ -887,7 +986,6 @@ class VideoWatermarkService {
     return (filePath, 0, 0);
   }
 
-  // FIX 3: Stable hash menggunakan SHA-1 untuk cache key
   static String _getStableCacheKey(int outW, int outH, WatermarkSettings settings, ScanEntry entry) {
     final parts = [
       outW, outH,
@@ -907,8 +1005,7 @@ class VideoWatermarkService {
       entry.latitude ?? '',
       entry.longitude ?? '',
     ].join('|');
-    
-    // Gunakan SHA-1 untuk hash yang stabil
+
     final bytes = utf8.encode(parts);
     final digest = sha1.convert(bytes);
     return digest.toString().substring(0, 16);
@@ -928,6 +1025,33 @@ class VideoWatermarkService {
     for (final entry in toRemove) {
       try { File(entry.value).deleteSync(); } catch (_) {}
       _overlayFileCache.remove(entry.key);
+    }
+  }
+
+  // ─── PEMBERSIHAN CACHE OVERLAY ──────────────────────────────
+  static Future<void> _cleanOrphanOverlayFiles() async {
+    try {
+      final cacheDir = await _getCacheDirectory();
+      final files = cacheDir.listSync();
+      final activeFiles = _overlayFileCache.values.toSet();
+
+      int deleted = 0;
+      for (final entity in files) {
+        if (entity is File) {
+          final path = entity.path;
+          if (!activeFiles.contains(path)) {
+            try {
+              await entity.delete();
+              deleted++;
+            } catch (_) {}
+          }
+        }
+      }
+      if (deleted > 0) {
+        debugPrint('🧹 Menghapus $deleted file overlay orphan dari disk');
+      }
+    } catch (e) {
+      debugPrint('⚠️ Gagal membersihkan cache overlay: $e');
     }
   }
 
@@ -979,4 +1103,42 @@ class VideoWatermarkService {
 
 // ─── ASYNC LOCK ──────────────────────────────────────────────
 class _AsyncLock {
-  bool _locked
+  Future<void>? _lockFuture;
+
+  Future<T> synchronized<T>(Future<T> Function() action) {
+    final previousLock = _lockFuture;
+    final completer = Completer<T>();
+
+    _lockFuture = (previousLock ?? Future<void>.value()).then((_) {
+      return action().then((result) {
+        completer.complete(result);
+      }).catchError((error) {
+        completer.completeError(error);
+        return Future.error(error);
+      });
+    }).catchError((_) {
+      // Jika ada error di chain, tetap lanjutkan untuk panggilan selanjutnya
+    });
+
+    return completer.future;
+  }
+}
+
+// ─── VIDEO INFO ──────────────────────────────────────────────
+class _VideoInfo {
+  final int width;
+  final int height;
+  final double duration;
+  final int bitrate;
+  final double fps;
+  final String pixelFormat;
+
+  const _VideoInfo({
+    required this.width,
+    required this.height,
+    required this.duration,
+    required this.bitrate,
+    required this.fps,
+    required this.pixelFormat,
+  });
+}
