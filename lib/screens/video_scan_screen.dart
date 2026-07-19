@@ -1,3 +1,6 @@
+// lib/screens/video_scan_screen.dart
+// VERSI PRODUCTION – DENGAN PERBAIKAN WATERMARK DAN HANDLING ERROR
+
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -18,7 +21,7 @@ import '../services/background/video_processing_service.dart';
 import '../services/pod_location_service.dart';
 import '../watermark/watermark_settings.dart';
 import '../watermark/watermark_style.dart';
-import '../services/watermark/watermark_service.dart'; // ✅ PERBAIKAN: pakai service overlay-PNG (bukan drawtext lama)
+import '../services/watermark/video_watermark_service.dart';
 import '../theme/app_theme.dart';
 import '../utils/file_helper.dart';
 import 'preview_screen.dart';
@@ -52,7 +55,6 @@ class VideoScanScreen extends StatefulWidget {
 class _VideoScanScreenState extends State<VideoScanScreen> {
   final ImagePicker _picker = ImagePicker();
   final StorageService _storage = StorageService();
-  final WatermarkSettings _wmSettings = WatermarkSettings();
 
   late final TaskQueue _taskQueue = TaskQueue(
     maxWorkers: 1,
@@ -73,6 +75,9 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
   static const int _maxVideoSizeBytes = 50 * 1024 * 1024;
   static const int _minVideoDurationSeconds = 3;
 
+  // ─── LOCATION STATE ──────────────────────────────────────────
+  bool _locationAcquired = false;
+
   @override
   void initState() {
     super.initState();
@@ -86,19 +91,36 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         _isProcessing = _pendingTasks > 0 || _runningTasks > 0;
       });
     });
-    // Idempotent: no-op jika sudah locked/acquiring dari BarcodeScanScreen.
-    // Dihormati toggle "Lokasi GPS pada Watermark" di pengaturan.
-    if (_wmSettings.gpsWatermarkEnabled) {
-      unawaited(PodLocationService.instance.acquireForCapture());
+
+    // Inisialisasi lokasi jika diaktifkan di pengaturan
+    _initLocation();
+  }
+
+  Future<void> _initLocation() async {
+    try {
+      final settings = context.read<WatermarkSettings>();
+      if (settings.gpsWatermarkEnabled) {
+        await PodLocationService.instance.acquireForCapture();
+        _locationAcquired = true;
+        debugPrint('📍 Lokasi GPS diaktifkan untuk video');
+      }
+    } catch (e) {
+      debugPrint('⚠️ Gagal menginisialisasi lokasi: $e');
+      _locationAcquired = false;
     }
   }
 
   @override
   void dispose() {
     _taskQueue.dispose();
-    if (_wmSettings.gpsWatermarkEnabled) {
-      PodLocationService.instance.releaseAfterCapture();
-    }
+    // Lepaskan lokasi jika sudah diakuisisi
+    try {
+      final settings = context.read<WatermarkSettings>();
+      if (settings.gpsWatermarkEnabled && _locationAcquired) {
+        PodLocationService.instance.releaseAfterCapture();
+        debugPrint('📍 Lokasi GPS dilepaskan');
+      }
+    } catch (_) {}
     super.dispose();
   }
 
@@ -107,7 +129,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     setState(fn);
   }
 
-  // ─── Permission ─────────────────────────────────────────────
+  // ─── PERMISSION ─────────────────────────────────────────────
   Future<bool> _ensureCameraPermission() async {
     final status = await Permission.camera.status;
     if (status.isGranted) return true;
@@ -130,7 +152,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     return false;
   }
 
-  // ─── Preview helper ─────────────────────────────────────────
+  // ─── PREVIEW HELPER ─────────────────────────────────────────
   Future<String?> _showPreview(XFile file, MediaType type) async {
     return Navigator.push<String>(
       context,
@@ -145,7 +167,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     );
   }
 
-  // ─── Pick & Record ──────────────────────────────────────────
+  // ─── PICK & RECORD ──────────────────────────────────────────
   Future<void> _pickAndRecord() async {
     if (_isSaving || _isProcessing) return;
     if (!await _ensureCameraPermission()) return;
@@ -174,8 +196,6 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       }
 
       // ─── ✅ Render watermark SEBELUM preview ──────────
-      // Preview akan menampilkan file HASIL watermark ini persis apa
-      // adanya, dan "Simpan" tidak akan memproses ulang.
       prep = await _prepareWatermarkedVideo(videoFile);
       if (!mounted) return;
 
@@ -239,7 +259,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     }
   }
 
-  // ─── Core Processing ────────────────────────────────────────
+  // ─── CORE PROCESSING ────────────────────────────────────────
   Future<bool> _maybeDeleteLocalCopy(String path, bool galleryOk) async {
     if (!galleryOk) return false;
     final settings = context.read<WatermarkSettings>();
@@ -254,14 +274,6 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       return false;
     }
   }
-
-  // ✅ REVISI ARSITEKTUR: watermark video sekarang di-render SEBELUM
-  // preview ditampilkan (_prepareWatermarkedVideo, dipanggil dari
-  // _pickAndRecord). Preview menampilkan video yang SUDAH ber-watermark,
-  // sehingga apa yang diputar di preview = persis file yang akan disimpan.
-  // _finalizeVideo (dipicu saat "Simpan" ditekan) TIDAK lagi memanggil
-  // FFmpeg lagi — hanya memindahkan file yang sudah jadi ke storage
-  // internal, membuat thumbnail, ekspor gallery, dan mencatat entry DB.
 
   /// Validasi + render watermark, dipanggil SEBELUM preview ditampilkan.
   Future<_VideoPrepResult> _prepareWatermarkedVideo(XFile videoFile) async {
@@ -301,30 +313,30 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       _progress = 0.0;
     });
 
-    // ============================================================
-    // ✅ PERBAIKAN: Gunakan VideoWatermarkService (overlay PNG + fallback
-    // hw→sw encoder) — BUKAN VideoWatermarkRenderer lama yang memakai
-    // drawtext dengan urutan escaping salah (colon di-escape dulu baru
-    // backslash-nya di-escape ulang → filter FFmpeg jadi korup → selalu
-    // gagal parse → video jatuh ke jalur "simpan tanpa watermark").
-    // ============================================================
-    final wmLocState = _wmSettings.gpsWatermarkEnabled
+    // ─── AMBIL LOKASI TERKINI ─────────────────────────────────
+    final wmLocState = settings.gpsWatermarkEnabled
         ? PodLocationService.instance.currentState
         : null;
+
+    // ─── BUAT SCAN ENTRY UNTUK WATERMARK ──────────────────────
+    final barcodeValue = widget.barcode ?? 'video_${DateTime.now().millisecondsSinceEpoch}';
+    final entry = ScanEntry(
+      id: _storage.generateId(),
+      type: ScanType.video,
+      value: barcodeValue,
+      timestamp: DateTime.now(),
+      latitude: wmLocState?.lat,
+      longitude: wmLocState?.lon,
+      locationName: (wmLocState != null && wmLocState.address.isNotEmpty) ? wmLocState.address : null,
+    );
+
+    // ─── PANGGIL VIDEO WATERMARK SERVICE ──────────────────────
     final wmResult = await VideoWatermarkService.addWatermark(
       inputPath: videoFile.path,
       outputPath: wmOutputPath,
+      entry: entry,
       settings: settings,
       keepAudio: true,
-      entry: ScanEntry(
-        id: _storage.generateId(),
-        type: ScanType.video,
-        value: widget.barcode ?? 'video_${DateTime.now().millisecondsSinceEpoch}',
-        timestamp: DateTime.now(),
-        latitude: wmLocState?.lat,
-        longitude: wmLocState?.lon,
-        locationName: (wmLocState != null && wmLocState.address.isNotEmpty) ? wmLocState.address : null,
-      ),
       onProgress: (p) {
         _safeSetState(() => _progress = p);
       },
@@ -348,9 +360,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       );
     }
 
-    // Watermark gagal → tetap tampilkan & simpan video mentah, dengan
-    // peringatan. Preview akan menunjukkan video TANPA watermark ini apa
-    // adanya, sehingga tidak ada kejutan saat Save.
+    // Watermark gagal → tetap tampilkan & simpan video mentah
     final diagnosis = VideoWatermarkService.lastError;
     debugPrint('❌ Watermark video gagal${diagnosis != null ? ': $diagnosis' : ''}');
     if (mounted) {
@@ -366,9 +376,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     );
   }
 
-  /// Dipanggil setelah pengguna menekan "Simpan" di preview. Hanya
-  /// memindahkan file yang SUDAH jadi (watermark/raw) ke storage internal
-  /// & gallery — TIDAK ada render FFmpeg ulang di sini.
+  /// Dipanggil setelah pengguna menekan "Simpan" di preview.
   Future<ScanEntry> _finalizeVideo(_VideoPrepResult prep) async {
     String? finalPath;
     String? thumbnailPath;
@@ -417,10 +425,12 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
               ? 'Video tersimpan di internal (gagal ekspor)'
               : 'Video tersimpan (tanpa watermark), gagal ekspor ke Gallery'));
 
-      // Simpan entry database
-      final finalLocState = _wmSettings.gpsWatermarkEnabled
+      // Ambil lokasi final untuk entry
+      final settings = context.read<WatermarkSettings>();
+      final finalLocState = settings.gpsWatermarkEnabled
           ? PodLocationService.instance.currentState
           : null;
+
       final entry = ScanEntry(
         id: _storage.generateId(),
         type: ScanType.video,
@@ -444,6 +454,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       _safeSetState(() {});
       rethrow;
     } finally {
+      // Bersihkan file temporary watermark
       try {
         final tempDir = await getTemporaryDirectory();
         final tempFiles = await tempDir.list().where((e) => e is File && e.path.contains('wm_')).toList();
@@ -451,6 +462,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
           try { await File(f.path).delete(); } catch (_) {}
         }
       } catch (_) {}
+      // Hapus file prep jika berbeda dari original
       await FileHelper.deleteIfExists(prep.path);
       if (prep.originalPath != prep.path) {
         await FileHelper.deleteIfExists(prep.originalPath);
@@ -458,7 +470,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     }
   }
 
-  // ─── Helper ─────────────────────────────────────────────────
+  // ─── HELPER ──────────────────────────────────────────────────
   Future<String?> _generateThumbnail(String videoPath) async {
     try {
       final dir = await getApplicationDocumentsDirectory();
@@ -542,7 +554,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     );
   }
 
-  // ─── Build ──────────────────────────────────────────────────
+  // ─── BUILD ──────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     final bool isProcessing = _pendingTasks > 0 || _runningTasks > 0;
