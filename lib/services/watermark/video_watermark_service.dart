@@ -1,5 +1,6 @@
 // lib/services/watermark/video_watermark_service.dart
-// Versi final dengan import lengkap dan kompatibel ffmpeg_kit_flutter_new 4.5.1
+// Versi final – menghindari tipe FFmpegSession yang tidak dikenali dengan menggunakan dynamic
+// Kompatibel dengan ffmpeg_kit_flutter_new 4.5.1
 
 import 'dart:async';
 import 'dart:collection';
@@ -7,14 +8,14 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
-import 'dart:ui' as ui; // alias untuk menghindari konflik
+import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart' show TextPainter, TextSpan, TextStyle;
 import 'package:intl/intl.dart';
-import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart'; // menyediakan FFmpegKit, FFmpegSession
+import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit_config.dart';
 import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
-import 'package:ffmpeg_kit_flutter_new/return_code.dart'; // ReturnCode
+import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:crypto/crypto.dart' show sha1;
 import '../../models/scan_entry.dart';
@@ -33,7 +34,8 @@ class VideoWatermarkService {
 
   static bool _isEncoding = false;
   static String? _currentSessionId;
-  static FFmpegSession? _currentSession; // sekarang terdefinisi
+  // Gunakan dynamic untuk menghindari error tipe FFmpegSession
+  static dynamic _currentSession;
   static void Function(double)? _currentProgressCallback;
   static double _currentDuration = 0;
   static bool _isCancelled = false;
@@ -189,7 +191,7 @@ class VideoWatermarkService {
       _watchdogTimer = null;
       if (_currentSession != null) {
         try {
-          FFmpegKit.cancel(_currentSession!);
+          FFmpegKit.cancel(_currentSession);
           debugPrint('✅ FFmpeg session cancelled');
         } catch (e) {
           debugPrint('⚠️ FFmpegKit.cancel gagal: $e');
@@ -418,12 +420,12 @@ class VideoWatermarkService {
     final textStyle = TextStyle(
       fontSize: settings.fontSize.toDouble(),
       fontFamily: settings.fontFamily,
-      color: const ui.Color(0xFFFFFFFF), // gunakan ui.Color
+      color: const ui.Color(0xFFFFFFFF),
     );
     final textSpan = TextSpan(text: text, style: textStyle);
     final painter = TextPainter(
       text: textSpan,
-      textDirection: ui.TextDirection.ltr, // gunakan ui.TextDirection.ltr
+      textDirection: ui.TextDirection.ltr,
     );
     painter.layout(maxWidth: double.infinity);
     final size = painter.size;
@@ -575,7 +577,7 @@ class VideoWatermarkService {
     List<String> effectiveArgs = List.from(args);
     final completer = Completer<bool>();
     Timer? timeoutTimer;
-    FFmpegSession? session;
+    dynamic session; // menggunakan dynamic
     bool isSoftwareFallback = false;
 
     if (attempt > 0) {
@@ -613,7 +615,7 @@ class VideoWatermarkService {
         }
       });
 
-      final returnCode = await session!.getReturnCode();
+      final returnCode = await session.getReturnCode();
       timeoutTimer.cancel();
 
       if (completer.isCompleted) return await completer.future;
@@ -623,7 +625,7 @@ class VideoWatermarkService {
       }
 
       if (!ReturnCode.isSuccess(returnCode)) {
-        final logs = await session!.getAllLogsAsString() ?? '';
+        final logs = await session.getAllLogsAsString() ?? '';
         if (!isSoftwareFallback &&
             attempt < _maxHwFallbackAttempts &&
             (logs.contains('encoder not found') ||
@@ -754,7 +756,7 @@ class VideoWatermarkService {
 
       final completer = Completer<String?>();
       Timer? timeoutTimer;
-      FFmpegSession? session;
+      dynamic session;
       try {
         session = await FFmpegKit.executeWithArguments(commandArgs);
         await _sessionLock.synchronized(() async {
@@ -763,12 +765,12 @@ class VideoWatermarkService {
         timeoutTimer = Timer(Duration(seconds: timeoutSeconds), () {
           if (!completer.isCompleted) {
             debugPrint('⏱️ TIMEOUT: Fallback drawtext');
-            if (_currentSession != null) FFmpegKit.cancel(_currentSession!);
+            if (_currentSession != null) FFmpegKit.cancel(_currentSession);
             completer.complete(null);
           }
         });
 
-        final returnCode = await session!.getReturnCode();
+        final returnCode = await session.getReturnCode();
         timeoutTimer.cancel();
         await _sessionLock.synchronized(() async {
           _currentSession = null;
@@ -782,7 +784,7 @@ class VideoWatermarkService {
           debugPrint('✅ Fallback drawtext berhasil');
           completer.complete(outputPath);
         } else {
-          final logs = await session!.getOutput();
+          final logs = await session.getOutput();
           debugPrint('❌ Fallback drawtext error: $logs');
           lastError = logs;
           completer.complete(null);
