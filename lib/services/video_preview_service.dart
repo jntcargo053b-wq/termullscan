@@ -1,19 +1,33 @@
+// lib/services/video_preview_service.dart
+// Layanan untuk kompresi dan preview video logistik.
+// Menggunakan ffmpeg_kit_flutter_new dan video_player.
+
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
-import 'package:path/path.dart' as p; // Tambahkan dependency: path
+import 'package:ffmpeg_kit_flutter_new/return_code.dart';
+import 'package:path/path.dart' as p;
 
-// Asumsi ada class VideoTask (sesuaikan dengan model Anda)
-// class VideoTask {
-//   final String barcode;
-//   final String? locationName;
-//   final double? latitude;
-//   final double? longitude;
-//   final int maxDurationSeconds;
-//   // ... konstruktor dll
-// }
+/// Model tugas video (sesuaikan dengan model Anda).
+/// Contoh implementasi minimal.
+class VideoTask {
+  final String barcode;
+  final String? locationName;
+  final double? latitude;
+  final double? longitude;
+  final int maxDurationSeconds;
 
+  VideoTask({
+    required this.barcode,
+    this.locationName,
+    this.latitude,
+    this.longitude,
+    required this.maxDurationSeconds,
+  });
+}
+
+/// Service untuk menangani kompresi video dan preview dialog.
 class VideoPreviewService {
   /// Kompres video untuk logistik dengan:
   /// - Resolusi maksimum: lebar 1280, tinggi 720 (tidak pernah upscale)
@@ -82,7 +96,7 @@ class VideoPreviewService {
     final rc = await session.getReturnCode();
 
     // --- 8. Cek hasil ---
-    if (rc?.isValueSuccess() == true) {
+    if (ReturnCode.isSuccess(rc)) {
       // Verifikasi file output
       final outputFile = File(outputPath);
       if (await outputFile.exists() && await outputFile.length() > 1024) {
