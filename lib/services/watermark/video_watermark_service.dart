@@ -1,5 +1,5 @@
 // lib/services/watermark/video_watermark_service.dart
-// Versi stabil dengan import eksplisit untuk ffmpeg_kit_flutter_new 4.5.1
+// Versi final dengan import lengkap dan kompatibel ffmpeg_kit_flutter_new 4.5.1
 
 import 'dart:async';
 import 'dart:collection';
@@ -7,14 +7,14 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
-import 'dart:ui' show Color, TextDirection;
+import 'dart:ui' as ui; // alias untuk menghindari konflik
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart' show TextPainter, TextSpan, TextStyle;
 import 'package:intl/intl.dart';
-import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart' show FFmpegKit, FFmpegSession; // FFmpegSession diekspor dari sini
-import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit_config.dart' show FFmpegKitConfig;
-import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart' show FFprobeKit;
-import 'package:ffmpeg_kit_flutter_new/return_code.dart' show ReturnCode;
+import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart'; // menyediakan FFmpegKit, FFmpegSession
+import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit_config.dart';
+import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
+import 'package:ffmpeg_kit_flutter_new/return_code.dart'; // ReturnCode
 import 'package:path_provider/path_provider.dart';
 import 'package:crypto/crypto.dart' show sha1;
 import '../../models/scan_entry.dart';
@@ -33,7 +33,7 @@ class VideoWatermarkService {
 
   static bool _isEncoding = false;
   static String? _currentSessionId;
-  static FFmpegSession? _currentSession;
+  static FFmpegSession? _currentSession; // sekarang terdefinisi
   static void Function(double)? _currentProgressCallback;
   static double _currentDuration = 0;
   static bool _isCancelled = false;
@@ -418,12 +418,12 @@ class VideoWatermarkService {
     final textStyle = TextStyle(
       fontSize: settings.fontSize.toDouble(),
       fontFamily: settings.fontFamily,
-      color: const Color(0xFFFFFFFF),
+      color: const ui.Color(0xFFFFFFFF), // gunakan ui.Color
     );
     final textSpan = TextSpan(text: text, style: textStyle);
     final painter = TextPainter(
       text: textSpan,
-      textDirection: TextDirection.ltr,
+      textDirection: ui.TextDirection.ltr, // gunakan ui.TextDirection.ltr
     );
     painter.layout(maxWidth: double.infinity);
     final size = painter.size;
