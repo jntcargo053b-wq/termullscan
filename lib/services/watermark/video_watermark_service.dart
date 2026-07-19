@@ -1,5 +1,6 @@
 // lib/services/watermark/video_watermark_service.dart
-// Versi stabil untuk ffmpeg_kit_flutter_new 4.5.1
+// Versi stabil dengan import eksplisit untuk ffmpeg_kit_flutter_new 4.5.1
+
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
@@ -10,9 +11,10 @@ import 'dart:ui' show Color, TextDirection;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart' show TextPainter, TextSpan, TextStyle;
 import 'package:intl/intl.dart';
-import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
-import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit_config.dart';
-import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
+import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart' show FFmpegKit, FFmpegSession; // FFmpegSession diekspor dari sini
+import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit_config.dart' show FFmpegKitConfig;
+import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart' show FFprobeKit;
+import 'package:ffmpeg_kit_flutter_new/return_code.dart' show ReturnCode;
 import 'package:path_provider/path_provider.dart';
 import 'package:crypto/crypto.dart' show sha1;
 import '../../models/scan_entry.dart';
