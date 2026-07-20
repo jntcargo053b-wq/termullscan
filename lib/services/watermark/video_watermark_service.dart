@@ -43,6 +43,10 @@ class VideoWatermarkService {
   static final _AsyncLock _sessionLock = _AsyncLock();
 
   static const int _defaultTimeoutSeconds = 300;
+
+  // Preset libx264 (dipakai saat hw encoder tidak tersedia/gagal).
+  // 'veryfast' = keseimbangan render speed vs ukuran/kualitas file.
+  static const String _x264Preset = 'veryfast';
   static const int _progressWatchdogInterval = 10;
   static const int _progressWatchdogThreshold = 30;
   static Timer? _watchdogTimer;
@@ -803,6 +807,7 @@ class VideoWatermarkService {
       final maxrateK = (videoInfo.bitrate * 1.5 / 1000).round();
       final bufsizeK = (videoInfo.bitrate * 2 / 1000).round();
       arguments.insertAll(arguments.length - 1, [
+        '-preset', _x264Preset,
         '-maxrate', '${maxrateK}k',
         '-bufsize', '${bufsizeK}k',
       ]);
@@ -838,12 +843,20 @@ class VideoWatermarkService {
           effectiveArgs[encoderIndex + 1] = 'libx264';
           isSoftwareFallback = true;
           debugPrint('🔄 Fallback ke software encoder (libx264)');
-          effectiveArgs.removeWhere((arg) => arg == '-maxrate' || arg == '-bufsize');
+          // Hapus flag -maxrate/-bufsize/-preset BESERTA value-nya (pasangan),
+          // bukan cuma nama flag-nya (sebelumnya value nyangkut jadi arg liar).
+          for (final flag in ['-maxrate', '-bufsize', '-preset']) {
+            final idx = effectiveArgs.indexOf(flag);
+            if (idx != -1 && idx + 1 < effectiveArgs.length) {
+              effectiveArgs.removeRange(idx, idx + 2);
+            }
+          }
           final maxrateK = (videoInfo.bitrate * 1.5 / 1000).round();
           final bufsizeK = (videoInfo.bitrate * 2 / 1000).round();
           final yIndex = effectiveArgs.indexOf('-y');
           if (yIndex != -1) {
             effectiveArgs.insertAll(yIndex, [
+              '-preset', _x264Preset,
               '-maxrate', '${maxrateK}k',
               '-bufsize', '${bufsizeK}k',
             ]);
@@ -1055,7 +1068,7 @@ class VideoWatermarkService {
       if (!useHw) {
         final maxrateK = (videoInfo.bitrate * 1.5 / 1000).round();
         final bufsizeK = (videoInfo.bitrate * 2 / 1000).round();
-        commandArgs.addAll(['-maxrate', '${maxrateK}k', '-bufsize', '${bufsizeK}k']);
+        commandArgs.addAll(['-preset', _x264Preset, '-maxrate', '${maxrateK}k', '-bufsize', '${bufsizeK}k']);
       }
       commandArgs.addAll([
         '-pix_fmt', 'yuv420p',
