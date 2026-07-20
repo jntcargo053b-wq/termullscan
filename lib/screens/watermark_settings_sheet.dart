@@ -214,52 +214,92 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                     final style = _supportedStyles[index];
                     final isSelected = _settings.style == style;
                     final layout = WatermarkFactory.create(style);
+                    final videoUnsupported = !layout.supportsVideoOverlay;
                     return GestureDetector(
                       onTap: () async {
                         await _settings.setStyle(style);
                         setState(() {});
                       },
-                      child: Container(
-                        width: 140,
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: isSelected ? Colors.amber.withOpacity(0.15) : Colors.transparent,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: isSelected ? Colors.amber : Colors.grey.withOpacity(0.3),
-                            width: isSelected ? 2 : 1,
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          Container(
+                            width: 140,
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: isSelected ? Colors.amber.withOpacity(0.15) : Colors.transparent,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: isSelected ? Colors.amber : Colors.grey.withOpacity(0.3),
+                                width: isSelected ? 2 : 1,
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(6),
+                                    child: Container(
+                                      color: Colors.grey[900],
+                                      padding: const EdgeInsets.all(4),
+                                      child: layout.buildPreview(
+                                        previewData: previewData,
+                                        hasLogo: _settings.hasLogo,
+                                        logoPath: _settings.logoPath,
+                                        previewWidth: 140,
+                                        previewHeight: 100,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const Gap(4),
+                                Text(
+                                  layout.displayName,
+                                  style: TextStyle(
+                                    color: isSelected ? Colors.amber : Colors.white70,
+                                    fontSize: 11,
+                                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w400,
+                                  ),
+                                ),
+                                if (videoUnsupported) ...[
+                                  const Gap(2),
+                                  Text(
+                                    'Video: teks polos',
+                                    style: TextStyle(
+                                      color: Colors.orange[300],
+                                      fontSize: 9,
+                                      fontStyle: FontStyle.italic,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
                           ),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(6),
+                          if (videoUnsupported)
+                            Positioned(
+                              top: -6,
+                              right: -6,
+                              child: Tooltip(
+                                message:
+                                    'Gaya ini tidak didukung untuk overlay video.\n'
+                                    'Saat dipakai merekam video, watermark otomatis\n'
+                                    'jadi teks polos tanpa logo/kartu (fallback drawtext).',
                                 child: Container(
-                                  color: Colors.grey[900],
-                                  padding: const EdgeInsets.all(4),
-                                  child: layout.buildPreview(
-                                    previewData: previewData,
-                                    hasLogo: _settings.hasLogo,
-                                    logoPath: _settings.logoPath,
-                                    previewWidth: 140,
-                                    previewHeight: 100,
+                                  padding: const EdgeInsets.all(3),
+                                  decoration: const BoxDecoration(
+                                    color: Colors.orange,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(
+                                    Icons.warning_rounded,
+                                    size: 12,
+                                    color: Colors.black,
                                   ),
                                 ),
                               ),
                             ),
-                            const Gap(4),
-                            Text(
-                              layout.displayName,
-                              style: TextStyle(
-                                color: isSelected ? Colors.amber : Colors.white70,
-                                fontSize: 11,
-                                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w400,
-                              ),
-                            ),
-                          ],
-                        ),
+                        ],
                       ),
                     );
                   },
