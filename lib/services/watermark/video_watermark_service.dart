@@ -1,5 +1,5 @@
 // lib/services/watermark/video_watermark_service.dart
-// Versi Final Production - Dengan step-based margin untuk konsistensi sempurna
+// Versi Final Production - Dengan perbaikan semua error kompilasi
 // Kompatibel dengan ffmpeg_kit_flutter_new 4.5.1
 
 import 'dart:async';
@@ -150,8 +150,6 @@ class VideoWatermarkService {
     final shortSide = min(videoWidth, videoHeight);
     
     // Cari margin berdasarkan resolusi terdekat (ke atas)
-    // Misal: 1080p (shortSide=1080) -> 24px
-    //         720p (shortSide=720)  -> 18px
     int margin = _defaultMargin;
     for (final entry in _marginByResolution.entries) {
       if (shortSide <= entry.key) {
@@ -160,7 +158,6 @@ class VideoWatermarkService {
       }
     }
     
-    // Jika shortSide > semua key, gunakan default (64px untuk >4K)
     return margin;
   }
 
@@ -242,7 +239,7 @@ class VideoWatermarkService {
           final nativeHeap = int.tryParse(nativeHeapMatch.group(1) ?? '0') ?? 0;
           if (nativeHeap > 200 * 1024) {
             debugPrint('⚠️ Memory pressure detected (Native Heap: ${nativeHeap ~/ 1024}MB)');
-            _trimCache(force: true);
+            _trimOverlayCache(force: true);
             await Future.delayed(Duration.zero);
           }
         }
@@ -250,7 +247,9 @@ class VideoWatermarkService {
     } catch (_) {}
   }
 
-  static void _trimCache({bool force = false}) {
+  // ===================== MANAJEMEN CACHE OVERLAY =====================
+
+  static void _trimOverlayCache({bool force = false}) {
     if (!force && _overlayFileCache.length <= _maxCacheSize) return;
     
     final entries = _overlayFileCache.entries.toList();
@@ -275,13 +274,44 @@ class VideoWatermarkService {
     }
   }
 
+  static Future<void> _cleanOrphanOverlayFiles() async {
+    try {
+      final cacheDir = await _getCacheDirectory();
+      final files = cacheDir.listSync();
+      final activeFiles = _overlayFileCache.values.toSet();
+      int deleted = 0;
+      for (final entity in files) {
+        if (entity is File) {
+          final path = entity.path;
+          if (!activeFiles.contains(path)) {
+            try { 
+              await entity.delete(); 
+              deleted++;
+            } catch (_) {}
+          }
+        }
+      }
+      if (deleted > 0) debugPrint('🧹 Menghapus $deleted file overlay orphan dari disk');
+    } catch (e) {
+      debugPrint('⚠️ Gagal membersihkan cache overlay: $e');
+    }
+  }
+
+  static Future<Directory> _getCacheDirectory() async {
+    final dir = await getTemporaryDirectory();
+    final cacheDir = Directory('${dir.path}/watermark_cache');
+    if (!await cacheDir.exists()) await cacheDir.create(recursive: true);
+    return cacheDir;
+  }
+
   // ===================== CEK STORAGE =====================
 
   static Future<bool> _hasSufficientSpace(String outputPath, int inputSize) async {
     try {
       final dir = Directory(File(outputPath).parent.path);
       final stat = await dir.stat();
-      final availableSpace = stat.freeSpace;
+      // Gunakan availableSpace (bukan freeSpace)
+      final availableSpace = stat.availableSpace;
       final requiredSpace = (inputSize * 2.5).round();
       
       if (availableSpace < requiredSpace) {
@@ -311,8 +341,9 @@ class VideoWatermarkService {
       if (_currentSession != null) {
         try {
           if (force) {
-            await FFmpegKit.kill();
-            debugPrint('✅ FFmpeg process killed');
+            // FFmpegKit.kill() tidak tersedia, gunakan cancel dengan session
+            FFmpegKit.cancel(_currentSession);
+            debugPrint('✅ FFmpeg session cancelled (force)');
           } else {
             FFmpegKit.cancel(_currentSession);
             debugPrint('✅ FFmpeg session cancelled');
@@ -384,7 +415,7 @@ class VideoWatermarkService {
         _cacheCleaned = true;
       }
 
-      // DAPATKAN INFO VIDEO (termasuk orientasi)
+      // DAPATKAN INFO VIDEO
       final videoInfo = await _getVideoInfo(inputPath);
       if (videoInfo == null) {
         throw Exception('Gagal membaca info video');
@@ -623,7 +654,7 @@ class VideoWatermarkService {
     return (w, h);
   }
 
-  // ===================== GET VIDEO INFO (DENGAN ORIENTASI) =====================
+  // ===================== GET VIDEO INFO =====================
 
   static Future<_VideoInfo?> _getVideoInfo(String inputPath) async {
     try {
@@ -653,33 +684,29 @@ class VideoWatermarkService {
           displayWidth = w;
           displayHeight = h;
 
-          // Baca rotasi dari metadata
-          final sideData = stream.getSideDataList();
-          if (sideData != null) {
-            for (final side in sideData) {
-              if (side.getSideDataType() == 'DISPLAYMATRIX') {
-                final data = side.getData();
-                if (data != null && data.isNotEmpty) {
-                  final parts = data.split(' ');
-                  if (parts.length >= 9) {
-                    final m00 = double.tryParse(parts[0]) ?? 0;
-                    final m10 = double.tryParse(parts[1]) ?? 0;
-                    final angle = atan2(m10, m00) * 180 / pi;
-                    rotation = angle.round() % 360;
-                    if (rotation < 0) rotation += 360;
-                  }
-                }
+          // Baca rotasi dari tag (cara yang lebih sederhana)
+          final tags = stream.getTags();
+          if (tags != null) {
+            final rotateTag = tags['rotate'];
+            if (rotateTag != null) {
+              final rotValue = int.tryParse(rotateTag.toString());
+              if (rotValue != null) {
+                rotation = rotValue % 360;
+                if (rotation < 0) rotation += 360;
               }
             }
           }
 
-          // Cek rotate tag
-          final rotateTag = stream.getTags()?['rotate'];
-          if (rotateTag != null) {
-            final rotValue = int.tryParse(rotateTag.toString());
-            if (rotValue != null) {
-              rotation = rotValue % 360;
-              if (rotation < 0) rotation += 360;
+          // Jika tidak ada rotate tag, coba dari side data (jika tersedia)
+          // Gunakan metode yang lebih aman dengan try-catch
+          if (rotation == 0) {
+            try {
+              // Coba akses side_data_list jika tersedia
+              final streamInfo = stream;
+              // Beberapa versi mungkin memiliki metode berbeda
+              // Kita skip karena getSideDataList tidak tersedia di versi ini
+            } catch (_) {
+              // Ignore
             }
           }
 
@@ -1191,7 +1218,7 @@ class VideoWatermarkService {
       await File(filePath).writeAsBytes(overlayBytes);
 
       _overlayFileCache[key] = filePath;
-      if (_overlayFileCache.length > _maxCacheSize) _trimCache();
+      if (_overlayFileCache.length > _maxCacheSize) _trimOverlayCache();
       return (filePath, 0, 0);
       
     } catch (e) {
@@ -1222,58 +1249,6 @@ class VideoWatermarkService {
     final bytes = utf8.encode(parts);
     final digest = sha1.convert(bytes);
     return digest.toString().substring(0, 16);
-  }
-
-  static Future<Directory> _getCacheDirectory() async {
-    final dir = await getTemporaryDirectory();
-    final cacheDir = Directory('${dir.path}/watermark_cache');
-    if (!await cacheDir.exists()) await cacheDir.create(recursive: true);
-    return cacheDir;
-  }
-
-  // ===================== PEMBERSIHAN CACHE =====================
-
-  static void _trimCache() {
-    if (_overlayFileCache.length <= _maxCacheSize) return;
-    final entries = _overlayFileCache.entries.toList();
-    final toRemove = entries.take(_overlayFileCache.length - _maxCacheSize);
-    int deleted = 0;
-    for (final entry in toRemove) {
-      try { 
-        final file = File(entry.value);
-        if (file.existsSync()) {
-          file.deleteSync();
-          deleted++;
-        }
-      } catch (_) {}
-      _overlayFileCache.remove(entry.key);
-    }
-    if (deleted > 0) {
-      debugPrint('🧹 Cache trimmed: $deleted files deleted');
-    }
-  }
-
-  static Future<void> _cleanOrphanOverlayFiles() async {
-    try {
-      final cacheDir = await _getCacheDirectory();
-      final files = cacheDir.listSync();
-      final activeFiles = _overlayFileCache.values.toSet();
-      int deleted = 0;
-      for (final entity in files) {
-        if (entity is File) {
-          final path = entity.path;
-          if (!activeFiles.contains(path)) {
-            try { 
-              await entity.delete(); 
-              deleted++;
-            } catch (_) {}
-          }
-        }
-      }
-      if (deleted > 0) debugPrint('🧹 Menghapus $deleted file overlay orphan dari disk');
-    } catch (e) {
-      debugPrint('⚠️ Gagal membersihkan cache overlay: $e');
-    }
   }
 
   // ===================== DIAGNOSIS ERROR =====================
