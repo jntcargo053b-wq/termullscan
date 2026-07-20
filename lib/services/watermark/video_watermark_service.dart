@@ -1,5 +1,5 @@
 // lib/services/watermark/video_watermark_service.dart
-// Versi Final Production - Dengan perbaikan semua error kompilasi
+// Versi Final Production - Dengan perbaikan storage check
 // Kompatibel dengan ffmpeg_kit_flutter_new 4.5.1
 
 import 'dart:async';
@@ -308,19 +308,25 @@ class VideoWatermarkService {
 
   static Future<bool> _hasSufficientSpace(String outputPath, int inputSize) async {
     try {
+      // Cek sisa storage dengan cara yang lebih sederhana
+      // Di Android, kita bisa gunakan StatFS atau cek available space di directory
       final dir = Directory(File(outputPath).parent.path);
-      final stat = await dir.stat();
-      // Gunakan availableSpace (bukan freeSpace)
-      final availableSpace = stat.availableSpace;
-      final requiredSpace = (inputSize * 2.5).round();
       
-      if (availableSpace < requiredSpace) {
-        debugPrint('⚠️ Storage tidak cukup: ${availableSpace ~/ (1024*1024)}MB tersedia, '
-            '${requiredSpace ~/ (1024*1024)}MB dibutuhkan');
+      // Untuk Android, kita bisa menggunakan getTotalSpace dan getFreeSpace
+      // Tapi karena API ini tidak tersedia di Dart, kita gunakan pendekatan alternatif
+      // Coba tulis file test kecil untuk cek apakah ada space
+      final testFile = File('${dir.path}/.space_test.tmp');
+      try {
+        await testFile.writeAsBytes(List.filled(1024, 0)); // Tulis 1KB
+        await testFile.delete();
+        return true;
+      } catch (e) {
+        // Jika gagal menulis, kemungkinan storage penuh
+        debugPrint('⚠️ Storage penuh atau tidak dapat diakses: $e');
         return false;
       }
-      return true;
     } catch (_) {
+      // Jika tidak bisa menentukan, proceed dengan hati-hati
       return true;
     }
   }
@@ -340,14 +346,9 @@ class VideoWatermarkService {
       
       if (_currentSession != null) {
         try {
-          if (force) {
-            // FFmpegKit.kill() tidak tersedia, gunakan cancel dengan session
-            FFmpegKit.cancel(_currentSession);
-            debugPrint('✅ FFmpeg session cancelled (force)');
-          } else {
-            FFmpegKit.cancel(_currentSession);
-            debugPrint('✅ FFmpeg session cancelled');
-          }
+          // Gunakan cancel dengan session
+          FFmpegKit.cancel(_currentSession);
+          debugPrint('✅ FFmpeg session cancelled');
         } catch (e) {
           debugPrint('⚠️ FFmpegKit.cancel gagal: $e');
           try {
@@ -684,7 +685,7 @@ class VideoWatermarkService {
           displayWidth = w;
           displayHeight = h;
 
-          // Baca rotasi dari tag (cara yang lebih sederhana)
+          // Baca rotasi dari tag
           final tags = stream.getTags();
           if (tags != null) {
             final rotateTag = tags['rotate'];
@@ -694,19 +695,6 @@ class VideoWatermarkService {
                 rotation = rotValue % 360;
                 if (rotation < 0) rotation += 360;
               }
-            }
-          }
-
-          // Jika tidak ada rotate tag, coba dari side data (jika tersedia)
-          // Gunakan metode yang lebih aman dengan try-catch
-          if (rotation == 0) {
-            try {
-              // Coba akses side_data_list jika tersedia
-              final streamInfo = stream;
-              // Beberapa versi mungkin memiliki metode berbeda
-              // Kita skip karena getSideDataList tidak tersedia di versi ini
-            } catch (_) {
-              // Ignore
             }
           }
 
