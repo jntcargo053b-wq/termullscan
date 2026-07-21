@@ -1,5 +1,6 @@
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-import 'text_painter_cache.dart';
+import '../utils/text_painter_cache.dart'; // ← PERBAIKI PATH
 
 class TextHelper {
   // ─── FUNGSI ASLI (DIPERBAIKI DENGAN CACHE) ──────────────────
@@ -285,7 +286,7 @@ class TextHelper {
     return tp.lineCount;
   }
 
-  /// Memotong teks agar muat dalam maxWidth (FIXED: menggunakan substr)
+  /// Memotong teks agar muat dalam maxWidth
   static String truncateText({
     required String text,
     required double maxWidth,
@@ -323,6 +324,10 @@ class TextHelper {
 
     while (low <= high) {
       final mid = (low + high) ~/ 2;
+      if (mid == 0) {
+        bestLength = 0;
+        break;
+      }
       final truncated = text.substring(0, mid);
       
       final tp = TextPainterCache.getPainter(
@@ -360,6 +365,13 @@ class TextHelper {
     double letterSpacing = 0,
     List<Shadow>? shadows,
   }) {
+    // Buat shader untuk gradient
+    final shader = ui.Gradient.linear(
+      Offset(x, y),
+      Offset(x + maxWidth, y + fontSize),
+      gradientColors,
+    );
+
     // Buat style dengan foreground shader
     final style = TextStyle(
       fontSize: fontSize,
@@ -367,20 +379,16 @@ class TextHelper {
       fontFamily: fontFamily,
       letterSpacing: letterSpacing,
       shadows: shadows,
-      foreground: Paint()..shader = ui.Gradient.linear(
-        Offset(x, y),
-        Offset(x + 100, y + fontSize), // Perkiraan lebar
-        gradientColors,
-      ),
+      foreground: Paint()..shader = shader,
     );
 
-    final tp = TextPainterCache.getPainter(
-      text: text,
-      style: style,
-      maxWidth: maxWidth,
+    final tp = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: TextDirection.ltr,
       maxLines: maxLines,
+      ellipsis: '…',
       textAlign: textAlign,
-    );
+    )..layout(maxWidth: maxWidth);
 
     tp.paint(canvas, Offset(x, y));
     return tp.height;
@@ -431,10 +439,9 @@ class TextHelper {
   static List<Shadow> noShadow() => TextPainterCache.getNoShadow();
 }
 
-// ─── RE-EXPORT CACHE UNTUK COMPATIBILITY ─────────────────────
+// ─── DEPRECATED: Untuk backward compatibility ─────────────────
 
-/// Untuk backward compatibility dengan kode lama yang masih pakai CachedTextPainter
-/// (Sebaiknya dihapus setelah semua kode di-migrate)
+/// @deprecated Gunakan TextPainterCache sebagai gantinya
 @deprecated
 class CachedTextPainter {
   static TextPainter getPainter({
