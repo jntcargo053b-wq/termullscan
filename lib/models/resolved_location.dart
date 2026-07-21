@@ -19,6 +19,16 @@ class LocationSuggestion {
     this.distanceMeters,
   });
 
+  LocationSuggestion copyWith({
+    String? label,
+    double? distanceMeters,
+    String? source,
+  }) => LocationSuggestion(
+    label: label ?? this.label,
+    distanceMeters: distanceMeters ?? this.distanceMeters,
+    source: source ?? this.source,
+  );
+
   Map<String, dynamic> toJson() => {
         'label': label,
         'distanceMeters': distanceMeters,
@@ -31,6 +41,9 @@ class LocationSuggestion {
         distanceMeters: (json['distanceMeters'] as num?)?.toDouble(),
         source: json['source'] as String? ?? 'address',
       );
+
+  @override
+  String toString() => 'LocationSuggestion(label: "$label", source: $source, distance: ${distanceMeters?.toStringAsFixed(1) ?? "N/A"}m)';
 }
 
 class ResolvedLocation {
@@ -53,6 +66,16 @@ class ResolvedLocation {
     this.suggestions = const [],
   });
 
+  /// Empty location (fallback)
+  factory ResolvedLocation.empty() => const ResolvedLocation(
+    addressLine: 'Lokasi tidak tersedia',
+  );
+
+  /// DMS fallback
+  factory ResolvedLocation.dms(String dms) => ResolvedLocation(
+    addressLine: dms,
+  );
+
   /// String tampilan utama — backward-compatible dengan field
   /// `address` (String) yang dipakai watermark & UI lama.
   /// Format: "Primary, AddressLine" jika primaryLabel ada,
@@ -66,17 +89,28 @@ class ResolvedLocation {
     return addressLine;
   }
 
+  /// Short display untuk preview (max 40 karakter)
+  String get shortDisplay {
+    final full = display;
+    if (full.length > 40) {
+      return '${full.substring(0, 40)}…';
+    }
+    return full;
+  }
+
   bool get isDmsFallback => addressLine.startsWith('GPS:');
+  bool get isEmpty => addressLine == 'Lokasi tidak tersedia';
+  bool get hasPrimaryLabel => primaryLabel != null && primaryLabel!.isNotEmpty;
 
   ResolvedLocation copyWith({
     String? primaryLabel,
     String? addressLine,
     List<LocationSuggestion>? suggestions,
   }) => ResolvedLocation(
-        primaryLabel: primaryLabel ?? this.primaryLabel,
-        addressLine: addressLine ?? this.addressLine,
-        suggestions: suggestions ?? this.suggestions,
-      );
+    primaryLabel: primaryLabel ?? this.primaryLabel,
+    addressLine: addressLine ?? this.addressLine,
+    suggestions: suggestions ?? this.suggestions,
+  );
 
   Map<String, dynamic> toJson() => {
         'primaryLabel': primaryLabel,
@@ -93,5 +127,19 @@ class ResolvedLocation {
             .toList(),
       );
 
-  factory ResolvedLocation.dms(String dms) => ResolvedLocation(addressLine: dms);
+  @override
+  String toString() {
+    return 'ResolvedLocation(display: "$display", isFallback: $isDmsFallback, suggestions: ${suggestions.length})';
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    return other is ResolvedLocation &&
+        other.addressLine == addressLine &&
+        other.primaryLabel == primaryLabel;
+  }
+
+  @override
+  int get hashCode => Object.hash(addressLine, primaryLabel);
 }
