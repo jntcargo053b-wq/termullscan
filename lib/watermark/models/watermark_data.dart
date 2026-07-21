@@ -1,6 +1,12 @@
+// lib/watermark/models/watermark_data.dart
+// ============================================================
+// WATERMARK DATA — Data untuk rendering watermark
+// ============================================================
+
 import 'package:intl/intl.dart';
 import '../watermark_settings.dart';
-import '../../models/scan_entry.dart'; // ← untuk factory fromScanEntry
+import '../../models/scan_entry.dart';
+import '../../models/resolved_location.dart';
 
 class WatermarkData {
   final DateTime timestamp;
@@ -11,7 +17,9 @@ class WatermarkData {
   final double? latitude;
   final double? longitude;
   final String? locationName;
-  final String? address; // ← TAMBAHKAN sebagai alternatif
+  final String? city;
+  final String? province;
+  final String? country;
   final String? logoPath;
   final WatermarkPosition position;
   final double fontSize;
@@ -27,7 +35,9 @@ class WatermarkData {
     this.latitude,
     this.longitude,
     this.locationName,
-    this.address,
+    this.city,
+    this.province,
+    this.country,
     this.logoPath,
     this.position = WatermarkPosition.bottomRight,
     this.fontSize = 14.0,
@@ -48,11 +58,13 @@ class WatermarkData {
       operatorName: settings.operatorName,
       companyName: settings.companyName,
       barcodeValue: entry.value,
-      barcodeFormat: entry.type,
+      barcodeFormat: entry.barcodeFormat, // ← FIX: pakai getter
       latitude: entry.latitude,
       longitude: entry.longitude,
-      locationName: entry.locationName ?? entry.address,
-      address: entry.address,
+      locationName: entry.locationName, // ← FIX: hanya locationName
+      city: entry.city,
+      province: entry.province,
+      country: entry.country,
       logoPath: settings.logoPath,
       position: settings.position,
       fontSize: fontSize ?? settings.fontSize,
@@ -61,7 +73,36 @@ class WatermarkData {
     );
   }
 
-  // ─── COPYWITH ─────────────────────────────────────────────────
+  /// Buat WatermarkData dari ResolvedLocation
+  factory WatermarkData.fromResolvedLocation(
+    ResolvedLocation location, {
+    required String operatorName,
+    required WatermarkSettings settings,
+    required DateTime timestamp,
+    String? barcodeValue,
+    String? barcodeFormat,
+  }) {
+    return WatermarkData(
+      timestamp: timestamp,
+      operatorName: operatorName,
+      companyName: settings.companyName,
+      barcodeValue: barcodeValue,
+      barcodeFormat: barcodeFormat,
+      latitude: location.latitude,
+      longitude: location.longitude,
+      locationName: location.display,
+      city: location.city,
+      province: location.province,
+      country: location.country,
+      logoPath: settings.logoPath,
+      position: settings.position,
+      fontSize: settings.fontSize,
+      backgroundOpacity: settings.backgroundOpacity,
+      fontFamily: settings.fontFamily,
+    );
+  }
+
+  // ─── COPYWITH ──────────────────────────────────────────────────
 
   WatermarkData copyWith({
     DateTime? timestamp,
@@ -72,7 +113,9 @@ class WatermarkData {
     double? latitude,
     double? longitude,
     String? locationName,
-    String? address,
+    String? city,
+    String? province,
+    String? country,
     String? logoPath,
     WatermarkPosition? position,
     double? fontSize,
@@ -88,7 +131,9 @@ class WatermarkData {
       latitude: latitude ?? this.latitude,
       longitude: longitude ?? this.longitude,
       locationName: locationName ?? this.locationName,
-      address: address ?? this.address,
+      city: city ?? this.city,
+      province: province ?? this.province,
+      country: country ?? this.country,
       logoPath: logoPath ?? this.logoPath,
       position: position ?? this.position,
       fontSize: fontSize ?? this.fontSize,
@@ -104,7 +149,6 @@ class WatermarkData {
   bool get hasCompany => companyName.isNotEmpty;
   bool get hasLocation {
     return (locationName != null && locationName!.isNotEmpty) ||
-           (address != null && address!.isNotEmpty) ||
            (latitude != null && longitude != null);
   }
   bool get isManual => barcodeFormat == 'MANUAL';
@@ -113,13 +157,10 @@ class WatermarkData {
   String get formattedTimestamp =>
       DateFormat('dd/MM/yyyy HH:mm:ss').format(timestamp);
 
-  /// Display location: prioritaskan alamat lengkap, fallback ke koordinat
+  /// Display location: prioritaskan locationName, fallback ke koordinat
   String get displayLocation {
     if (locationName != null && locationName!.isNotEmpty) {
       return locationName!;
-    }
-    if (address != null && address!.isNotEmpty) {
-      return address!;
     }
     if (latitude != null && longitude != null) {
       return '${latitude!.toStringAsFixed(4)}, ${longitude!.toStringAsFixed(4)}';
@@ -136,7 +177,7 @@ class WatermarkData {
     return loc;
   }
 
-  /// Koordinat dalam format DMS (Derajat, Menit, Detik)
+  /// Koordinat dalam format DMS
   String get coordinatesDMS {
     if (latitude == null || longitude == null) return '';
     
