@@ -153,6 +153,66 @@ class TextPainterCache {
     return painter;
   }
 
+  /// Mendapatkan TextPainter untuk multi-line text (tanpa batas baris)
+  static TextPainter getMultiLinePainter({
+    required String text,
+    required TextStyle style,
+    double? maxWidth,
+    TextAlign textAlign = TextAlign.left,
+    String? ellipsis,
+  }) {
+    final key = 'multi-$text-${style.hashCode}-$maxWidth-$textAlign-${ellipsis ?? '…'}';
+    
+    if (_painterCache.containsKey(key)) {
+      return _painterCache[key]!;
+    }
+
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: TextDirection.ltr,
+      maxLines: null, // Tidak ada batas
+      ellipsis: ellipsis ?? '…',
+      textAlign: textAlign,
+    );
+
+    // Handle nullable maxWidth
+    if (maxWidth != null) {
+      painter.layout(maxWidth: maxWidth);
+    } else {
+      painter.layout();
+    }
+
+    // Limit cache size
+    if (_painterCache.length >= _maxCacheSize) {
+      final firstKey = _painterCache.keys.first;
+      _painterCache.remove(firstKey);
+    }
+
+    _painterCache[key] = painter;
+    return painter;
+  }
+
+  /// Menghitung jumlah baris teks
+  static int countLines({
+    required String text,
+    required TextStyle style,
+    double? maxWidth,
+  }) {
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: TextDirection.ltr,
+      maxLines: null, // Tidak ada batas untuk menghitung semua baris
+    );
+
+    if (maxWidth != null) {
+      painter.layout(maxWidth: maxWidth);
+    } else {
+      painter.layout();
+    }
+
+    return painter.lineCount;
+  }
+
   // ─── UTILITY ──────────────────────────────────────────────────
 
   static void clearAll() {
