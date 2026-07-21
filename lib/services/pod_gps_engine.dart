@@ -50,7 +50,7 @@ class GpsConfig {
     this.excellentMaxRadius = 12.0,
     this.targetSamples = 3,
     this.maxWindow = 10,
-    this.hardTimeout = Duration(seconds: 12),
+    this.hardTimeout = const Duration(seconds: 12), // ← FIX: tambahkan 'const'
     this.moveThreshold = 20.0,
     this.resetThreshold = 50.0,
     this.outlierMinSamples = 4,
@@ -186,13 +186,17 @@ class _ClusterStats {
 // PodGpsEngine
 // ═══════════════════════════════════════════════════════════════
 class PodGpsEngine {
+  // ─── Distance Filter Constants ──────────────────────────────
+  static const double distanceFilterAcquiring = 0.0;
+  static const double distanceFilterLocked = 5.0;
+
   final GpsConfig _config;
   GpsLogLevel _logLevel = kDebugMode ? GpsLogLevel.debug : GpsLogLevel.error;
 
   // ─── State ────────────────────────────────────────────────────
   /// FIFO — urutan waktu (TIDAK PERNAH DI-SORT)
   final List<PodSample> _window = [];
-  
+
   /// Cache — sampel terbaik (tidak mempengaruhi FIFO)
   final List<PodSample> _bestSamples = [];
 
@@ -572,7 +576,7 @@ class PodGpsEngine {
   // ─── Hard reset ──────────────────────────────────────────────
   void _hardReset() {
     _window.clear();
-    _bestSamples.clear(); // ← JANGAN LUPA CLEAR CACHE
+    _bestSamples.clear();
     _lockResult = null;
     _locked = false;
     _isFallbackLock = false;
@@ -622,8 +626,6 @@ class PodGpsEngine {
     // _window tetap utuh (FIFO) — tidak disentuh!
     // Kita hanya membersihkan cache _bestSamples jika terlalu besar
     if (_bestSamples.length > _config.targetSamples) {
-      // Sudah selalu ≤ targetSamples karena _updateBestSamples menjaga ukuran
-      // Tapi tetap aman
       while (_bestSamples.length > _config.targetSamples) {
         _bestSamples.removeLast();
       }
