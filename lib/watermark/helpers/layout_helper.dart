@@ -2,6 +2,7 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../watermark_settings.dart';
+import 'text_painter_cache.dart'; // ← TAMBAHKAN
 
 /// Hasil resolusi posisi overlay strip (dipakai minimal & professional layout)
 /// supaya logika switch-case posisi tidak diduplikasi di setiap layout.
@@ -73,18 +74,15 @@ class LayoutHelper {
   static double padding(double baseSize, {double ratio = 0.04}) =>
       baseSize * ratio;
 
-  // 🔥 FONT LEBIH BESAR (dari 0.028 → 0.038)
   static double fontSize(double baseSize, {double ratio = 0.038}) =>
       baseSize * ratio;
 
-  // 🔥 SPASI LEBIH LEGA (dari 0.045 → 0.055)
   static double lineHeight(double baseSize, {double ratio = 0.055}) =>
       baseSize * ratio;
 
   static double logoSize(double baseSize, {double ratio = 0.15}) =>
       baseSize * ratio;
 
-  /// Menghitung posisi & alignment overlay strip berdasarkan [WatermarkPosition].
   static OverlayPlacement resolvePlacement({
     required WatermarkPosition position,
     required double photoHeight,
@@ -118,8 +116,6 @@ class LayoutHelper {
     }
   }
 
-  /// Menggambar RRect dengan soft drop-shadow di baliknya sehingga elemen
-  /// (logo card, accent bar, badge) terasa "mengambang" — sentuhan modern.
   static void paintElevatedRRect({
     required Canvas canvas,
     required RRect rrect,
@@ -137,16 +133,14 @@ class LayoutHelper {
     canvas.drawRRect(rrect, Paint()..color = color);
   }
 
-  // ─── FUNGSI TAMBAHAN (BARU, TIDAK MENGGANGGU YANG LAMA) ──────
+  // ─── FUNGSI TAMBAHAN (BARU) ──────────────────────────────────
 
-  /// Validasi parameter untuk memastikan nilai valid
   static void validateDimensions(double width, double height) {
     if (width <= 0 || height <= 0) {
       throw ArgumentError('Width dan height harus > 0');
     }
   }
 
-  /// Mendapatkan ukuran responsif berdasarkan baseSize dengan batas min/max
   static double responsiveSize({
     required double baseSize,
     required double factor,
@@ -157,7 +151,6 @@ class LayoutHelper {
     return size.clamp(min, max);
   }
 
-  /// Mendapatkan ukuran font responsif dengan batas min/max
   static double responsiveFontSize({
     required double baseSize,
     required double factor,
@@ -172,7 +165,6 @@ class LayoutHelper {
     );
   }
 
-  /// Menghitung posisi teks dengan alignment tertentu
   static TextPosition calculateTextPosition({
     required double photoWidth,
     required double photoHeight,
@@ -218,7 +210,6 @@ class LayoutHelper {
     );
   }
 
-  /// Mendapatkan area aman dengan padding (support device dengan notch)
   static Rect getSafeRect({
     required double photoWidth,
     required double photoHeight,
@@ -234,7 +225,6 @@ class LayoutHelper {
     );
   }
 
-  /// Menggambar background strip dengan berbagai opsi gradient
   static void drawStripBackground({
     required Canvas canvas,
     required Rect rect,
@@ -285,7 +275,6 @@ class LayoutHelper {
     }
   }
 
-  /// Menghitung tinggi blok teks berdasarkan jumlah baris
   static double calculateTextBlockHeight({
     required int lineCount,
     required double fontSize,
@@ -295,16 +284,13 @@ class LayoutHelper {
     return (fontSize * lineSpacing) * lineCount;
   }
 
-  /// Estimasi lebar teks (untuk layout planning)
   static double estimateTextWidth({
     required String text,
     required double fontSize,
   }) {
-    // Perkiraan kasar: rata-rata lebar karakter ~ 0.6 * fontSize
     return text.length * fontSize * 0.6;
   }
 
-  /// Menggambar emoji/ikon sebagai teks
   static void drawEmoji({
     required Canvas canvas,
     required String emoji,
@@ -327,7 +313,6 @@ class LayoutHelper {
 
   // ─── DEBUG UTILITIES ──────────────────────────────────────────
 
-  /// Menggambar grid untuk debugging layout
   static void drawDebugGrid({
     required Canvas canvas,
     required double width,
@@ -353,7 +338,6 @@ class LayoutHelper {
     }
   }
 
-  /// Menggambar bounding box untuk debugging
   static void drawBoundingBox({
     required Canvas canvas,
     required Rect rect,
@@ -366,40 +350,11 @@ class LayoutHelper {
       ..style = PaintingStyle.stroke;
     canvas.drawRect(rect, paint);
   }
-}
 
-// ─── CACHED TEXT PAINTER (PERFORMANCE) ────────────────────────
+  // ─── CLEAR CACHE ──────────────────────────────────────────────
 
-/// Cache untuk TextPainter agar tidak dibuat ulang setiap render
-class CachedTextPainter {
-  static final Map<String, TextPainter> _cache = {};
-  static const int _maxCacheSize = 50;
-
-  static TextPainter getPainter({
-    required String text,
-    required TextStyle style,
-    double? maxWidth,
-  }) {
-    final key = '$text-${style.hashCode}-$maxWidth';
-    
-    if (_cache.containsKey(key)) {
-      return _cache[key]!;
-    }
-
-    final painter = TextPainter(
-      text: TextSpan(text: text, style: style),
-      textDirection: TextDirection.ltr,
-    )..layout(maxWidth: maxWidth);
-
-    // Limit cache size
-    if (_cache.length >= _maxCacheSize) {
-      final firstKey = _cache.keys.first;
-      _cache.remove(firstKey);
-    }
-
-    _cache[key] = painter;
-    return painter;
+  /// Membersihkan semua cache (dipanggil saat aplikasi dimatikan atau memory warning)
+  static void clearCache() {
+    TextPainterCache.clearAll();
   }
-
-  static void clearCache() => _cache.clear();
 }
