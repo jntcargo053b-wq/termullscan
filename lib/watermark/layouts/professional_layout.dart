@@ -20,6 +20,7 @@ import '../watermark_settings.dart';
 import '../helpers/layout_helper.dart';
 import '../helpers/text_helper.dart';
 import '../helpers/watermark_typography.dart';
+import '../utils/text_painter_cache.dart'; // ← TAMBAHKAN
 import '../widgets/logo_widget.dart';
 import 'base_layout.dart';
 import 'layout_metrics.dart';
@@ -58,8 +59,8 @@ class ProfessionalLayout extends WatermarkLayout {
   static const double _dateSpacing = 0.02;
   static const double _logoReserveScale = 0.6;
   static const double _codeVerticalOffset = 0.55;
-  static const double _accentBarLeftInset = 1.4; // jarak accent bar dari tepi kiri (dalam padding)
-  static const double _textLeftInset = 2.6; // jarak teks dari tepi kiri setelah accent bar (dalam padding)
+  static const double _accentBarLeftInset = 1.4;
+  static const double _textLeftInset = 2.6;
 
   // Opacity
   static const double _opacityMeta = 0.9;
@@ -178,7 +179,7 @@ class ProfessionalLayout extends WatermarkLayout {
     );
   }
 
-  // ─── SPLIT STATIC / DYNAMIC (live preview kamera) ────────────
+  // ─── SPLIT STATIC / DYNAMIC ────────────────────────────────
   @override
   void paintStaticOnly({
     required ui.Canvas canvas,
@@ -213,8 +214,7 @@ class ProfessionalLayout extends WatermarkLayout {
     );
   }
 
-  // ─── INTERNAL PAINT (single-pass, dipakai paintOnCanvas &
-  //     paintWatermarkOnly — mis. render overlay PNG video sekali) ──
+  // ─── INTERNAL PAINT ──────────────────────────────────────────
   void _paint({
     required ui.Canvas canvas,
     required LayoutMetrics metrics,
@@ -242,9 +242,6 @@ class ProfessionalLayout extends WatermarkLayout {
   }
 
   // ─── STATIC LAYER ────────────────────────────────────────────
-  // Bar background, accent bar, meta (barcode/operator — konten
-  // per-sesi, bukan per-tick), manual badge, logo, brand, kode
-  // verifikasi. Tidak ada di sini yang bergantung ke jam/GPS.
   void _paintStatic({
     required ui.Canvas canvas,
     required LayoutMetrics metrics,
@@ -265,7 +262,7 @@ class ProfessionalLayout extends WatermarkLayout {
       ui.Paint()..color = Colors.black.withOpacity(bgOpacity),
     );
 
-    // ─── ACCENT BAR (identitas Professional) ────────────────────
+    // ─── ACCENT BAR ────────────────────────────────────────────
     final accentBarW = math.max(2.0, baseSize * _accentBarWidthScale);
     canvas.drawRect(
       ui.Rect.fromLTWH(
@@ -298,11 +295,6 @@ class ProfessionalLayout extends WatermarkLayout {
   }
 
   // ─── DYNAMIC LAYER ───────────────────────────────────────────
-  // Jam, tanggal, hari, koordinat/alamat. cursorY dihitung analitis
-  // (bukan hasil _drawMeta) supaya layer ini bisa di-render sendiri
-  // tanpa perlu menggambar ulang meta — posisinya tetap sinkron
-  // selama data.hasBarcode/hasOperator tidak berubah antar-tick,
-  // yang mana keduanya termasuk "static" (lihat _dynamicStartY).
   void _paintDynamic({
     required ui.Canvas canvas,
     required LayoutMetrics metrics,
@@ -321,15 +313,9 @@ class ProfessionalLayout extends WatermarkLayout {
     final afterTimeY = _drawTime(canvas, data, metrics, leftX, baseSize, cursorY);
 
     // ─── LOCATION ───────────────────────────────────────────────
-    // logoImage diteruskan HANYA untuk reservasi lebar teks (supaya
-    // tidak tabrakan dengan logo yang digambar di static layer) —
-    // bukan untuk menggambar logo di sini.
     _drawLocation(canvas, data, metrics, leftX, availW, baseSize, afterTimeY, logoImage);
   }
 
-  /// Hitung ulang posisi Y awal blok dinamis (time+location) SECARA
-  /// ANALITIS — persis meniru akumulasi cursorY yang dilakukan
-  /// _drawMeta, tanpa perlu menjalankan _drawMeta itu sendiri.
   double _dynamicStartY(LayoutMetrics metrics, double photoHeight, WatermarkData data) {
     final baseSize = metrics.baseSize;
     final padding = metrics.padding;
@@ -345,7 +331,7 @@ class ProfessionalLayout extends WatermarkLayout {
     return barTop + padding * _topPaddingFactor + (metaLines * metaLineH);
   }
 
-  // ─── HELPERS ──────────────────────────────────────────────────
+  // ─── HELPERS (DIOPTIMASI DENGAN CACHE) ─────────────────────
 
   double _drawMeta(
     ui.Canvas canvas,
@@ -403,23 +389,21 @@ class ProfessionalLayout extends WatermarkLayout {
     final rowTop = cursorY;
     final padding = metrics.padding;
 
-    // Jam
-    final timeTp = TextPainter(
-      text: TextSpan(
-        text: _hhmm(data.timestamp),
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: timeFontSize,
-          fontWeight: FontWeight.w800,
-          fontFamily: data.fontFamily,
-          height: 1.0,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
+    // ─── JAM (pakai cache) ──────────────────────────────────────
+    final timeStyle = TextPainterCache.getStyle(
+      color: Colors.white,
+      fontSize: timeFontSize,
+      fontWeight: FontWeight.w800,
+      fontFamily: data.fontFamily,
+      height: 1.0,
+    );
+    final timeTp = TextPainterCache.getPainter(
+      text: _hhmm(data.timestamp),
+      style: timeStyle,
+    );
     timeTp.paint(canvas, ui.Offset(leftX, rowTop));
 
-    // Divider
+    // ─── DIVIDER ────────────────────────────────────────────────
     final dividerX = leftX + timeTp.width + padding * _dividerSpacing;
     final dividerH = timeFontSize * 0.95;
     canvas.drawRect(
@@ -427,37 +411,33 @@ class ProfessionalLayout extends WatermarkLayout {
       ui.Paint()..color = _accentColor,
     );
 
-    // Tanggal & Hari
+    // ─── TANGGAL & HARI (pakai cache) ──────────────────────────
     final dateColX = dividerX + baseSize * _dateSpacing;
     final dateFontSize = baseSize * _dateScale;
     final dayFontSize = baseSize * _dayScale;
 
-    final dateTp = TextPainter(
-      text: TextSpan(
-        text: _ddmmyyyy(data.timestamp),
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: dateFontSize,
-          fontWeight: FontWeight.w600,
-          fontFamily: data.fontFamily,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
+    final dateStyle = TextPainterCache.getStyle(
+      color: Colors.white,
+      fontSize: dateFontSize,
+      fontWeight: FontWeight.w600,
+      fontFamily: data.fontFamily,
+    );
+    final dateTp = TextPainterCache.getPainter(
+      text: _ddmmyyyy(data.timestamp),
+      style: dateStyle,
+    );
     dateTp.paint(canvas, ui.Offset(dateColX, rowTop));
 
-    final dayTp = TextPainter(
-      text: TextSpan(
-        text: _dayName(data.timestamp),
-        style: TextStyle(
-          color: Colors.white.withOpacity(_opacityDay),
-          fontSize: dayFontSize,
-          fontWeight: FontWeight.w400,
-          fontFamily: data.fontFamily,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
+    final dayStyle = TextPainterCache.getStyle(
+      color: Colors.white.withOpacity(_opacityDay),
+      fontSize: dayFontSize,
+      fontWeight: FontWeight.w400,
+      fontFamily: data.fontFamily,
+    );
+    final dayTp = TextPainterCache.getPainter(
+      text: _dayName(data.timestamp),
+      style: dayStyle,
+    );
     dayTp.paint(canvas, ui.Offset(dateColX, rowTop + dateTp.height));
 
     return rowTop + timeTp.height + padding * _topPaddingFactor;
@@ -501,19 +481,17 @@ class ProfessionalLayout extends WatermarkLayout {
     if (!data.isManual) return;
 
     final metaFontSize = baseSize * _metaScale;
-    final manualTp = TextPainter(
-      text: TextSpan(
-        text: 'INPUT MANUAL',
-        style: TextStyle(
-          color: const Color(0xFFFFB74D),
-          fontSize: metaFontSize * _manualScale,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.5,
-          fontFamily: data.fontFamily,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
+    final manualStyle = TextPainterCache.getStyle(
+      color: const Color(0xFFFFB74D),
+      fontSize: metaFontSize * _manualScale,
+      fontWeight: FontWeight.w700,
+      letterSpacing: 0.5,
+      fontFamily: data.fontFamily,
+    );
+    final manualTp = TextPainterCache.getPainter(
+      text: 'INPUT MANUAL',
+      style: manualStyle,
+    );
     manualTp.paint(
       canvas,
       ui.Offset(photoWidth - padding - manualTp.width, barTop + padding * _topPaddingFactor),
@@ -560,36 +538,36 @@ class ProfessionalLayout extends WatermarkLayout {
     final taglineFontSize = baseSize * _taglineScale;
     final shadow = TextHelper.softShadow(opacity: _shadowOpacity, blur: 4);
 
-    final brandTp = TextPainter(
-      text: TextSpan(
-        text: brandText,
-        style: TextStyle(
-          color: _accentColor,
-          fontSize: brandFontSize,
-          fontWeight: FontWeight.w800,
-          fontFamily: data.fontFamily,
-          shadows: shadow,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
+    // ─── BRAND ──────────────────────────────────────────────────
+    final brandStyle = TextPainterCache.getStyle(
+      color: _accentColor,
+      fontSize: brandFontSize,
+      fontWeight: FontWeight.w800,
+      fontFamily: data.fontFamily,
+      shadows: shadow,
+    );
+    final brandTp = TextPainterCache.getPainter(
+      text: brandText,
+      style: brandStyle,
+      maxWidth: photoWidth - padding * 2,
       textAlign: TextAlign.right,
-    )..layout(maxWidth: photoWidth - padding * 2);
+    );
     brandTp.paint(canvas, ui.Offset(photoWidth - padding - brandTp.width, padding * _topPaddingFactor));
 
-    final taglineTp = TextPainter(
-      text: TextSpan(
-        text: 'Dokumentasi Resmi',
-        style: TextStyle(
-          color: Colors.white.withOpacity(_opacityBrand),
-          fontSize: taglineFontSize,
-          fontWeight: FontWeight.w400,
-          fontFamily: data.fontFamily,
-          shadows: shadow,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
+    // ─── TAGLINE ────────────────────────────────────────────────
+    final taglineStyle = TextPainterCache.getStyle(
+      color: Colors.white.withOpacity(_opacityBrand),
+      fontSize: taglineFontSize,
+      fontWeight: FontWeight.w400,
+      fontFamily: data.fontFamily,
+      shadows: shadow,
+    );
+    final taglineTp = TextPainterCache.getPainter(
+      text: 'Dokumentasi Resmi',
+      style: taglineStyle,
+      maxWidth: photoWidth - padding * 2,
       textAlign: TextAlign.right,
-    )..layout(maxWidth: photoWidth - padding * 2);
+    );
     taglineTp.paint(
       canvas,
       ui.Offset(
@@ -610,20 +588,18 @@ class ProfessionalLayout extends WatermarkLayout {
     final code = _generateVerificationCode(data);
     final shadow = TextHelper.softShadow(opacity: _shadowOpacity, blur: 4);
 
-    final vertTp = TextPainter(
-      text: TextSpan(
-        text: '$code   •   TERMULSCAN VERIFIED',
-        style: TextStyle(
-          color: Colors.white.withOpacity(_opacityCode),
-          fontSize: baseSize * _codeScale,
-          fontWeight: FontWeight.w500,
-          letterSpacing: 1.0,
-          fontFamily: data.fontFamily,
-          shadows: shadow,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
+    final vertStyle = TextPainterCache.getStyle(
+      color: Colors.white.withOpacity(_opacityCode),
+      fontSize: baseSize * _codeScale,
+      fontWeight: FontWeight.w500,
+      letterSpacing: 1.0,
+      fontFamily: data.fontFamily,
+      shadows: shadow,
+    );
+    final vertTp = TextPainterCache.getPainter(
+      text: '$code   •   TERMULSCAN VERIFIED',
+      style: vertStyle,
+    );
 
     canvas.save();
     final vertX = photoWidth - padding * _codeVerticalOffset;
@@ -643,7 +619,6 @@ class ProfessionalLayout extends WatermarkLayout {
     double previewWidth = 300,
     double previewHeight = 400,
   }) {
-    // Gunakan computeMetrics() agar ukuran konsisten dengan export
     final metrics = computeMetrics(
       photoWidth: previewWidth,
       photoHeight: previewHeight,
@@ -737,7 +712,6 @@ class ProfessionalLayout extends WatermarkLayout {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // Accent bar (identitas Professional)
                     Container(
                       width: 3,
                       margin: const EdgeInsets.only(right: 8),
@@ -842,61 +816,4 @@ class ProfessionalLayout extends WatermarkLayout {
                               ],
                             ],
                           ),
-                          // Badge "INPUT MANUAL"
-                          if (previewData.isManual)
-                            Align(
-                              alignment: Alignment.topRight,
-                              child: Padding(
-                                padding: const EdgeInsets.only(top: 2),
-                                child: Text(
-                                  'INPUT MANUAL',
-                                  style: TextStyle(
-                                    color: const Color(0xFFFFB74D),
-                                    fontSize: baseSize * _metaScale * _manualScale,
-                                    fontWeight: FontWeight.w700,
-                                    letterSpacing: 0.5,
-                                  ),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            // Label layout
-            Positioned(
-              top: 6,
-              left: 6,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade800.withOpacity(0.85),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  displayName,
-                  style: const TextStyle(
-                    color: Colors.grey,
-                    fontSize: 8,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ─── HELPERS ──────────────────────────────────────────────────
-  static String _hhmm(DateTime dt) =>
-      '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
-
-  static String _ddmmyyyy(DateTime dt) =>
-      '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}';
-}
+                          if (previewData.isManual
