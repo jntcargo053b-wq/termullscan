@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../watermark_settings.dart';
 
@@ -16,7 +17,56 @@ class OverlayPlacement {
   });
 }
 
+/// Safe area untuk layout (support device dengan notch)
+class SafeArea {
+  final double top;
+  final double bottom;
+  final double left;
+  final double right;
+
+  const SafeArea({
+    this.top = 0,
+    this.bottom = 0,
+    this.left = 0,
+    this.right = 0,
+  });
+
+  Rect apply(Rect rect) {
+    return Rect.fromLTRB(
+      rect.left + left,
+      rect.top + top,
+      rect.right - right,
+      rect.bottom - bottom,
+    );
+  }
+}
+
+/// Hasil perhitungan posisi teks
+class TextPosition {
+  final double x;
+  final double y;
+  final double availableWidth;
+  final TextAlign alignment;
+
+  const TextPosition({
+    required this.x,
+    required this.y,
+    required this.availableWidth,
+    this.alignment = TextAlign.left,
+  });
+}
+
+/// Opsi gradient untuk background strip
+enum StripGradientType {
+  solid,
+  linear,
+  radial,
+}
+
+/// LayoutHelper - Utility untuk berbagai layout watermark
 class LayoutHelper {
+  // ─── FUNGSI ASLI (TIDAK DIUBAH) ──────────────────────────────
+  
   static double getBaseSize(double photoWidth, double photoHeight) =>
       math.min(photoWidth, photoHeight);
 
@@ -86,4 +136,270 @@ class LayoutHelper {
     );
     canvas.drawRRect(rrect, Paint()..color = color);
   }
+
+  // ─── FUNGSI TAMBAHAN (BARU, TIDAK MENGGANGGU YANG LAMA) ──────
+
+  /// Validasi parameter untuk memastikan nilai valid
+  static void validateDimensions(double width, double height) {
+    if (width <= 0 || height <= 0) {
+      throw ArgumentError('Width dan height harus > 0');
+    }
+  }
+
+  /// Mendapatkan ukuran responsif berdasarkan baseSize dengan batas min/max
+  static double responsiveSize({
+    required double baseSize,
+    required double factor,
+    double min = 0,
+    double max = double.infinity,
+  }) {
+    final size = baseSize * factor;
+    return size.clamp(min, max);
+  }
+
+  /// Mendapatkan ukuran font responsif dengan batas min/max
+  static double responsiveFontSize({
+    required double baseSize,
+    required double factor,
+    double minSize = 8,
+    double maxSize = 32,
+  }) {
+    return responsiveSize(
+      baseSize: baseSize,
+      factor: factor,
+      min: minSize,
+      max: maxSize,
+    );
+  }
+
+  /// Menghitung posisi teks dengan alignment tertentu
+  static TextPosition calculateTextPosition({
+    required double photoWidth,
+    required double photoHeight,
+    required double baseSize,
+    required double textWidth,
+    required double textHeight,
+    required WatermarkPosition position,
+    double horizontalPadding = 0,
+    double verticalPadding = 0,
+    TextAlign alignment = TextAlign.left,
+  }) {
+    final pad = padding(baseSize);
+    final effectiveHPad = horizontalPadding > 0 ? horizontalPadding : pad;
+    final effectiveVPad = verticalPadding > 0 ? verticalPadding : pad;
+
+    double x;
+    double y;
+
+    switch (position) {
+      case WatermarkPosition.topLeft:
+        x = effectiveHPad;
+        y = effectiveVPad;
+        break;
+      case WatermarkPosition.topRight:
+        x = photoWidth - textWidth - effectiveHPad;
+        y = effectiveVPad;
+        break;
+      case WatermarkPosition.bottomLeft:
+        x = effectiveHPad;
+        y = photoHeight - textHeight - effectiveVPad;
+        break;
+      case WatermarkPosition.bottomRight:
+        x = photoWidth - textWidth - effectiveHPad;
+        y = photoHeight - textHeight - effectiveVPad;
+        break;
+    }
+
+    return TextPosition(
+      x: x,
+      y: y,
+      availableWidth: photoWidth - effectiveHPad * 2,
+      alignment: alignment,
+    );
+  }
+
+  /// Mendapatkan area aman dengan padding (support device dengan notch)
+  static Rect getSafeRect({
+    required double photoWidth,
+    required double photoHeight,
+    required double baseSize,
+    SafeArea safeArea = const SafeArea(),
+  }) {
+    final pad = padding(baseSize);
+    return Rect.fromLTRB(
+      pad + safeArea.left,
+      pad + safeArea.top,
+      photoWidth - pad - safeArea.right,
+      photoHeight - pad - safeArea.bottom,
+    );
+  }
+
+  /// Menggambar background strip dengan berbagai opsi gradient
+  static void drawStripBackground({
+    required Canvas canvas,
+    required Rect rect,
+    required Color color,
+    double opacity = 0.85,
+    StripGradientType gradientType = StripGradientType.solid,
+    List<Color>? gradientColors,
+  }) {
+    final Paint paint = Paint();
+    
+    switch (gradientType) {
+      case StripGradientType.solid:
+        paint.color = color.withOpacity(opacity);
+        canvas.drawRect(rect, paint);
+        break;
+        
+      case StripGradientType.linear:
+        if (gradientColors == null || gradientColors.length < 2) {
+          paint.color = color.withOpacity(opacity);
+          canvas.drawRect(rect, paint);
+          return;
+        }
+        final shader = ui.Gradient.linear(
+          rect.topLeft,
+          rect.bottomRight,
+          gradientColors.map((c) => c.withOpacity(opacity)).toList(),
+        );
+        paint.shader = shader;
+        canvas.drawRect(rect, paint);
+        break;
+        
+      case StripGradientType.radial:
+        if (gradientColors == null || gradientColors.length < 2) {
+          paint.color = color.withOpacity(opacity);
+          canvas.drawRect(rect, paint);
+          return;
+        }
+        final center = rect.center;
+        final radius = math.max(rect.width, rect.height) / 2;
+        final shader = ui.Gradient.radial(
+          center,
+          radius,
+          gradientColors.map((c) => c.withOpacity(opacity)).toList(),
+        );
+        paint.shader = shader;
+        canvas.drawRect(rect, paint);
+        break;
+    }
+  }
+
+  /// Menghitung tinggi blok teks berdasarkan jumlah baris
+  static double calculateTextBlockHeight({
+    required int lineCount,
+    required double fontSize,
+    required double lineSpacing,
+  }) {
+    if (lineCount <= 0) return 0;
+    return (fontSize * lineSpacing) * lineCount;
+  }
+
+  /// Estimasi lebar teks (untuk layout planning)
+  static double estimateTextWidth({
+    required String text,
+    required double fontSize,
+  }) {
+    // Perkiraan kasar: rata-rata lebar karakter ~ 0.6 * fontSize
+    return text.length * fontSize * 0.6;
+  }
+
+  /// Menggambar emoji/ikon sebagai teks
+  static void drawEmoji({
+    required Canvas canvas,
+    required String emoji,
+    required double x,
+    required double y,
+    required double size,
+  }) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: emoji,
+        style: TextStyle(
+          fontSize: size,
+          fontFamily: 'Emoji',
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    painter.paint(canvas, Offset(x, y));
+  }
+
+  // ─── DEBUG UTILITIES ──────────────────────────────────────────
+
+  /// Menggambar grid untuk debugging layout
+  static void drawDebugGrid({
+    required Canvas canvas,
+    required double width,
+    required double height,
+    int columns = 4,
+    int rows = 4,
+  }) {
+    if (width <= 0 || height <= 0) return;
+
+    final paint = Paint()
+      ..color = Colors.red.withOpacity(0.3)
+      ..strokeWidth = 1
+      ..style = PaintingStyle.stroke;
+
+    for (int i = 0; i <= columns; i++) {
+      final x = width * i / columns;
+      canvas.drawLine(Offset(x, 0), Offset(x, height), paint);
+    }
+
+    for (int i = 0; i <= rows; i++) {
+      final y = height * i / rows;
+      canvas.drawLine(Offset(0, y), Offset(width, y), paint);
+    }
+  }
+
+  /// Menggambar bounding box untuk debugging
+  static void drawBoundingBox({
+    required Canvas canvas,
+    required Rect rect,
+    Color color = Colors.yellow,
+    double strokeWidth = 2,
+  }) {
+    final paint = Paint()
+      ..color = color.withOpacity(0.8)
+      ..strokeWidth = strokeWidth
+      ..style = PaintingStyle.stroke;
+    canvas.drawRect(rect, paint);
+  }
+}
+
+// ─── CACHED TEXT PAINTER (PERFORMANCE) ────────────────────────
+
+/// Cache untuk TextPainter agar tidak dibuat ulang setiap render
+class CachedTextPainter {
+  static final Map<String, TextPainter> _cache = {};
+  static const int _maxCacheSize = 50;
+
+  static TextPainter getPainter({
+    required String text,
+    required TextStyle style,
+    double? maxWidth,
+  }) {
+    final key = '$text-${style.hashCode}-$maxWidth';
+    
+    if (_cache.containsKey(key)) {
+      return _cache[key]!;
+    }
+
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: TextDirection.ltr,
+    )..layout(maxWidth: maxWidth);
+
+    // Limit cache size
+    if (_cache.length >= _maxCacheSize) {
+      final firstKey = _cache.keys.first;
+      _cache.remove(firstKey);
+    }
+
+    _cache[key] = painter;
+    return painter;
+  }
+
+  static void clearCache() => _cache.clear();
 }
