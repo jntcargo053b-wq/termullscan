@@ -134,7 +134,14 @@ class TextPainterCache {
       maxLines: maxLines,
       ellipsis: ellipsis ?? '…',
       textAlign: textAlign,
-    )..layout(maxWidth: maxWidth);
+    );
+
+    // Handle nullable maxWidth
+    if (maxWidth != null) {
+      painter.layout(maxWidth: maxWidth);
+    } else {
+      painter.layout();
+    }
 
     // Limit cache size
     if (_painterCache.length >= _maxCacheSize) {
