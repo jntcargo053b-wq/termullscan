@@ -1,6 +1,6 @@
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-import '../utils/text_painter_cache.dart'; // ← PERBAIKI PATH
+import '../utils/text_painter_cache.dart';
 
 class TextHelper {
   // ─── FUNGSI ASLI (DIPERBAIKI DENGAN CACHE) ──────────────────
@@ -150,12 +150,11 @@ class TextHelper {
       shadows: shadows,
     );
 
-    // Gunakan satu TextPainter dengan maxLines null
-    final tp = TextPainterCache.getPainter(
+    // Gunakan multi-line painter
+    final tp = TextPainterCache.getMultiLinePainter(
       text: text,
       style: style,
       maxWidth: maxWidth,
-      maxLines: null, // Semua baris
     );
 
     tp.paint(canvas, Offset(x, y));
@@ -276,14 +275,11 @@ class TextHelper {
       letterSpacing: letterSpacing,
     );
 
-    final tp = TextPainterCache.getPainter(
+    return TextPainterCache.countLines(
       text: text,
       style: effectiveStyle,
       maxWidth: maxWidth,
-      maxLines: null, // Semua baris untuk menghitung
     );
-
-    return tp.lineCount;
   }
 
   /// Memotong teks agar muat dalam maxWidth
