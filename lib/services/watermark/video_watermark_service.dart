@@ -797,6 +797,7 @@ class VideoWatermarkService {
       '-b:v', '${bitrateK}k',
       '-pix_fmt', 'yuv420p',
       '-map_metadata', '0',
+      '-metadata:s:v:0', 'rotate=0',
       '-movflags', '+faststart',
       '-shortest',
       '-y',
@@ -1073,6 +1074,7 @@ class VideoWatermarkService {
       commandArgs.addAll([
         '-pix_fmt', 'yuv420p',
         '-map_metadata', '0',
+        '-metadata:s:v:0', 'rotate=0',
         '-movflags', '+faststart',
         '-y', outputPath,
       ]);
