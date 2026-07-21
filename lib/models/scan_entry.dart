@@ -1,210 +1,168 @@
-import 'dart:convert';
+// lib/models/scan_entry.dart
+// ============================================================
+// SCAN ENTRY — Model untuk hasil scan
+// ============================================================
+
 import 'package:intl/intl.dart';
 
-enum ScanType { barcode, photo, video }
+enum ScanType {
+  barcode,
+  qr,
+  manual,
+  image,
+  video,
+}
 
 class ScanEntry {
   final String id;
-  final ScanType type;
   final String value;
-  final String? barcodeFormat;
+  final ScanType type;
+  final String? imagePath;
+  final String? videoPath;
   final DateTime timestamp;
+  final String operatorName;
+  final String? companyName;
   final double? latitude;
   final double? longitude;
-  final String? locationName;
-  final String? note;
-  final List<String>? photoPaths;
-
-  // ─── VIDEO FIELDS ────────────────────────────────────
-  final String? videoPath;
-  final int? videoDuration; // detik
-  final String? videoThumbnail;
-
-  // ─── GALLERY STATUS ────────────────────────────────
-  final bool galleryExported; // apakah berhasil diekspor ke galeri
-  // Salinan lokal sengaja dihapus (bukan hilang/rusak) setelah berhasil
-  // diekspor ke Galeri — lihat WatermarkSettings.deleteLocalVideoAfterGalleryExport.
-  final bool videoLocalDeleted;
+  final String? locationName;   // ← ALAMAT LENGKAP (cukup satu field)
+  final String? city;
+  final String? province;
+  final String? country;
+  final String? postalCode;
+  final bool isManual;
+  final bool isSynced;
 
   ScanEntry({
     required this.id,
-    required this.type,
     required this.value,
-    this.barcodeFormat,
+    required this.type,
+    this.imagePath,
+    this.videoPath,
     required this.timestamp,
+    required this.operatorName,
+    this.companyName,
     this.latitude,
     this.longitude,
     this.locationName,
-    this.note,
-    this.photoPaths,
-    this.videoPath,
-    this.videoDuration,
-    this.videoThumbnail,
-    this.galleryExported = false,
-    this.videoLocalDeleted = false,
+    this.city,
+    this.province,
+    this.country,
+    this.postalCode,
+    this.isManual = false,
+    this.isSynced = false,
   });
 
-  // ─── GETTERS ─────────────────────────────────────────
-  bool get hasMultiplePhotos => photoPaths != null && photoPaths!.length > 1;
-  bool get hasPhotos => photoPaths != null && photoPaths!.isNotEmpty;
-  bool get hasVideo => videoPath != null && videoPath!.isNotEmpty;
-  // Beda dengan hasVideo: ini khusus menandakan file mentahnya masih ada
-  // secara lokal (belum sengaja dihapus setelah ekspor ke Galeri) — dipakai
-  // untuk memutuskan apakah preview di dalam app masih bisa memutar file-nya
-  // langsung, atau harus mengarahkan user membuka aplikasi Galeri.
-  bool get hasLocalVideoFile => hasVideo && !videoLocalDeleted;
-  bool get isVideo => type == ScanType.video;
-  bool get isBarcode => type == ScanType.barcode;
-  bool get isPhoto => type == ScanType.photo;
+  // ─── FACTORY ──────────────────────────────────────────────────
 
-  String get firstPhotoPath => photoPaths?.isNotEmpty == true
-      ? photoPaths!.first
-      : value;
-
-  String get timestampFormatted =>
-      DateFormat('dd-MM-yyyy HH:mm:ss').format(timestamp);
-
-  String get timestampShort =>
-      DateFormat('dd/MM HH:mm').format(timestamp);
-
-  String get coordinatesString {
-    if (latitude == null || longitude == null) return 'tidak tersedia';
-    return '${latitude!.toStringAsFixed(5)}, ${longitude!.toStringAsFixed(5)}';
+  factory ScanEntry.fromMap(Map<String, dynamic> map) {
+    return ScanEntry(
+      id: map['id'] as String,
+      value: map['value'] as String,
+      type: ScanType.values[map['type'] as int],
+      imagePath: map['imagePath'] as String?,
+      videoPath: map['videoPath'] as String?,
+      timestamp: DateTime.fromMillisecondsSinceEpoch(map['timestamp'] as int),
+      operatorName: map['operatorName'] as String,
+      companyName: map['companyName'] as String?,
+      latitude: map['latitude'] as double?,
+      longitude: map['longitude'] as double?,
+      locationName: map['locationName'] as String?,
+      city: map['city'] as String?,
+      province: map['province'] as String?,
+      country: map['country'] as String?,
+      postalCode: map['postalCode'] as String?,
+      isManual: map['isManual'] as bool? ?? false,
+      isSynced: map['isSynced'] as bool? ?? false,
+    );
   }
 
-  String get videoDurationFormatted {
-    if (videoDuration == null) return '';
-    final min = videoDuration! ~/ 60;
-    final sec = videoDuration! % 60;
-    return '${min.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}';
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'value': value,
+      'type': type.index,
+      'imagePath': imagePath,
+      'videoPath': videoPath,
+      'timestamp': timestamp.millisecondsSinceEpoch,
+      'operatorName': operatorName,
+      'companyName': companyName,
+      'latitude': latitude,
+      'longitude': longitude,
+      'locationName': locationName,
+      'city': city,
+      'province': province,
+      'country': country,
+      'postalCode': postalCode,
+      'isManual': isManual,
+      'isSynced': isSynced,
+    };
   }
 
-  String get galleryStatusText {
-    if (!galleryExported) return '📁 Tersimpan internal';
-    return videoLocalDeleted
-        ? '✅ Di Galeri (lokal dihapus)'
-        : '✅ Tersimpan di Galeri';
+  // ─── GETTERS ──────────────────────────────────────────────────
+
+  /// Display location: prioritaskan locationName, fallback ke koordinat
+  String get displayLocation {
+    if (locationName != null && locationName!.isNotEmpty) {
+      return locationName!;
+    }
+    if (latitude != null && longitude != null) {
+      return '${latitude!.toStringAsFixed(4)}, ${longitude!.toStringAsFixed(4)}';
+    }
+    return 'Lokasi tidak tersedia';
   }
 
-  // ─── JSON ──────────────────────────────────────────────
-  Map<String, dynamic> toJson() => {
-    'id': id,
-    'type': type.name,
-    'value': value,
-    'barcodeFormat': barcodeFormat,
-    'timestamp': timestamp.toIso8601String(),
-    'latitude': latitude,
-    'longitude': longitude,
-    'locationName': locationName,
-    'note': note,
-    'photoPaths': photoPaths,
-    'videoPath': videoPath,
-    'videoDuration': videoDuration,
-    'videoThumbnail': videoThumbnail,
-    'galleryExported': galleryExported,
-    'videoLocalDeleted': videoLocalDeleted,
-  };
+  bool get hasLocation {
+    return (locationName != null && locationName!.isNotEmpty) ||
+           (latitude != null && longitude != null);
+  }
 
-  factory ScanEntry.fromJson(Map<String, dynamic> j) => ScanEntry(
-    id: j['id'] as String,
-    type: _parseType(j['type'] as String?),
-    value: j['value'] as String,
-    barcodeFormat: j['barcodeFormat'] as String?,
-    timestamp: DateTime.parse(j['timestamp'] as String),
-    latitude: (j['latitude'] as num?)?.toDouble(),
-    longitude: (j['longitude'] as num?)?.toDouble(),
-    locationName: j['locationName'] as String?,
-    note: j['note'] as String?,
-    photoPaths: (j['photoPaths'] as List<dynamic>?)?.cast<String>(),
-    videoPath: j['videoPath'] as String?,
-    videoDuration: j['videoDuration'] as int?,
-    videoThumbnail: j['videoThumbnail'] as String?,
-    galleryExported: j['galleryExported'] as bool? ?? false,
-    videoLocalDeleted: j['videoLocalDeleted'] as bool? ?? false,
-  );
+  /// Format timestamp untuk display
+  String get formattedTimestamp {
+    final dateFormat = DateFormat('dd/MM/yyyy HH:mm:ss');
+    return dateFormat.format(timestamp);
+  }
 
-  // ─── SQLite ──────────────────────────────────────────────
-  Map<String, dynamic> toMap() => {
-    'id': id,
-    'type': type.name,
-    'value': value,
-    'barcodeFormat': barcodeFormat,
-    'timestamp': timestamp.millisecondsSinceEpoch,
-    'latitude': latitude,
-    'longitude': longitude,
-    'locationName': locationName,
-    'note': note,
-    'photoPaths': photoPaths?.join(','),
-    'videoPath': videoPath,
-    'videoDuration': videoDuration,
-    'videoThumbnail': videoThumbnail,
-    'galleryExported': galleryExported ? 1 : 0,
-    'videoLocalDeleted': videoLocalDeleted ? 1 : 0,
-  };
+  String get barcodeFormat => type == ScanType.manual ? 'MANUAL' : type.name.toUpperCase();
 
-  factory ScanEntry.fromMap(Map<String, dynamic> map) => ScanEntry(
-    id: map['id'] as String,
-    type: _parseType(map['type'] as String?),
-    value: map['value'] as String,
-    barcodeFormat: map['barcodeFormat'] as String?,
-    timestamp: DateTime.fromMillisecondsSinceEpoch(map['timestamp'] as int),
-    latitude: (map['latitude'] as num?)?.toDouble(),
-    longitude: (map['longitude'] as num?)?.toDouble(),
-    locationName: map['locationName'] as String?,
-    note: map['note'] as String?,
-    photoPaths: (map['photoPaths'] as String?)
-        ?.split(',')
-        .where((s) => s.isNotEmpty)
-        .toList(),
-    videoPath: map['videoPath'] as String?,
-    videoDuration: map['videoDuration'] as int?,
-    videoThumbnail: map['videoThumbnail'] as String?,
-    galleryExported: (map['galleryExported'] as int?) == 1,
-    videoLocalDeleted: (map['videoLocalDeleted'] as int?) == 1,
-  );
+  // ─── COPYWITH ──────────────────────────────────────────────────
 
-  // ─── Copy ────────────────────────────────────────────────
   ScanEntry copyWith({
     String? id,
-    ScanType? type,
     String? value,
-    String? barcodeFormat,
+    ScanType? type,
+    String? imagePath,
+    String? videoPath,
     DateTime? timestamp,
+    String? operatorName,
+    String? companyName,
     double? latitude,
     double? longitude,
     String? locationName,
-    String? note,
-    List<String>? photoPaths,
-    String? videoPath,
-    int? videoDuration,
-    String? videoThumbnail,
-    bool? galleryExported,
-    bool? videoLocalDeleted,
-  }) =>
-      ScanEntry(
-        id: id ?? this.id,
-        type: type ?? this.type,
-        value: value ?? this.value,
-        barcodeFormat: barcodeFormat ?? this.barcodeFormat,
-        timestamp: timestamp ?? this.timestamp,
-        latitude: latitude ?? this.latitude,
-        longitude: longitude ?? this.longitude,
-        locationName: locationName ?? this.locationName,
-        note: note ?? this.note,
-        photoPaths: photoPaths ?? this.photoPaths,
-        videoPath: videoPath ?? this.videoPath,
-        videoDuration: videoDuration ?? this.videoDuration,
-        videoThumbnail: videoThumbnail ?? this.videoThumbnail,
-        galleryExported: galleryExported ?? this.galleryExported,
-        videoLocalDeleted: videoLocalDeleted ?? this.videoLocalDeleted,
-      );
-
-  // ─── Helper ────────────────────────────────────────────
-  static ScanType _parseType(String? name) {
-    if (name == null) return ScanType.photo;
-    return ScanType.values.firstWhere(
-      (e) => e.name == name,
-      orElse: () => ScanType.photo,
+    String? city,
+    String? province,
+    String? country,
+    String? postalCode,
+    bool? isManual,
+    bool? isSynced,
+  }) {
+    return ScanEntry(
+      id: id ?? this.id,
+      value: value ?? this.value,
+      type: type ?? this.type,
+      imagePath: imagePath ?? this.imagePath,
+      videoPath: videoPath ?? this.videoPath,
+      timestamp: timestamp ?? this.timestamp,
+      operatorName: operatorName ?? this.operatorName,
+      companyName: companyName ?? this.companyName,
+      latitude: latitude ?? this.latitude,
+      longitude: longitude ?? this.longitude,
+      locationName: locationName ?? this.locationName,
+      city: city ?? this.city,
+      province: province ?? this.province,
+      country: country ?? this.country,
+      postalCode: postalCode ?? this.postalCode,
+      isManual: isManual ?? this.isManual,
+      isSynced: isSynced ?? this.isSynced,
     );
   }
 }
