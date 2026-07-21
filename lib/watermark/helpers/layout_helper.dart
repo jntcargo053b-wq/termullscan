@@ -2,7 +2,7 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../watermark_settings.dart';
-import 'text_painter_cache.dart'; // ← TAMBAHKAN
+import '../utils/text_painter_cache.dart'; // ← PERBAIKI PATH
 
 /// Hasil resolusi posisi overlay strip (dipakai minimal & professional layout)
 /// supaya logika switch-case posisi tidak diduplikasi di setiap layout.
