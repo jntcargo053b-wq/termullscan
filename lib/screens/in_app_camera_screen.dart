@@ -385,21 +385,25 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
           builder: (context, data, _) {
             return Stack(
               children: [
-                RepaintBoundary(
-                  child: CustomPaint(
-                    painter: WatermarkStaticPainter(
-                      layout: _layout,
-                      data: data,
-                      logoImage: _logoImage,
+                Positioned.fill(
+                  child: RepaintBoundary(
+                    child: CustomPaint(
+                      painter: WatermarkStaticPainter(
+                        layout: _layout,
+                        data: data,
+                        logoImage: _logoImage,
+                      ),
                     ),
                   ),
                 ),
-                RepaintBoundary(
-                  child: CustomPaint(
-                    painter: WatermarkDynamicPainter(
-                      layout: _layout,
-                      data: data,
-                      logoImage: _logoImage,
+                Positioned.fill(
+                  child: RepaintBoundary(
+                    child: CustomPaint(
+                      painter: WatermarkDynamicPainter(
+                        layout: _layout,
+                        data: data,
+                        logoImage: _logoImage,
+                      ),
                     ),
                   ),
                 ),
