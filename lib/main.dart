@@ -1,10 +1,10 @@
-import 'dart:async'; // ← untuk unawaited
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:provider/provider.dart'; // ← TAMBAHKAN
+import 'package:provider/provider.dart';
 import 'theme/app_theme.dart';
 import 'screens/home_screen.dart';
 import 'watermark/watermark_settings.dart';
@@ -14,35 +14,76 @@ import 'services/background/video_processing_service.dart';
 import 'services/pod_location_service.dart';
 import 'models/scan_entry.dart';
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+void main() {
+  // Global error handler untuk async errors
+  runZonedGuarded(
+    () async {
+      final startTime = DateTime.now();
+      WidgetsFlutterBinding.ensureInitialized();
 
-  // Inisialisasi foreground service
-  VideoProcessingService.init();
+      // Flutter error handler
+      FlutterError.onError = (FlutterErrorDetails details) {
+        debugPrint('❌ Flutter Error: ${details.exception}');
+        // Bisa kirim ke analytics
+      };
 
-  // ─── 0. Inisialisasi layanan lokasi (idle, load cache lokal) ──
-  // GPS TIDAK langsung aktif di sini — hanya memuat koordinat +
-  // alamat sesi terakhir dari SharedPreferences agar watermark GPS
-  // punya fallback instan sebelum acquireForCapture() dipanggil di
-  // layar kamera/scan.
-  unawaited(PodLocationService.instance.init());
+      // Inisialisasi foreground service
+      VideoProcessingService.init();
 
-  // ─── 1. Muat watermark settings ──────────────────────────
-  final watermarkSettings = WatermarkSettings();
-  await watermarkSettings.load();
+      // ─── 0. Inisialisasi layanan lokasi ──
+      unawaited(PodLocationService.instance.init());
 
-  // ─── 2. Preload watermark (font, logo, layout) ──────────
-  await VideoWatermarkService.preload(watermarkSettings);
-  debugPrint('✅ Watermark preload selesai');
+      // ─── 1. Muat watermark settings ──────────────────────────
+      final watermarkSettings = WatermarkSettings();
+      await watermarkSettings.load();
 
-  // ─── 3. Warm-up FFmpeg (background) ──────────────────────
-  unawaited(VideoWatermarkService.warmUp());
+      // ─── 2. Migrasi data JSON lama ke SQLite ────────────────
+      final storage = StorageService();
+      await _migrateJsonIfExists(storage);
 
-  // ─── 4. Migrasi data JSON ke SQLite ──────────────────────
-  final storage = StorageService();
+      // ─── 3. Cleanup file lama di background ──────────────────
+      unawaited(storage.cleanupOldFilesInBackground(days: 45));
+
+      // ─── 4. Konfigurasi orientasi dan system UI ─────────────
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.portraitDown,
+      ]);
+      SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+        systemNavigationBarColor: AppTheme.bg,
+      ));
+
+      // ─── 5. Jalankan aplikasi ────────────────────────────────
+      runApp(
+        ChangeNotifierProvider<WatermarkSettings>(
+          create: (_) => watermarkSettings,
+          child: const TermulScanApp(),
+        ),
+      );
+
+      // ─── 6. Post-frame setup ─────────────────────────────────
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final elapsed = DateTime.now().difference(startTime).inMilliseconds;
+        debugPrint('⏱️ Cold start completed in ${elapsed}ms');
+
+        unawaited(_preloadWatermarkAfterFirstFrame(watermarkSettings));
+      });
+    },
+    (error, stack) {
+      debugPrint('❌ Uncaught async error: $error');
+      debugPrint(stack.toString());
+    },
+  );
+}
+
+/// Migrasi data JSON lama ke SQLite (jika ada)
+Future<void> _migrateJsonIfExists(StorageService storage) async {
   try {
     final dir = await getApplicationDocumentsDirectory();
     final jsonFile = File('${dir.path}/scan_log.json');
+
     if (await jsonFile.exists()) {
       final content = await jsonFile.readAsString();
       if (content.isNotEmpty) {
@@ -56,30 +97,20 @@ void main() async {
       }
     }
   } catch (e) {
-    debugPrint('⚠️ Migration error: $e (maybe no JSON data)');
+    debugPrint('⚠️ Migration error: $e');
   }
+}
 
-  // ─── 5. Cleanup file lama di background ──────────────────
-  unawaited(storage.cleanupOldFilesInBackground(days: 45));
-
-  // ─── 6. Konfigurasi orientasi dan system UI ─────────────
-  await SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.portraitDown,
-  ]);
-  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-    statusBarColor: Colors.transparent,
-    statusBarIconBrightness: Brightness.light,
-    systemNavigationBarColor: AppTheme.bg,
-  ));
-
-  // ─── 7. Jalankan aplikasi dengan Provider ────────────────
-  runApp(
-    ChangeNotifierProvider<WatermarkSettings>(
-      create: (_) => watermarkSettings, // ← pakai instance yang sudah di-load
-      child: const TermulScanApp(),
-    ),
-  );
+/// Preload watermark (font, logo, layout) + warm-up FFmpeg
+/// Dijalankan SETELAH frame pertama tampil, supaya tidak menahan cold-start
+Future<void> _preloadWatermarkAfterFirstFrame(WatermarkSettings watermarkSettings) async {
+  try {
+    await VideoWatermarkService.preload(watermarkSettings);
+    debugPrint('✅ Watermark preload selesai');
+  } catch (e) {
+    debugPrint('⚠️ Watermark preload error: $e');
+  }
+  unawaited(VideoWatermarkService.warmUp());
 }
 
 class TermulScanApp extends StatelessWidget {
