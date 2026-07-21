@@ -1,4 +1,3 @@
-import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'text_painter_cache.dart';
 
@@ -286,7 +285,7 @@ class TextHelper {
     return tp.lineCount;
   }
 
-  /// Memotong teks agar muat dalam maxWidth (FIXED: menggunakan binary search + substr)
+  /// Memotong teks agar muat dalam maxWidth (FIXED: menggunakan substr)
   static String truncateText({
     required String text,
     required double maxWidth,
@@ -324,10 +323,6 @@ class TextHelper {
 
     while (low <= high) {
       final mid = (low + high) ~/ 2;
-      if (mid == 0) {
-        bestLength = 0;
-        break;
-      }
       final truncated = text.substring(0, mid);
       
       final tp = TextPainterCache.getPainter(
@@ -365,13 +360,6 @@ class TextHelper {
     double letterSpacing = 0,
     List<Shadow>? shadows,
   }) {
-    // Buat shader untuk gradient
-    final shader = ui.Gradient.linear(
-      Offset(x, y),
-      Offset(x + maxWidth, y + fontSize),
-      gradientColors,
-    );
-
     // Buat style dengan foreground shader
     final style = TextStyle(
       fontSize: fontSize,
@@ -379,16 +367,20 @@ class TextHelper {
       fontFamily: fontFamily,
       letterSpacing: letterSpacing,
       shadows: shadows,
-      foreground: Paint()..shader = shader,
+      foreground: Paint()..shader = ui.Gradient.linear(
+        Offset(x, y),
+        Offset(x + 100, y + fontSize), // Perkiraan lebar
+        gradientColors,
+      ),
     );
 
-    final tp = TextPainter(
-      text: TextSpan(text: text, style: style),
-      textDirection: TextDirection.ltr,
+    final tp = TextPainterCache.getPainter(
+      text: text,
+      style: style,
+      maxWidth: maxWidth,
       maxLines: maxLines,
-      ellipsis: '…',
       textAlign: textAlign,
-    )..layout(maxWidth: maxWidth);
+    );
 
     tp.paint(canvas, Offset(x, y));
     return tp.height;
@@ -439,9 +431,10 @@ class TextHelper {
   static List<Shadow> noShadow() => TextPainterCache.getNoShadow();
 }
 
-// ─── DEPRECATED: Untuk backward compatibility ─────────────────
+// ─── RE-EXPORT CACHE UNTUK COMPATIBILITY ─────────────────────
 
-/// @deprecated Gunakan TextPainterCache sebagai gantinya
+/// Untuk backward compatibility dengan kode lama yang masih pakai CachedTextPainter
+/// (Sebaiknya dihapus setelah semua kode di-migrate)
 @deprecated
 class CachedTextPainter {
   static TextPainter getPainter({
