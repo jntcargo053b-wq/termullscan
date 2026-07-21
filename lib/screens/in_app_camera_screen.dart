@@ -2,35 +2,47 @@
 // ============================================================
 // KAMERA IN-APP DENGAN PRATINJAU WATERMARK LIVE
 // ============================================================
-// Menggantikan alur lama (image_picker → buka app kamera bawaan
-// OS → watermark baru terlihat di preview_screen). Sekarang user
-// langsung melihat overlay watermark di atas live camera feed
-// SEBELUM foto diambil — "what you see is what you get".
+// Overlay watermark digambar via CustomPainter (WatermarkLivePainter)
+// yang mendelegasikan ke WatermarkLayout.paintWatermarkOnly() — method
+// yang SUDAH ADA dan dipakai juga untuk overlay video. TIDAK ADA
+// PictureRecorder / toImage / encode-decode PNG di jalur live preview
+// ini lagi — canvas digambar langsung oleh Flutter tiap repaint.
 //
-// PENTING: layar ini TIDAK menulis ulang engine watermark.
-// Ia hanya memanggil WatermarkRenderer.renderOverlayPng() yang
-// SUDAH ADA (dipakai untuk overlay video) untuk menghasilkan PNG
-// transparan berisi elemen watermark saja, lalu menumpuknya di
-// atas CameraPreview. Proses watermark FINAL (yang benar-benar
-// dibakar ke file foto) tetap 100% memakai WatermarkRenderer.render()
-// yang sudah ada di _applyWatermark (photo_scan_screen.dart) —
-// tidak berubah sama sekali.
+// OPTIMASI PERFORMA (vs versi sebelumnya):
+//  1. Overlay PNG (renderOverlayPng → Image.memory) DIGANTI CustomPainter
+//     yang menggambar langsung ke Canvas Flutter — tidak ada raster ke
+//     bitmap + encode/decode PNG tiap detik.
+//  2. Elemen statis di-cache SEKALI, bukan tiap frame/detik:
+//       - Logo (ui.Image) di-decode sekali di initState, dipakai ulang
+//         selama layar terbuka, di-dispose saat dispose().
+//       - WatermarkLayout instance dibuat sekali (bukan per-tick).
+//  3. Repaint di-scope ke RepaintBoundary + ValueListenableBuilder kecil
+//     yang membungkus HANYA CustomPaint — bukan setState() di root State
+//     yang akan membangun ulang seluruh subtree (termasuk CameraPreview).
+//  4. WatermarkLivePainter.shouldRepaint() membandingkan field yang
+//     benar-benar memengaruhi tampilan; kalau tidak ada yang berubah,
+//     Flutter melewati repaint layer ini sepenuhnya.
+//
+// Proses watermark FINAL (dibakar ke file hasil foto) tetap 100% lewat
+// WatermarkRenderer.render() yang sudah ada di _applyWatermark
+// (photo_scan_screen.dart) — TIDAK berubah sama sekali.
 // ============================================================
 
 import 'dart:async';
-import 'dart:typed_data';
+import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../models/scan_entry.dart';
 import '../services/pod_location_service.dart';
-import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
+import '../watermark/layouts/base_layout.dart';
+import '../watermark/models/watermark_data.dart';
 import '../watermark/watermark_factory.dart';
-import '../watermark/watermark_renderer.dart';
 import '../watermark/watermark_settings.dart';
+import '../watermark/widgets/watermark_live_painter.dart';
 
 class InAppCameraScreen extends StatefulWidget {
   const InAppCameraScreen({super.key});
@@ -42,23 +54,25 @@ class InAppCameraScreen extends StatefulWidget {
 class _InAppCameraScreenState extends State<InAppCameraScreen>
     with WidgetsBindingObserver {
   final WatermarkSettings _wmSettings = WatermarkSettings();
-  final StorageService _storage = StorageService();
 
   CameraController? _controller;
   Future<void>? _initFuture;
   String? _errorText;
 
-  bool _overlaySupported = true;
-  bool _isRenderingOverlay = false;
-  Uint8List? _overlayBytes;
-  Timer? _overlayTimer;
+  // ─── Cache elemen statis (dibuat/dimuat SEKALI) ────────────
+  late final WatermarkLayout _layout;
+  late final bool _overlaySupported;
+  ui.Image? _logoImage; // di-decode sekali, dipakai ulang tiap repaint
+
+  // ─── Data live (bagian yang MEMANG berubah tiap detik/GPS update) ──
+  late final ValueNotifier<WatermarkData> _liveData;
+  Timer? _clockTimer;
   StreamSubscription<PodLocationState>? _gpsSub;
 
   bool _isCapturing = false;
   FlashMode _flashMode = FlashMode.off;
 
-  static const int _overlayCanvasWidth = 720;
-  static const Duration _overlayRefreshInterval = Duration(seconds: 1);
+  static const Duration _clockTickInterval = Duration(seconds: 1);
 
   @override
   void initState() {
@@ -70,19 +84,21 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
     // overlay transparan langsung di atas live preview — sama seperti
     // batasan overlay video. Untuk kasus ini kita tampilkan badge info,
     // watermark tetap diterapkan penuh setelah foto diambil.
-    final layout = WatermarkFactory.create(_wmSettings.style);
-    _overlaySupported = layout.supportsVideoOverlay;
+    _layout = WatermarkFactory.create(_wmSettings.style);
+    _overlaySupported = _layout.supportsVideoOverlay;
 
+    _liveData = ValueNotifier(_buildLiveData());
     _initFuture = _initCamera();
 
     if (_overlaySupported) {
-      _overlayTimer = Timer.periodic(
-        _overlayRefreshInterval,
-        (_) => _refreshOverlay(),
+      unawaited(_loadLogoIfNeeded());
+      _clockTimer = Timer.periodic(
+        _clockTickInterval,
+        (_) => _liveData.value = _buildLiveData(),
       );
       if (_wmSettings.gpsWatermarkEnabled) {
         _gpsSub = PodLocationService.instance.stream.listen(
-          (_) => _refreshOverlay(),
+          (_) => _liveData.value = _buildLiveData(),
         );
       }
     }
@@ -110,8 +126,7 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
         await controller.dispose();
         return;
       }
-      _controller = controller;
-      unawaited(_refreshOverlay());
+      setState(() => _controller = controller);
     } catch (e) {
       debugPrint('❌ Gagal inisialisasi kamera in-app: $e');
       if (mounted) {
@@ -120,54 +135,60 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
     }
   }
 
-  // ─── Live watermark overlay ─────────────────────────────────
+  // ─── Cache logo (SEKALI, bukan tiap tick) ──────────────────
 
-  Future<void> _refreshOverlay() async {
-    if (!mounted || !_overlaySupported || _isRenderingOverlay) return;
-    final controller = _controller;
-    if (controller == null || !controller.value.isInitialized) return;
-
-    _isRenderingOverlay = true;
+  Future<void> _loadLogoIfNeeded() async {
+    if (!_wmSettings.hasLogo) return;
+    final path = _wmSettings.logoPath;
+    if (path == null || path.isEmpty) return;
     try {
-      // Aspek rasio TAMPILAN (portrait) = 1 / aspectRatio sensor kamera —
-      // pola standar plugin `camera` untuk device yang dikunci portrait.
-      final displayAspect = 1 / controller.value.aspectRatio;
-      final canvasWidth = _overlayCanvasWidth;
-      final canvasHeight = (canvasWidth / displayAspect).round();
-
-      final locState = _wmSettings.gpsWatermarkEnabled
-          ? PodLocationService.instance.currentState
-          : null;
-
-      final tempEntry = ScanEntry(
-        id: _storage.generateId(),
-        type: ScanType.photo,
-        value: '',
-        barcodeFormat: null,
-        timestamp: DateTime.now(),
-        latitude: locState?.lat,
-        longitude: locState?.lon,
-        locationName:
-            (locState != null && locState.address.isNotEmpty) ? locState.address : null,
-      );
-
-      final bytes = await WatermarkRenderer.renderOverlayPng(
-        canvasWidth: canvasWidth,
-        canvasHeight: canvasHeight,
-        settings: _wmSettings,
-        entry: tempEntry,
-      );
-
-      if (mounted && bytes != null) {
-        setState(() => _overlayBytes = bytes);
+      final file = File(path);
+      if (!await file.exists()) return;
+      final bytes = await file.readAsBytes();
+      // targetWidth kecil cukup untuk pratinjau di layar — resolusi
+      // final tetap ditentukan sendiri oleh WatermarkRenderer.render()
+      // saat proses watermark permanen setelah foto diambil.
+      final codec = await ui.instantiateImageCodec(bytes, targetWidth: 200);
+      final frame = await codec.getNextFrame();
+      codec.dispose();
+      if (!mounted) {
+        frame.image.dispose();
+        return;
       }
+      _logoImage = frame.image;
+      // Trigger satu repaint supaya logo langsung muncul setelah selesai
+      // di-decode, tanpa menunggu tick clock berikutnya.
+      _liveData.value = _buildLiveData();
     } catch (e) {
-      // Pratinjau gagal → tidak fatal. Watermark FINAL tetap dijamin
-      // diterapkan penuh setelah foto diambil lewat _applyWatermark.
-      debugPrint('⚠️ Gagal refresh pratinjau watermark: $e');
-    } finally {
-      _isRenderingOverlay = false;
+      debugPrint('⚠️ Gagal cache logo untuk pratinjau live: $e');
     }
+  }
+
+  // ─── Bangun WatermarkData "murah" — hanya bagian yang berubah ──
+  // Konstruksi ini identik dengan yang dibuat WatermarkRenderer secara
+  // internal (lihat render()/renderOverlayPng()) — bukan logika baru,
+  // hanya dipindah ke sini supaya tidak perlu membungkusnya lewat
+  // ScanEntry + renderOverlayPng untuk sekadar pratinjau di layar.
+  WatermarkData _buildLiveData() {
+    final locState = _wmSettings.gpsWatermarkEnabled
+        ? PodLocationService.instance.currentState
+        : null;
+    return WatermarkData(
+      timestamp: DateTime.now(),
+      operatorName: _wmSettings.operatorName,
+      companyName: _wmSettings.companyName,
+      barcodeValue: null,
+      barcodeFormat: null,
+      latitude: locState?.lat,
+      longitude: locState?.lon,
+      locationName:
+          (locState != null && locState.address.isNotEmpty) ? locState.address : null,
+      logoPath: _wmSettings.logoPath,
+      position: _wmSettings.position,
+      fontSize: _wmSettings.fontSize,
+      backgroundOpacity: _wmSettings.backgroundOpacity,
+      fontFamily: _wmSettings.fontFamily,
+    );
   }
 
   // ─── Capture ─────────────────────────────────────────────────
@@ -229,8 +250,10 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _overlayTimer?.cancel();
+    _clockTimer?.cancel();
     _gpsSub?.cancel();
+    _liveData.dispose();
+    _logoImage?.dispose();
     _controller?.dispose();
     super.dispose();
   }
@@ -299,14 +322,7 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
               fit: StackFit.expand,
               children: [
                 CameraPreview(controller),
-                if (_overlaySupported && _overlayBytes != null)
-                  IgnorePointer(
-                    child: Image.memory(
-                      _overlayBytes!,
-                      fit: BoxFit.fill,
-                      gaplessPlayback: true,
-                    ),
-                  ),
+                if (_overlaySupported) _buildLiveOverlay(),
               ],
             ),
           ),
@@ -342,6 +358,31 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
           ),
         ),
       ],
+    );
+  }
+
+  // ─── Overlay: RepaintBoundary + ValueListenableBuilder SEMPIT ──
+  // Hanya subtree ini yang di-rebuild/repaint tiap tick clock/GPS —
+  // CameraPreview & seluruh chrome UI di sekitarnya TIDAK ikut
+  // rebuild, karena tidak ada setState() di root State untuk itu.
+  Widget _buildLiveOverlay() {
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: RepaintBoundary(
+          child: ValueListenableBuilder<WatermarkData>(
+            valueListenable: _liveData,
+            builder: (context, data, _) {
+              return CustomPaint(
+                painter: WatermarkLivePainter(
+                  layout: _layout,
+                  data: data,
+                  logoImage: _logoImage,
+                ),
+              );
+            },
+          ),
+        ),
+      ),
     );
   }
 
