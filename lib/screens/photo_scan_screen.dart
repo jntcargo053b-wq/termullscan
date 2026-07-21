@@ -22,6 +22,7 @@ import '../utils/image_compressor.dart';
 import '../utils/file_helper.dart';
 import 'watermark_settings_sheet.dart';
 import 'preview_screen.dart';
+import 'in_app_camera_screen.dart';
 
 // ─── WIDGET: Camera Icon ──────────────────────────────────────
 class _CameraIconWidget extends StatelessWidget {
@@ -596,10 +597,19 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     String? watermarkedPath;
 
     try {
-      // ─── Ambil file asli (tanpa maxWidth/imageQuality) ──
-      final xfile = await _picker.pickImage(
-        source: ImageSource.camera,
-        preferredCameraDevice: CameraDevice.rear,
+      // ─── Buka kamera in-app (live watermark preview) ────
+      // ✅ Sebelumnya: _picker.pickImage(source: camera) melempar ke
+      // app kamera bawaan OS — watermark baru terlihat setelah foto
+      // diambil (di preview_screen). Sekarang InAppCameraScreen
+      // menampilkan overlay watermark LANGSUNG di atas live feed
+      // sebelum shutter ditekan. Proses watermark FINAL (dibakar ke
+      // file) tetap 100% lewat _applyWatermark di bawah — tidak berubah.
+      final xfile = await Navigator.push<XFile>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const InAppCameraScreen(),
+          fullscreenDialog: true,
+        ),
       );
       if (!mounted) return;
       if (xfile != null) {
