@@ -178,8 +178,74 @@ class ProfessionalLayout extends WatermarkLayout {
     );
   }
 
-  // ─── INTERNAL PAINT ───────────────────────────────────────────
+  // ─── SPLIT STATIC / DYNAMIC (live preview kamera) ────────────
+  @override
+  void paintStaticOnly({
+    required ui.Canvas canvas,
+    required LayoutMetrics metrics,
+    required ui.Image? logoImage,
+    required WatermarkData data,
+  }) {
+    _paintStatic(
+      canvas: canvas,
+      metrics: metrics,
+      photoWidth: metrics.canvasWidth,
+      photoHeight: metrics.canvasHeight,
+      logoImage: logoImage,
+      data: data,
+    );
+  }
+
+  @override
+  void paintDynamicOnly({
+    required ui.Canvas canvas,
+    required LayoutMetrics metrics,
+    required ui.Image? logoImage,
+    required WatermarkData data,
+  }) {
+    _paintDynamic(
+      canvas: canvas,
+      metrics: metrics,
+      photoWidth: metrics.canvasWidth,
+      photoHeight: metrics.canvasHeight,
+      logoImage: logoImage,
+      data: data,
+    );
+  }
+
+  // ─── INTERNAL PAINT (single-pass, dipakai paintOnCanvas &
+  //     paintWatermarkOnly — mis. render overlay PNG video sekali) ──
   void _paint({
+    required ui.Canvas canvas,
+    required LayoutMetrics metrics,
+    required double photoWidth,
+    required double photoHeight,
+    required ui.Image? logoImage,
+    required WatermarkData data,
+  }) {
+    _paintStatic(
+      canvas: canvas,
+      metrics: metrics,
+      photoWidth: photoWidth,
+      photoHeight: photoHeight,
+      logoImage: logoImage,
+      data: data,
+    );
+    _paintDynamic(
+      canvas: canvas,
+      metrics: metrics,
+      photoWidth: photoWidth,
+      photoHeight: photoHeight,
+      logoImage: logoImage,
+      data: data,
+    );
+  }
+
+  // ─── STATIC LAYER ────────────────────────────────────────────
+  // Bar background, accent bar, meta (barcode/operator — konten
+  // per-sesi, bukan per-tick), manual badge, logo, brand, kode
+  // verifikasi. Tidak ada di sini yang bergantung ke jam/GPS.
+  void _paintStatic({
     required ui.Canvas canvas,
     required LayoutMetrics metrics,
     required double photoWidth,
@@ -213,17 +279,10 @@ class ProfessionalLayout extends WatermarkLayout {
 
     final leftX = padding * _textLeftInset;
     final availW = photoWidth - leftX - padding;
-
-    double cursorY = barTop + padding * _topPaddingFactor;
+    final cursorY = barTop + padding * _topPaddingFactor;
 
     // ─── META ────────────────────────────────────────────────────
-    cursorY = _drawMeta(canvas, data, metrics, leftX, availW, cursorY);
-
-    // ─── TIME ────────────────────────────────────────────────────
-    cursorY = _drawTime(canvas, data, metrics, leftX, baseSize, cursorY);
-
-    // ─── LOCATION ───────────────────────────────────────────────
-    _drawLocation(canvas, data, metrics, leftX, availW, baseSize, cursorY, logoImage);
+    _drawMeta(canvas, data, metrics, leftX, availW, cursorY);
 
     // ─── MANUAL BADGE ───────────────────────────────────────────
     _drawManualBadge(canvas, data, padding, baseSize, barTop, photoWidth);
@@ -236,6 +295,54 @@ class ProfessionalLayout extends WatermarkLayout {
 
     // ─── VERIFICATION CODE ─────────────────────────────────────
     _drawVerification(canvas, data, padding, baseSize, photoWidth, barTop);
+  }
+
+  // ─── DYNAMIC LAYER ───────────────────────────────────────────
+  // Jam, tanggal, hari, koordinat/alamat. cursorY dihitung analitis
+  // (bukan hasil _drawMeta) supaya layer ini bisa di-render sendiri
+  // tanpa perlu menggambar ulang meta — posisinya tetap sinkron
+  // selama data.hasBarcode/hasOperator tidak berubah antar-tick,
+  // yang mana keduanya termasuk "static" (lihat _dynamicStartY).
+  void _paintDynamic({
+    required ui.Canvas canvas,
+    required LayoutMetrics metrics,
+    required double photoWidth,
+    required double photoHeight,
+    required ui.Image? logoImage,
+    required WatermarkData data,
+  }) {
+    final baseSize = metrics.baseSize;
+    final padding = metrics.padding;
+    final leftX = padding * _textLeftInset;
+    final availW = photoWidth - leftX - padding;
+    final cursorY = _dynamicStartY(metrics, photoHeight, data);
+
+    // ─── TIME ────────────────────────────────────────────────────
+    final afterTimeY = _drawTime(canvas, data, metrics, leftX, baseSize, cursorY);
+
+    // ─── LOCATION ───────────────────────────────────────────────
+    // logoImage diteruskan HANYA untuk reservasi lebar teks (supaya
+    // tidak tabrakan dengan logo yang digambar di static layer) —
+    // bukan untuk menggambar logo di sini.
+    _drawLocation(canvas, data, metrics, leftX, availW, baseSize, afterTimeY, logoImage);
+  }
+
+  /// Hitung ulang posisi Y awal blok dinamis (time+location) SECARA
+  /// ANALITIS — persis meniru akumulasi cursorY yang dilakukan
+  /// _drawMeta, tanpa perlu menjalankan _drawMeta itu sendiri.
+  double _dynamicStartY(LayoutMetrics metrics, double photoHeight, WatermarkData data) {
+    final baseSize = metrics.baseSize;
+    final padding = metrics.padding;
+    final barHeight = metrics.stripHeight;
+    final barTop = photoHeight - barHeight;
+
+    final metaFontSize = baseSize * _metaScale;
+    final metaLineH = metaFontSize * _metaLineSpacing;
+    var metaLines = 0;
+    if (data.hasBarcode) metaLines++;
+    if (data.hasOperator) metaLines++;
+
+    return barTop + padding * _topPaddingFactor + (metaLines * metaLineH);
   }
 
   // ─── HELPERS ──────────────────────────────────────────────────

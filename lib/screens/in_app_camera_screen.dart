@@ -2,11 +2,13 @@
 // ============================================================
 // KAMERA IN-APP DENGAN PRATINJAU WATERMARK LIVE
 // ============================================================
-// Overlay watermark digambar via CustomPainter (WatermarkLivePainter)
-// yang mendelegasikan ke WatermarkLayout.paintWatermarkOnly() — method
-// yang SUDAH ADA dan dipakai juga untuk overlay video. TIDAK ADA
-// PictureRecorder / toImage / encode-decode PNG di jalur live preview
-// ini lagi — canvas digambar langsung oleh Flutter tiap repaint.
+// Overlay watermark digambar via DUA CustomPainter terpisah:
+//   - WatermarkStaticPainter  → WatermarkLayout.paintStaticOnly()
+//   - WatermarkDynamicPainter → WatermarkLayout.paintDynamicOnly()
+// Keduanya mendelegasikan ke WatermarkLayout, method yang SUDAH ADA
+// dan juga dipakai untuk overlay video. TIDAK ADA PictureRecorder /
+// toImage / encode-decode PNG di jalur live preview ini — canvas
+// digambar langsung oleh Flutter tiap repaint.
 //
 // OPTIMASI PERFORMA (vs versi sebelumnya):
 //  1. Overlay PNG (renderOverlayPng → Image.memory) DIGANTI CustomPainter
@@ -16,17 +18,22 @@
 //       - Logo (ui.Image) di-decode sekali di initState, dipakai ulang
 //         selama layar terbuka, di-dispose saat dispose().
 //       - WatermarkLayout instance dibuat sekali (bukan per-tick).
-//  3. Repaint di-scope ke RepaintBoundary + ValueListenableBuilder kecil
-//     yang membungkus HANYA CustomPaint — bukan setState() di root State
-//     yang akan membangun ulang seluruh subtree (termasuk CameraPreview).
-//  4. WatermarkLivePainter.shouldRepaint() membandingkan field yang
-//     benar-benar memengaruhi tampilan; kalau tidak ada yang berubah,
-//     Flutter melewati repaint layer ini sepenuhnya.
+//  3. Overlay dipecah jadi 2 layer, masing-masing RepaintBoundary sendiri:
+//       - Static (logo, background bar, brand, kode verifikasi, meta
+//         barcode/operator) — HANYA repaint kalau field terkait berubah.
+//       - Dynamic (jam, tanggal, koordinat, alamat) — repaint tiap tick
+//         clock/GPS, TAPI tidak memicu repaint layer static di atasnya.
+//     Root State TIDAK pakai setState() untuk ini, jadi CameraPreview
+//     & chrome UI di sekitarnya tidak ikut rebuild sama sekali.
+//  4. shouldRepaint() masing-masing painter membandingkan HANYA field
+//     yang relevan untuk layer itu; kalau tidak ada yang berubah,
+//     Flutter melewati repaint layer tersebut sepenuhnya.
 //
 // Proses watermark FINAL (dibakar ke file hasil foto) tetap 100% lewat
 // WatermarkRenderer.render() yang sudah ada di _applyWatermark
 // (photo_scan_screen.dart) — TIDAK berubah sama sekali.
 // ============================================================
+
 
 import 'dart:async';
 import 'dart:io';
@@ -42,7 +49,8 @@ import '../watermark/layouts/base_layout.dart';
 import '../watermark/models/watermark_data.dart';
 import '../watermark/watermark_factory.dart';
 import '../watermark/watermark_settings.dart';
-import '../watermark/widgets/watermark_live_painter.dart';
+import '../watermark/widgets/watermark_dynamic_painter.dart';
+import '../watermark/widgets/watermark_static_painter.dart';
 
 class InAppCameraScreen extends StatefulWidget {
   const InAppCameraScreen({super.key});
@@ -362,25 +370,42 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
   }
 
   // ─── Overlay: RepaintBoundary + ValueListenableBuilder SEMPIT ──
-  // Hanya subtree ini yang di-rebuild/repaint tiap tick clock/GPS —
+  // Dua layer terpisah, masing-masing RepaintBoundary sendiri:
+  //  - Static: logo, background bar, brand, kode verifikasi, meta.
+  //    Hanya repaint kalau setting/logo/barcode/operator berubah.
+  //  - Dynamic: jam, tanggal, koordinat, alamat. Repaint tiap tick
+  //    clock/GPS — TAPI tidak memicu repaint layer static.
   // CameraPreview & seluruh chrome UI di sekitarnya TIDAK ikut
   // rebuild, karena tidak ada setState() di root State untuk itu.
   Widget _buildLiveOverlay() {
     return Positioned.fill(
       child: IgnorePointer(
-        child: RepaintBoundary(
-          child: ValueListenableBuilder<WatermarkData>(
-            valueListenable: _liveData,
-            builder: (context, data, _) {
-              return CustomPaint(
-                painter: WatermarkLivePainter(
-                  layout: _layout,
-                  data: data,
-                  logoImage: _logoImage,
+        child: ValueListenableBuilder<WatermarkData>(
+          valueListenable: _liveData,
+          builder: (context, data, _) {
+            return Stack(
+              children: [
+                RepaintBoundary(
+                  child: CustomPaint(
+                    painter: WatermarkStaticPainter(
+                      layout: _layout,
+                      data: data,
+                      logoImage: _logoImage,
+                    ),
+                  ),
                 ),
-              );
-            },
-          ),
+                RepaintBoundary(
+                  child: CustomPaint(
+                    painter: WatermarkDynamicPainter(
+                      layout: _layout,
+                      data: data,
+                      logoImage: _logoImage,
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );

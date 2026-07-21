@@ -56,6 +56,50 @@ abstract class WatermarkLayout {
     );
   }
 
+  // ─── SPLIT STATIC / DYNAMIC (khusus live preview kamera) ────────
+  // Tujuannya supaya WatermarkStaticPainter & WatermarkDynamicPainter
+  // (lib/watermark/widgets/) bisa membungkus masing-masing dalam
+  // RepaintBoundary sendiri: elemen yang jarang berubah (logo, bar
+  // background, brand, kode verifikasi) tidak perlu di-raster ulang
+  // tiap detik hanya karena jam / koordinat GPS berubah.
+  //
+  // DEFAULT di bawah ini SENGAJA dibuat agar layout yang BELUM
+  // diimplementasikan (belum override) tetap berjalan 100% seperti
+  // sebelumnya — paintDynamicOnly() default memanggil
+  // paintWatermarkOnly() penuh tiap tick (tidak ada regresi),
+  // sedangkan paintStaticOnly() default no-op (tidak menggambar apa
+  // pun, karena semua sudah digambar penuh oleh paintDynamicOnly()).
+  // Override kedua method ini bersama-sama di subclass kalau ingin
+  // memanfaatkan optimasi repaint-terpisah.
+
+  /// Gambar elemen yang JARANG berubah: logo, background bar, accent
+  /// bar, brand, kode verifikasi, meta (barcode/operator — ini juga
+  /// dianggap "static" karena tidak berubah per-tick, hanya per sesi).
+  void paintStaticOnly({
+    required ui.Canvas canvas,
+    required LayoutMetrics metrics,
+    required ui.Image? logoImage,
+    required WatermarkData data,
+  }) {
+    // no-op by default — lihat paintDynamicOnly()
+  }
+
+  /// Gambar elemen yang SERING berubah: jam, tanggal, koordinat,
+  /// alamat, akurasi, (cuaca jika ada).
+  void paintDynamicOnly({
+    required ui.Canvas canvas,
+    required LayoutMetrics metrics,
+    required ui.Image? logoImage,
+    required WatermarkData data,
+  }) {
+    paintWatermarkOnly(
+      canvas: canvas,
+      metrics: metrics,
+      logoImage: logoImage,
+      data: data,
+    );
+  }
+
   Widget buildPreview({
     required WatermarkData previewData,
     required bool hasLogo,
