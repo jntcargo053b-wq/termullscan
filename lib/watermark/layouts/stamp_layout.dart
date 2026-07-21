@@ -15,6 +15,7 @@ import '../watermark_settings.dart';
 import '../helpers/layout_helper.dart';
 import '../helpers/text_helper.dart';
 import '../helpers/watermark_typography.dart';
+import '../utils/text_painter_cache.dart';
 import '../widgets/logo_widget.dart';
 
 class StampLayout extends WatermarkLayout {
@@ -39,17 +40,15 @@ class StampLayout extends WatermarkLayout {
     lineCount++; // location
 
     final fontSz = data.fontSize;
-    final lineH = WatermarkTypography.lineHeight(fontSz); // ✅ konsisten di semua layout
+    final lineH = WatermarkTypography.lineHeight(fontSz);
 
-    // Baris "Kode" (barcode) dirender lebih besar (WatermarkTypography.barcode),
-    // jadi butuh tinggi baris ekstra dibanding baris normal.
     final barcodeLineH =
         WatermarkTypography.lineHeight(WatermarkTypography.barcode(fontSz));
     final barcodeBonus = data.hasBarcode ? (barcodeLineH - lineH) : 0.0;
 
     final panelHeight = lineCount * lineH + barcodeBonus + padding * 1.4;
 
-    final logoMaxSize = WatermarkTypography.logo(baseSize); // ✅ konsisten di semua layout
+    final logoMaxSize = WatermarkTypography.logo(baseSize);
     final panelWidth = baseSize * 0.50;
     final textW = panelWidth - padding * 0.8;
 
@@ -96,13 +95,6 @@ class StampLayout extends WatermarkLayout {
     );
   }
 
-  /// ✅ Gambar hanya elemen watermark (stamp badge, panel info, logo) tanpa
-  /// foto latar. Dipakai untuk overlay PNG transparan pada video — canvas
-  /// Stamp SELALU berukuran sama dengan foto/frame asli (lihat
-  /// computeMetrics: canvasWidth = photoWidth, canvasHeight = photoHeight),
-  /// jadi style ini kompatibel penuh dengan overlay video (beda dengan
-  /// Polaroid yang menambah border & strip sehingga canvas-nya lebih besar
-  /// dari foto/frame).
   @override
   void paintWatermarkOnly({
     required ui.Canvas canvas,
@@ -120,7 +112,7 @@ class StampLayout extends WatermarkLayout {
     );
   }
 
-  // ─── INTERNAL PAINT (dipakai oleh paintOnCanvas & paintWatermarkOnly) ──
+  // ─── INTERNAL PAINT ──────────────────────────────────────────
   void _paint({
     required ui.Canvas canvas,
     required LayoutMetrics metrics,
@@ -168,6 +160,7 @@ class StampLayout extends WatermarkLayout {
     final stampRect = Rect.fromCenter(center: Offset.zero, width: stampW, height: stampH);
     final strokeWidth = math.max(2.5, baseSize * 0.005);
 
+    // ─── STAMP BACKGROUND ──────────────────────────────────────
     canvas.drawRRect(
       RRect.fromRectAndRadius(stampRect, Radius.circular(stampH * 0.14)),
       Paint()
@@ -182,13 +175,7 @@ class StampLayout extends WatermarkLayout {
         ..strokeWidth = strokeWidth,
     );
 
-    // "VERIFIED"/"MANUAL" adalah elemen Judul stempel → idealnya mengikuti
-    // WatermarkTypography.title() (berbasis data.fontSize) supaya konsisten
-    // dengan layout lain saat fontSize diubah. TAPI kotak stempel (stampW x
-    // stampH) ukurannya tetap (berbasis baseSize foto, bukan fontSize), jadi
-    // di foto kecil + fontSize besar, teks bisa lebih besar dari kotaknya.
-    // Maka di-clamp ke rasio lama (stampH * 0.32 / 0.18) sebagai batas aman —
-    // dipakai rasio mana pun yang LEBIH KECIL.
+    // ─── STAMP TEXT ────────────────────────────────────────────
     final titleFontSize =
         math.min(WatermarkTypography.title(data.fontSize), stampH * 0.32);
     final captionFontSize =
@@ -197,6 +184,7 @@ class StampLayout extends WatermarkLayout {
     final captionLineH = WatermarkTypography.lineHeight(captionFontSize);
 
     double textY = -stampH * 0.20;
+
     TextHelper.paintText(
       canvas: canvas,
       text: stampLabel,
@@ -211,6 +199,7 @@ class StampLayout extends WatermarkLayout {
     );
 
     textY += titleLineH * 0.62;
+
     if (data.hasOperator) {
       TextHelper.paintText(
         canvas: canvas,
@@ -244,14 +233,13 @@ class StampLayout extends WatermarkLayout {
     canvas.restore();
 
     // ─── INFO PANEL ────────────────────────────────────────────
-    // (text, isBarcode) supaya baris kode bisa ditekankan seperti layout lain.
     final infoLines = <(String, bool)>[];
     if (data.hasBarcode) infoLines.add((data.barcodeValue!, true));
     if (data.hasOperator) infoLines.add(('OP: ${data.operatorName}', false));
     infoLines.add((data.displayLocation, false));
 
     final fontSize = data.fontSize;
-    final lineHeight = WatermarkTypography.lineHeight(fontSize); // ✅ konsisten
+    final lineHeight = WatermarkTypography.lineHeight(fontSize);
     final barcodeRowH =
         WatermarkTypography.lineHeight(WatermarkTypography.barcode(fontSize));
     final panelPadding = 12.0;
@@ -285,6 +273,7 @@ class StampLayout extends WatermarkLayout {
         panelY = photoHeight - padding - panelHeight - stampH - padding * 1.2;
     }
 
+    // ─── PANEL BACKGROUND ─────────────────────────────────────
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromLTWH(panelX, panelY, panelWidth, panelHeight),
@@ -306,6 +295,7 @@ class StampLayout extends WatermarkLayout {
       Paint()..color = stampColor.withOpacity(0.7),
     );
 
+    // ─── PANEL TEXT ────────────────────────────────────────────
     double textY2 = panelY + panelPadding;
     final textX2 = panelX + panelPadding + 8;
     for (final (text, isBarcode) in infoLines) {
@@ -357,7 +347,6 @@ class StampLayout extends WatermarkLayout {
           logoY = padding;
       }
 
-      // ✅ cardPad diperbesar dari 0.10 → 0.25
       final cardPad = drawW * 0.25;
       canvas.drawRRect(
         RRect.fromRectAndRadius(
