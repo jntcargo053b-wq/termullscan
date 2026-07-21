@@ -1,15 +1,6 @@
 // ============================================================
 // lib/watermark/layouts/professional_layout.dart
 // ============================================================
-// DISELARASKAN DENGAN STANDAR TimestampLayout:
-//  - Bar bawah solid (bukan gradient) dengan cursorY stacking
-//  - Baris meta, waktu (jam besar + tanggal + HARI), lokasi
-//  - Badge "INPUT MANUAL", brand + tagline, kode verifikasi
-//    vertikal — sama seperti timestamp_layout.dart
-// Identitas visual "Professional" tetap dipertahankan lewat:
-//  - Format label:value (bukan emoji) untuk KODE BARANG & OPERATOR
-//  - Accent bar vertikal di sisi kiri bar sebagai penanda korporat
-// ============================================================
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -20,7 +11,7 @@ import '../watermark_settings.dart';
 import '../helpers/layout_helper.dart';
 import '../helpers/text_helper.dart';
 import '../helpers/watermark_typography.dart';
-import '../utils/text_painter_cache.dart'; // ← TAMBAHKAN
+import '../utils/text_painter_cache.dart';
 import '../widgets/logo_widget.dart';
 import 'base_layout.dart';
 import 'layout_metrics.dart';
@@ -35,7 +26,6 @@ class ProfessionalLayout extends WatermarkLayout {
   // ─── KONSTANTA ──────────────────────────────────────────────────
   static const Color _accentColor = Color(0xFF4FA8E8);
 
-  // Skala font (sama pola dengan TimestampLayout)
   static const double _timeScale = 0.11;
   static const double _metaScale = 0.032;
   static const double _dateScale = 0.034;
@@ -49,7 +39,6 @@ class ProfessionalLayout extends WatermarkLayout {
   static const double _dividerScale = 0.006;
   static const double _accentBarWidthScale = 0.006;
 
-  // Spacing / padding factors
   static const double _timeRowPadding = 1.25;
   static const double _addressLineSpacing = 1.3;
   static const double _metaLineSpacing = 1.3;
@@ -62,7 +51,6 @@ class ProfessionalLayout extends WatermarkLayout {
   static const double _accentBarLeftInset = 1.4;
   static const double _textLeftInset = 2.6;
 
-  // Opacity
   static const double _opacityMeta = 0.9;
   static const double _opacityOperator = 0.85;
   static const double _opacityDay = 0.75;
@@ -77,6 +65,13 @@ class ProfessionalLayout extends WatermarkLayout {
   ];
 
   static String _dayName(DateTime dt) => _hariIndo[dt.weekday - 1];
+
+  // ─── HELPERS STATIC ────────────────────────────────────────────
+  static String _hhmm(DateTime dt) =>
+      '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+
+  static String _ddmmyyyy(DateTime dt) =>
+      '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}';
 
   // ─── GENERATE VERIFICATION CODE ──────────────────────────────
   static String _generateVerificationCode(WatermarkData data) {
@@ -113,7 +108,6 @@ class ProfessionalLayout extends WatermarkLayout {
         padding * _barVerticalPadding;
 
     final logoMaxSize = WatermarkTypography.logo(baseSize);
-
     final accentBarSpace = baseSize * _accentBarWidthScale + padding * 0.5;
 
     return LayoutMetrics(
@@ -141,7 +135,6 @@ class ProfessionalLayout extends WatermarkLayout {
     required ui.Image? logoImage,
     required WatermarkData data,
   }) {
-    // Gambar foto
     canvas.drawImageRect(
       srcImage,
       ui.Rect.fromLTWH(0, 0, photoWidth, photoHeight),
@@ -161,7 +154,6 @@ class ProfessionalLayout extends WatermarkLayout {
     );
   }
 
-  // ─── PAINT WATERMARK ONLY ────────────────────────────────────
   @override
   void paintWatermarkOnly({
     required ui.Canvas canvas,
@@ -179,7 +171,6 @@ class ProfessionalLayout extends WatermarkLayout {
     );
   }
 
-  // ─── SPLIT STATIC / DYNAMIC ────────────────────────────────
   @override
   void paintStaticOnly({
     required ui.Canvas canvas,
@@ -256,13 +247,11 @@ class ProfessionalLayout extends WatermarkLayout {
     final barTop = photoHeight - barHeight;
     final bgOpacity = data.backgroundOpacity.clamp(0.4, 1.0);
 
-    // ─── BAR BAWAH ──────────────────────────────────────────────
     canvas.drawRect(
       ui.Rect.fromLTWH(0, barTop, photoWidth, barHeight),
       ui.Paint()..color = Colors.black.withOpacity(bgOpacity),
     );
 
-    // ─── ACCENT BAR ────────────────────────────────────────────
     final accentBarW = math.max(2.0, baseSize * _accentBarWidthScale);
     canvas.drawRect(
       ui.Rect.fromLTWH(
@@ -278,19 +267,10 @@ class ProfessionalLayout extends WatermarkLayout {
     final availW = photoWidth - leftX - padding;
     final cursorY = barTop + padding * _topPaddingFactor;
 
-    // ─── META ────────────────────────────────────────────────────
     _drawMeta(canvas, data, metrics, leftX, availW, cursorY);
-
-    // ─── MANUAL BADGE ───────────────────────────────────────────
     _drawManualBadge(canvas, data, padding, baseSize, barTop, photoWidth);
-
-    // ─── LOGO ────────────────────────────────────────────────────
     _drawLogo(canvas, logoImage, metrics, padding, photoWidth, photoHeight);
-
-    // ─── BRAND ──────────────────────────────────────────────────
     _drawBrand(canvas, data, padding, photoWidth, baseSize);
-
-    // ─── VERIFICATION CODE ─────────────────────────────────────
     _drawVerification(canvas, data, padding, baseSize, photoWidth, barTop);
   }
 
@@ -309,10 +289,7 @@ class ProfessionalLayout extends WatermarkLayout {
     final availW = photoWidth - leftX - padding;
     final cursorY = _dynamicStartY(metrics, photoHeight, data);
 
-    // ─── TIME ────────────────────────────────────────────────────
     final afterTimeY = _drawTime(canvas, data, metrics, leftX, baseSize, cursorY);
-
-    // ─── LOCATION ───────────────────────────────────────────────
     _drawLocation(canvas, data, metrics, leftX, availW, baseSize, afterTimeY, logoImage);
   }
 
@@ -331,7 +308,7 @@ class ProfessionalLayout extends WatermarkLayout {
     return barTop + padding * _topPaddingFactor + (metaLines * metaLineH);
   }
 
-  // ─── HELPERS (DIOPTIMASI DENGAN CACHE) ─────────────────────
+  // ─── DRAW HELPERS ─────────────────────────────────────────────
 
   double _drawMeta(
     ui.Canvas canvas,
@@ -389,13 +366,12 @@ class ProfessionalLayout extends WatermarkLayout {
     final rowTop = cursorY;
     final padding = metrics.padding;
 
-    // ─── JAM (pakai cache) ──────────────────────────────────────
+    // ─── JAM ──────────────────────────────────────────────────────
     final timeStyle = TextPainterCache.getStyle(
       color: Colors.white,
       fontSize: timeFontSize,
       fontWeight: FontWeight.w800,
       fontFamily: data.fontFamily,
-      height: 1.0,
     );
     final timeTp = TextPainterCache.getPainter(
       text: _hhmm(data.timestamp),
@@ -411,7 +387,7 @@ class ProfessionalLayout extends WatermarkLayout {
       ui.Paint()..color = _accentColor,
     );
 
-    // ─── TANGGAL & HARI (pakai cache) ──────────────────────────
+    // ─── TANGGAL & HARI ──────────────────────────────────────────
     final dateColX = dividerX + baseSize * _dateSpacing;
     final dateFontSize = baseSize * _dateScale;
     final dayFontSize = baseSize * _dayScale;
@@ -538,7 +514,6 @@ class ProfessionalLayout extends WatermarkLayout {
     final taglineFontSize = baseSize * _taglineScale;
     final shadow = TextHelper.softShadow(opacity: _shadowOpacity, blur: 4);
 
-    // ─── BRAND ──────────────────────────────────────────────────
     final brandStyle = TextPainterCache.getStyle(
       color: _accentColor,
       fontSize: brandFontSize,
@@ -554,7 +529,6 @@ class ProfessionalLayout extends WatermarkLayout {
     );
     brandTp.paint(canvas, ui.Offset(photoWidth - padding - brandTp.width, padding * _topPaddingFactor));
 
-    // ─── TAGLINE ────────────────────────────────────────────────
     final taglineStyle = TextPainterCache.getStyle(
       color: Colors.white.withOpacity(_opacityBrand),
       fontSize: taglineFontSize,
@@ -712,6 +686,7 @@ class ProfessionalLayout extends WatermarkLayout {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    // Accent bar
                     Container(
                       width: 3,
                       margin: const EdgeInsets.only(right: 8),
@@ -753,7 +728,6 @@ class ProfessionalLayout extends WatermarkLayout {
                                   color: Colors.white,
                                   fontSize: baseSize * _timeScale,
                                   fontWeight: FontWeight.w800,
-                                  height: 1.0,
                                 ),
                               ),
                               const SizedBox(width: 6),
@@ -816,4 +790,54 @@ class ProfessionalLayout extends WatermarkLayout {
                               ],
                             ],
                           ),
-                          if (previewData.isManual
+                          // Badge "INPUT MANUAL"
+                          if (previewData.isManual)
+                            Align(
+                              alignment: Alignment.topRight,
+                              child: Padding(
+                                padding: const EdgeInsets.only(top: 2),
+                                child: Text(
+                                  'INPUT MANUAL',
+                                  style: TextStyle(
+                                    color: const Color(0xFFFFB74D),
+                                    fontSize: baseSize * _metaScale * _manualScale,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            // Label layout
+            Positioned(
+              top: 6,
+              left: 6,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade800.withOpacity(0.85),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  displayName,
+                  style: const TextStyle(
+                    color: Colors.grey,
+                    fontSize: 8,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
