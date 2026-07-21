@@ -192,7 +192,7 @@ class TextPainterCache {
     return painter;
   }
 
-  /// Menghitung jumlah baris teks
+  /// Menghitung jumlah baris teks (menggunakan computeLineMetrics)
   static int countLines({
     required String text,
     required TextStyle style,
@@ -210,7 +210,9 @@ class TextPainterCache {
       painter.layout();
     }
 
-    return painter.lineCount;
+    // 🔥 FIX: Gunakan computeLineMetrics() untuk mendapatkan jumlah baris
+    final lineMetrics = painter.computeLineMetrics();
+    return lineMetrics.length;
   }
 
   // ─── UTILITY ──────────────────────────────────────────────────
