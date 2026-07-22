@@ -285,10 +285,106 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       ),
       builder: (_) => _ManualInputDialog(
         onSubmitted: (code) {
-          unawaited(_processManualCode(code));
+          unawaited(_confirmAndProcessManualCode(code));
         },
       ),
     );
+  }
+
+  /// Cek duplikat + minta konfirmasi eksplisit sebelum kode manual
+  /// benar-benar tersimpan. Ini penting untuk POD logistik karena
+  /// nomor resi salah ketik bisa berakibat paket ter-mapping ke
+  /// tujuan yang salah.
+  Future<void> _confirmAndProcessManualCode(String code) async {
+    if (!mounted) return;
+
+    // Cek apakah kode ini sudah pernah discan/input hari ini.
+    bool isDuplicate = false;
+    try {
+      final existing = await _storage.getEntries(
+        searchQuery: code,
+        period: 'Hari ini',
+        limit: 5,
+      );
+      isDuplicate = existing.any((e) => e.value == code);
+    } catch (e) {
+      debugPrint('⚠️ Gagal cek duplikat kode manual: $e');
+    }
+
+    if (!mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppTheme.surface,
+        title: Text(
+          isDuplicate ? '⚠️ Kode Sudah Pernah Diinput' : 'Konfirmasi Kode',
+          style: const TextStyle(color: Colors.white, fontSize: 16),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (isDuplicate)
+              const Padding(
+                padding: EdgeInsets.only(bottom: 10),
+                child: Text(
+                  'Kode ini sudah tercatat hari ini. Pastikan tidak salah ketik/duplikat sebelum lanjut.',
+                  style: TextStyle(color: AppTheme.error, fontSize: 12.5),
+                ),
+              )
+            else
+              const Padding(
+                padding: EdgeInsets.only(bottom: 10),
+                child: Text(
+                  'Pastikan nomor resi berikut sudah benar sebelum disimpan:',
+                  style: TextStyle(color: Colors.grey, fontSize: 12.5),
+                ),
+              ),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF2A2A2A),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: isDuplicate ? AppTheme.error : AppTheme.accent,
+                ),
+              ),
+              child: Text(
+                code,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Ketik Ulang', style: TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(
+              isDuplicate ? 'Tetap Simpan' : 'Konfirmasi',
+              style: TextStyle(color: isDuplicate ? AppTheme.error : AppTheme.accent),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      await _processManualCode(code);
+    } else if (mounted) {
+      // Buka lagi input manual supaya user bisa langsung koreksi.
+      _showManualInput();
+    }
   }
 
   Future<void> _processManualCode(String code) async {
@@ -655,7 +751,10 @@ class _ManualInputDialog extends StatefulWidget {
 }
 
 class _ManualInputDialogState extends State<_ManualInputDialog> {
+  static const int _minCodeLength = 4;
+
   late TextEditingController _controller;
+  String? _errorText;
 
   @override
   void initState() {
@@ -667,6 +766,29 @@ class _ManualInputDialogState extends State<_ManualInputDialog> {
   void dispose() {
     _controller.dispose();
     super.dispose();
+  }
+
+  /// Validasi ringan: tolak kosong/spasi saja dan kode yang terlalu
+  /// pendek untuk jadi nomor resi/barcode asli (mencegah salah pencet
+  /// tombol konfirmasi dengan input tak sengaja).
+  String? _validate(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return 'Kode tidak boleh kosong';
+    if (trimmed.length < _minCodeLength) {
+      return 'Kode minimal $_minCodeLength karakter';
+    }
+    return null;
+  }
+
+  void _handleSubmit(String rawValue) {
+    final trimmed = rawValue.trim();
+    final error = _validate(trimmed);
+    if (error != null) {
+      setState(() => _errorText = error);
+      return;
+    }
+    Navigator.pop(context);
+    widget.onSubmitted(trimmed);
   }
 
   @override
@@ -718,9 +840,11 @@ class _ManualInputDialogState extends State<_ManualInputDialog> {
             controller: _controller,
             autofocus: true,
             style: const TextStyle(color: Colors.white, fontSize: 15),
+            textCapitalization: TextCapitalization.characters,
             decoration: InputDecoration(
               hintText: 'Contoh: 8991234567890',
               hintStyle: const TextStyle(color: Colors.grey),
+              errorText: _errorText,
               filled: true,
               fillColor: const Color(0xFF2A2A2A),
               border: OutlineInputBorder(
@@ -731,20 +855,25 @@ class _ManualInputDialogState extends State<_ManualInputDialog> {
                 borderRadius: BorderRadius.circular(10),
                 borderSide: const BorderSide(color: AppTheme.accent, width: 1.5),
               ),
+              errorBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: AppTheme.error, width: 1.5),
+              ),
               prefixIcon: const Icon(Icons.qr_code, color: Colors.grey),
               suffixIcon: IconButton(
                 icon: const Icon(Icons.clear, color: Colors.grey, size: 18),
-                onPressed: () => _controller.clear(),
+                onPressed: () => setState(() {
+                  _controller.clear();
+                  _errorText = null;
+                }),
               ),
               contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
             ),
-            textInputAction: TextInputAction.done,
-            onSubmitted: (val) {
-              if (val.trim().isNotEmpty) {
-                Navigator.pop(context);
-                widget.onSubmitted(val.trim());
-              }
+            onChanged: (_) {
+              if (_errorText != null) setState(() => _errorText = null);
             },
+            textInputAction: TextInputAction.done,
+            onSubmitted: _handleSubmit,
           ),
           const Gap(16),
           SizedBox(
@@ -758,13 +887,7 @@ class _ManualInputDialogState extends State<_ManualInputDialog> {
                   borderRadius: BorderRadius.circular(10),
                 ),
               ),
-              onPressed: () {
-                final val = _controller.text.trim();
-                if (val.isNotEmpty) {
-                  Navigator.pop(context);
-                  widget.onSubmitted(val);
-                }
-              },
+              onPressed: () => _handleSubmit(_controller.text),
               icon: const Icon(Icons.check, size: 18),
               label: const Text(
                 'Konfirmasi',
