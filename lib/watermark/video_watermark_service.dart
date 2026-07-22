@@ -1,8 +1,7 @@
 // lib/watermark/video_watermark_service.dart
 // ============================================================
-// VIDEO WATERMARK SERVICE
+// VIDEO WATERMARK SERVICE - SIMPLE & STABLE
 // ============================================================
-import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
@@ -111,44 +110,33 @@ class VideoWatermarkService {
             "-y '$outputPath'";
       }
 
-      if (kDebugMode) debugPrint('⚙️ FFmpeg command: ${command.substring(0, command.length > 200 ? 200 : command.length)}...');
+      if (kDebugMode) {
+        final preview = command.length > 200 ? '${command.substring(0, 200)}...' : command;
+        debugPrint('⚙️ FFmpeg command: $preview');
+      }
 
-      // 🔥 FIX: Gunakan executeAsync dengan callback sederhana
-      // Karena kita tidak bisa menggunakan Completer<FFmpegSession> dengan mudah,
-      // kita gunakan callback langsung
-      FFmpegSession? session;
-      final completer = Completer<String?>();
+      // 🔥 SIMPLE: Gunakan execute (tanpa callback kompleks)
+      final session = await FFmpegKit.execute(command);
+      final returnCode = await session.getReturnCode();
 
-      await FFmpegKit.executeAsync(
-        command,
-        (s) async {
-          // Selesai
-          session = s;
-          final returnCode = await s.getReturnCode();
-          if (ReturnCode.isSuccess(returnCode)) {
-            if (kDebugMode) debugPrint('✅ Video watermark success: $outputPath');
-            completer.complete(outputPath);
-          } else {
-            final logs = await s.getOutput();
-            lastError = logs ?? 'Unknown error';
-            debugPrint('❌ FFmpeg error: $lastError');
-            completer.complete(null);
-          }
-        },
-        (log) {
-          // Progress log
-          if (onProgress != null) {
-            final progress = _parseProgress(log.getMessage());
-            if (progress != null) onProgress(progress);
-          }
-        },
-        (statistics) {
-          // Statistics (opsional)
-        },
-      );
+      // Progress sederhana (simulasi)
+      if (onProgress != null) {
+        onProgress(0.3);
+        await Future.delayed(const Duration(milliseconds: 100));
+        onProgress(0.6);
+        await Future.delayed(const Duration(milliseconds: 100));
+        onProgress(1.0);
+      }
 
-      // Tunggu hasil
-      return await completer.future;
+      if (ReturnCode.isSuccess(returnCode)) {
+        if (kDebugMode) debugPrint('✅ Video watermark success: $outputPath');
+        return outputPath;
+      } else {
+        final logs = await session.getOutput();
+        lastError = logs ?? 'Unknown error';
+        debugPrint('❌ FFmpeg error: $lastError');
+        return null;
+      }
     } catch (e) {
       lastError = e.toString();
       debugPrint('❌ Error rendering video: $e');
@@ -183,19 +171,5 @@ class VideoWatermarkService {
         .replaceAll(';', '\\;')
         .replaceAll('(', '\\(')
         .replaceAll(')', '\\)');
-  }
-
-  static double? _parseProgress(String message) {
-    try {
-      final regex = RegExp(r'time=(\d{2}):(\d{2}):(\d{2}\.\d{2})');
-      final match = regex.firstMatch(message);
-      if (match != null) {
-        final hours = int.parse(match.group(1)!);
-        final minutes = int.parse(match.group(2)!);
-        final seconds = double.parse(match.group(3)!);
-        return hours * 3600 + minutes * 60 + seconds;
-      }
-    } catch (_) {}
-    return null;
   }
 }
