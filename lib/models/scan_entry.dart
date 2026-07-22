@@ -157,7 +157,6 @@ class ScanEntry {
 
   String? get videoThumbnail {
     if (videoPath != null && videoPath!.isNotEmpty) {
-      // 🔥 FIX: menggunakan path yang benar
       final dir = videoPath!.substring(0, videoPath!.lastIndexOf('.'));
       return '${dir}_thumb.jpg';
     }
