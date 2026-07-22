@@ -970,4 +970,39 @@ class _VideoPreviewDialogState extends State<_VideoPreviewDialog> {
           ),
           Container(
             padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-            decoration: BoxDecoration(color: Colors.black.withOpacity(0.8),
+            decoration: BoxDecoration(color: Colors.black.withOpacity(0.8), border: Border(top: BorderSide(color: AppTheme.surfaceLight))),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                IconButton(
+                  icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow, color: Colors.white),
+                  onPressed: () {
+                    if (_controller.value.isPlaying) {
+                      _controller.pause();
+                    } else {
+                      _controller.play();
+                    }
+                  },
+                ),
+                ElevatedButton.icon(
+                  onPressed: () async {
+                    try {
+                      final file = File(widget.videoPath);
+                      if (await file.exists()) {
+                        await Share.shareXFiles([XFile(file.path)], text: '🎥 ${widget.barcode}\n${DateFormat('dd/MM/yyyy HH:mm:ss').format(widget.timestamp)}');
+                      }
+                    } catch (e) {
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Gagal share: $e')));
+                    }
+                  },
+                  icon: const Icon(Icons.share, size: 18), label: const Text('Share Video'),
+                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accentBlue, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
