@@ -144,6 +144,12 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         }
         return;
       }
+      // Izin kamera baru saja diberikan. MobileScanner (autoStart: true)
+      // sudah mencoba start() lebih dulu saat widget mount — di titik itu
+      // izin belum ada, jadi start()-nya gagal diam-diam (tidak ada
+      // errorBuilder) dan auto-scan tidak akan pernah jalan tanpa restart
+      // manual di sini. Start ulang scanner sekarang setelah izin ada.
+      if (mounted) await _resumeScanning();
     }
     await PermissionService.requestGalleryPermission();
   }
@@ -204,7 +210,17 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
 
     if (!mounted) return;
     _scanning = started;
-    if (!started) {
+    if (started) {
+      // Redam auto-scan sesaat setelah resume. Tanpa ini, kalau barcode
+      // yang sama masih di dalam frame kamera (mis. operator baru selesai
+      // ambil foto/video lalu balik ke layar scan tanpa menggeser kotak),
+      // barcode itu langsung ke-detect ulang seketika dan bikin entry
+      // duplikat. Debounce lama (dipasang saat detect pertama) sudah
+      // pasti expired di titik ini karena jeda ambil foto/video jauh
+      // lebih lama dari _debounceDuration, jadi harus dipasang ulang di sini.
+      _debounceTimer?.cancel();
+      _debounceTimer = Timer(_debounceDuration, () {});
+    } else {
       debugPrint('⚠️ Scanner tidak berhasil di-resume, tetap dalam status berhenti.');
     }
   }
