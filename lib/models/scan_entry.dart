@@ -165,6 +165,14 @@ class ScanEntry {
 
   bool get hasVideo => videoPath != null && videoPath!.isNotEmpty;
 
+  /// Menandakan apakah record ini sudah jadi "satu paket bukti
+  /// pengiriman" yang lengkap: ada kode (barcode/manual), ada
+  /// dokumentasi visual (foto atau video), dan ada lokasi GPS.
+  /// Tidak melibatkan tanda tangan/OTP — hanya elemen yang sudah
+  /// ditangkap aplikasi ini.
+  bool get isProofComplete =>
+      value.isNotEmpty && (photoPaths.isNotEmpty || hasVideo) && hasLocation;
+
   String get videoDurationFormatted {
     if (videoDuration == null) return '--:--';
     final seconds = videoDuration!;
