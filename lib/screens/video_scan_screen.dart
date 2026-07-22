@@ -276,8 +276,22 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       // barcode, entryId sudah ada → video digabung ke record yang
       // sama (satu paket bukti pengiriman: barcode + foto + video +
       // GPS + timestamp), bukan jadi record terpisah.
+      //
+      // ✅ FIX RACE CONDITION ALAMAT: dulu pakai `.currentState`
+      // (snapshot instan). Karena reverse-geocoding adalah panggilan
+      // jaringan (Nominatim/Photon/Android Geocoder) yang bisa makan
+      // beberapa detik, watermark video sering sudah "dibakar" ke
+      // pixel duluan sebelum alamat siap — hasilnya cuma koordinat
+      // yang tampil, walau `_attachLocationUpdate()` di bawah nanti
+      // berhasil dapat alamat (tapi sudah terlambat untuk video yang
+      // sudah jadi file). Untuk aplikasi POD, alamat adalah bagian
+      // penting dari bukti pengiriman, jadi di sini kita tunggu dulu
+      // (dengan timeout wajar) sebelum entry final dibuat & video
+      // di-watermark.
       final locState = _wmSettings.gpsWatermarkEnabled
-          ? PodLocationService.instance.currentState
+          ? await PodLocationService.instance.awaitAddressReady(
+              timeout: const Duration(seconds: 6),
+            )
           : null;
 
       ScanEntry entry;
@@ -318,7 +332,9 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         await _storage.add(entry);
       }
 
-      // Update lokasi di background jika GPS aktif
+      // Safety-net: kalau timeout di atas terlampaui & alamat masih
+      // belum siap, tetap coba update record (bukan watermark video
+      // yang sudah jadi, tapi minimal data di riwayat/gallery benar).
       if (_wmSettings.gpsWatermarkEnabled) {
         unawaited(_attachLocationUpdate(entry.id));
       }
