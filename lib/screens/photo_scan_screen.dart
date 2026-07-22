@@ -464,10 +464,22 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     final outputPath =
         '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.png';
 
+    // ✅ FIX RACE CONDITION ALAMAT: dulu pakai `.currentState` (snapshot
+    // instan), sehingga watermark foto sering "kepalang dibakar" duluan
+    // sebelum reverse-geocoding (Nominatim/Photon/Android Geocoder)
+    // selesai — hasilnya watermark hanya menampilkan koordinat, padahal
+    // alamat sebenarnya berhasil didapat beberapa saat kemudian (tapi
+    // sudah terlambat karena file sudah jadi). Untuk aplikasi POD,
+    // alamat adalah bagian penting dari bukti pengiriman, jadi di sini
+    // kita tunggu (dengan timeout wajar) sampai alamat siap — tombol
+    // jepret kamera TETAP instan, yang ditunda hanya tahap render
+    // watermark (yang memang sudah menampilkan indikator "memproses").
     final locState = _wmSettings.gpsWatermarkEnabled
-        ? PodLocationService.instance.currentState
+        ? await PodLocationService.instance.awaitAddressReady(
+            timeout: const Duration(seconds: 6),
+          )
         : null;
-        
+
     final tempEntry = ScanEntry(
       id: _storage.generateId(),
       type: ScanType.image,
