@@ -210,15 +210,38 @@ class StorageService {
     if (!await source.exists()) throw FileSystemException('Source file not found: $sourcePath');
     final destDir = Directory(dirname(destPath));
     if (!await destDir.exists()) await destDir.create(recursive: true);
+
+    bool usedCopyFallback = false;
     try {
-      await source.rename(destPath);
+      try {
+        await source.rename(destPath);
+      } catch (e) {
+        debugPrint('⚠️ Rename failed, fallback copy+delete: $e');
+        usedCopyFallback = true;
+        await source.copy(destPath);
+      }
+
+      // PENTING: verifikasi dest SEBELUM menghapus source. Kalau hasil
+      // copy/rename ternyata korup/kosong, source harus tetap ada supaya
+      // tidak terjadi kehilangan data (foto/video POD).
+      await _verifyFile(destPath);
+
+      if (usedCopyFallback) {
+        await source.delete();
+      }
+
+      return destPath;
     } catch (e) {
-      debugPrint('⚠️ Rename failed, fallback copy+delete: $e');
-      await source.copy(destPath);
-      await source.delete();
+      // Bersihkan dest yang gagal verifikasi agar tidak ada file setengah
+      // jadi tertinggal. Source tidak disentuh di sini -> tetap aman.
+      try {
+        final destFile = File(destPath);
+        if (await destFile.exists()) await destFile.delete();
+      } catch (_) {}
+      rethrow;
+    } finally {
+      debugPrint('🔁 _moveFile selesai: $sourcePath -> $destPath (fallback: $usedCopyFallback)');
     }
-    await _verifyFile(destPath);
-    return destPath;
   }
 
   // ─── Delete files ──────────────────────────────────────────

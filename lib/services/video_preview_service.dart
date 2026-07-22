@@ -91,41 +91,62 @@ class VideoPreviewService {
 
     arguments.addAll(['-y', outputPath]);
 
-    // --- 7. Eksekusi FFmpeg ---
-    final session = await FFmpegKit.executeWithArguments(arguments);
-    final rc = await session.getReturnCode();
+    // --- 7. Eksekusi FFmpeg (dibungkus try-catch-finally) ---
+    // File asli (inputPath) TIDAK PERNAH dihapus di sini kecuali output
+    // sudah terverifikasi valid pada langkah 8 -> aman dari kehilangan data
+    // kalau plugin FFmpeg melempar exception (native crash, OOM, dll).
+    bool success = false;
+    try {
+      final session = await FFmpegKit.executeWithArguments(arguments);
+      final rc = await session.getReturnCode();
 
-    // --- 8. Cek hasil ---
-    if (ReturnCode.isSuccess(rc)) {
-      // Verifikasi file output
-      final outputFile = File(outputPath);
-      if (await outputFile.exists() && await outputFile.length() > 1024) {
-        // Hapus file asli hanya jika output valid, dibungkus try-catch
-        try {
-          await File(inputPath).delete();
-        } catch (e) {
-          debugPrint('Unable to delete original file: $e');
+      // --- 8. Cek hasil ---
+      if (ReturnCode.isSuccess(rc)) {
+        // Verifikasi file output
+        final outputFile = File(outputPath);
+        if (await outputFile.exists() && await outputFile.length() > 1024) {
+          success = true;
+          // Hapus file asli hanya jika output valid, dibungkus try-catch
+          try {
+            await File(inputPath).delete();
+          } catch (e) {
+            debugPrint('Unable to delete original file: $e');
+          }
+          return outputPath;
+        } else {
+          // Output rusak atau terlalu kecil
+          debugPrint('Output file corrupt or empty: $outputPath');
+          return null;
         }
-        return outputPath;
       } else {
-        // Output rusak atau terlalu kecil
-        debugPrint('Output file corrupt or empty: $outputPath');
-        if (await outputFile.exists()) {
-          await outputFile.delete(); // bersihkan
-        }
+        // --- 9. Logging kegagalan ---
+        final logs = await session.getAllLogsAsString();
+        final state = await session.getState();
+        final failStack = await session.getFailStackTrace();
+        debugPrint('FFmpeg compression failed.');
+        debugPrint('State: $state');
+        debugPrint('Return code: ${rc?.toString() ?? 'null'}');
+        debugPrint('Fail stack trace: ${failStack ?? 'none'}');
+        debugPrint('Logs:\n$logs');
         return null;
       }
-    } else {
-      // --- 9. Logging kegagalan ---
-      final logs = await session.getAllLogsAsString();
-      final state = await session.getState();
-      final failStack = await session.getFailStackTrace();
-      debugPrint('FFmpeg compression failed.');
-      debugPrint('State: $state');
-      debugPrint('Return code: ${rc?.toString() ?? 'null'}');
-      debugPrint('Fail stack trace: ${failStack ?? 'none'}');
-      debugPrint('Logs:\n$logs');
+    } catch (e, stack) {
+      // Exception dari FFmpegKit sendiri (bukan return code gagal biasa) --
+      // sebelumnya tidak tertangkap sama sekali dan bisa merambat ke caller.
+      debugPrint('❌ Exception saat kompresi video: $e\n$stack');
       return null;
+    } finally {
+      // Bersihkan output parsial/korup kapan pun proses tidak berhasil,
+      // baik karena return code gagal maupun exception di atas.
+      if (!success) {
+        try {
+          final outputFile = File(outputPath);
+          if (await outputFile.exists()) {
+            await outputFile.delete();
+            debugPrint('🗑️ Output parsial dibersihkan: $outputPath');
+          }
+        } catch (_) {}
+      }
     }
   }
 
