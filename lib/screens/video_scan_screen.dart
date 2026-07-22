@@ -22,7 +22,8 @@ import 'preview_screen.dart';
 
 class VideoScanScreen extends StatefulWidget {
   final String? barcode;
-  const VideoScanScreen({super.key, this.barcode});
+  final String? entryId;
+  const VideoScanScreen({super.key, this.barcode, this.entryId});
 
   @override
   State<VideoScanScreen> createState() => _VideoScanScreenState();
@@ -270,31 +271,52 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         }
       }
 
-      // ─── BUAT SCAN ENTRY ─────────────────────────────────────
+      // ─── GABUNGKAN KE SCAN ENTRY ─────────────────────────────
+      // Jika video ini hasil dari alur "Rekam Video" setelah scan
+      // barcode, entryId sudah ada → video digabung ke record yang
+      // sama (satu paket bukti pengiriman: barcode + foto + video +
+      // GPS + timestamp), bukan jadi record terpisah.
       final locState = _wmSettings.gpsWatermarkEnabled
           ? PodLocationService.instance.currentState
           : null;
 
-      final entry = ScanEntry(
-        id: _storage.generateId(),
-        value: widget.barcode ?? 'VIDEO_${DateTime.now().millisecondsSinceEpoch}',
-        type: ScanType.video,
-        videoPath: videoPath,
-        timestamp: DateTime.now(),
-        operatorName: _wmSettings.operatorName.isNotEmpty
-            ? _wmSettings.operatorName
-            : 'Operator',
-        companyName: _wmSettings.companyName,
-        latitude: locState?.lat,
-        longitude: locState?.lon,
-        locationName: (locState != null && locState.address.isNotEmpty)
-            ? locState.address
-            : null,
-        videoDuration: duration,
-        isManual: false,
-      );
+      ScanEntry entry;
+      final existingEntry = widget.entryId != null
+          ? await _storage.getEntry(widget.entryId!)
+          : null;
 
-      await _storage.add(entry);
+      if (existingEntry != null) {
+        entry = existingEntry.copyWith(
+          videoPath: videoPath,
+          videoDuration: duration,
+          latitude: locState?.lat ?? existingEntry.latitude,
+          longitude: locState?.lon ?? existingEntry.longitude,
+          locationName: (locState != null && locState.address.isNotEmpty)
+              ? locState.address
+              : existingEntry.locationName,
+        );
+        await _storage.update(entry);
+      } else {
+        entry = ScanEntry(
+          id: _storage.generateId(),
+          value: widget.barcode ?? 'VIDEO_${DateTime.now().millisecondsSinceEpoch}',
+          type: ScanType.video,
+          videoPath: videoPath,
+          timestamp: DateTime.now(),
+          operatorName: _wmSettings.operatorName.isNotEmpty
+              ? _wmSettings.operatorName
+              : 'Operator',
+          companyName: _wmSettings.companyName,
+          latitude: locState?.lat,
+          longitude: locState?.lon,
+          locationName: (locState != null && locState.address.isNotEmpty)
+              ? locState.address
+              : null,
+          videoDuration: duration,
+          isManual: false,
+        );
+        await _storage.add(entry);
+      }
 
       // Update lokasi di background jika GPS aktif
       if (_wmSettings.gpsWatermarkEnabled) {
