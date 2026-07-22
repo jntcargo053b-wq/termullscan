@@ -818,4 +818,287 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     try {
       final watermarkedFile = File(watermarkedPath);
       if (!await watermarkedFile.exists()) {
-        throw Exception('File watermark tidak ditemukan: $watermarkedPath
+        throw Exception('File watermark tidak ditemukan: $watermarkedPath');
+      }
+      final watermarkSize = await watermarkedFile.length();
+      if (watermarkSize == 0) {
+        throw Exception('File watermark kosong: $watermarkedPath');
+      }
+
+      final name = _resolveFileName(photoIndex);
+      final savedPath = await _storage.savePhoto(watermarkedPath, name: name);
+      if (savedPath.isEmpty) {
+        throw Exception('Gagal menyimpan file foto internal');
+      }
+      final savedFile = File(savedPath);
+      if (!await savedFile.exists()) {
+        throw Exception('File internal tidak ditemukan setelah save: $savedPath');
+      }
+      debugPrint('✅ Internal save OK: $savedPath');
+
+      if (watermarkedPath != savedPath && await File(watermarkedPath).exists()) {
+        try { await File(watermarkedPath).delete(); } catch (_) {}
+      }
+      if (pendingPath != savedPath && await File(pendingPath).exists()) {
+        try { await File(pendingPath).delete(); } catch (_) {}
+      }
+
+      if (widget.entryId != null) {
+        final barcodeEntry = await _storage.getEntry(widget.entryId!);
+        if (barcodeEntry != null) {
+          final allPaths = [..._photoPaths, savedPath];
+          final updated = barcodeEntry.copyWith(
+            imagePath: allPaths.join(','),
+          );
+          await _storage.update(updated);
+        }
+      }
+
+      final galleryOk = await _saveToGallery(savedPath);
+      if (!galleryOk) {
+        debugPrint('⚠️ Gagal ekspor ke gallery, file tetap tersimpan di internal');
+      }
+
+      if (widget.batchMode && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('📸 Foto $photoIndex berhasil (${widget.barcode ?? 'tanpa barcode'})'),
+            duration: const Duration(seconds: 1),
+            backgroundColor: AppTheme.success,
+          ),
+        );
+      }
+
+      return savedPath;
+    } catch (e, stack) {
+      debugPrint('❌ Error finalisasi foto #$photoIndex ($watermarkedPath): $e\n$stack');
+      rethrow;
+    }
+  }
+
+  // ─── Batch finish ───────────────────────────────────────────
+
+  Future<void> _finishBatch() async {
+    if (widget.entryId != null && _photoPaths.isNotEmpty) {
+      if (!mounted) return;
+      final barcodeEntry = await _storage.getEntry(widget.entryId!);
+      if (barcodeEntry != null && mounted) {
+        final updated = barcodeEntry.copyWith(
+          imagePath: _photoPaths.join(','),
+        );
+        await _storage.update(updated);
+      }
+    }
+
+    if (_photoPaths.isNotEmpty) {
+      await _showBatchSummaryAndPop();
+    } else {
+      if (mounted) Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
+    }
+  }
+
+  Future<void> _showBatchSummaryAndPop() async {
+    if (!mounted) return;
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title: Text('✅ Selesai Batch (${widget.barcode ?? ''})'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Total foto: $_photoCount'),
+            const Gap(8),
+            Wrap(
+              spacing: 4,
+              runSpacing: 4,
+              children: _photoPaths.take(10).map((path) {
+                return ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: Image.file(
+                    File(path),
+                    width: 40,
+                    height: 40,
+                    fit: BoxFit.cover,
+                    cacheWidth: 100,
+                    cacheHeight: 100,
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+    if (mounted) Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
+  }
+
+  // ─── Feedback ──────────────────────────────────────────────
+
+  void _showSuccess() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: AppTheme.success,
+        duration: const Duration(seconds: 2),
+        content: const Row(
+          children: [
+            Icon(Icons.check_circle, color: Colors.white, size: 18),
+            Gap(8),
+            Expanded(child: Text('Foto tersimpan', maxLines: 1, overflow: TextOverflow.ellipsis)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showError(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: AppTheme.error,
+        content: Text(msg),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
+  // ─── Build ──────────────────────────────────────────────────
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isProcessing = _pendingTasks > 0 || _runningTasks > 0;
+
+    return Scaffold(
+      backgroundColor: AppTheme.bg,
+      appBar: AppBar(
+        title: widget.batchMode
+            ? Text('Batch: ${widget.barcode ?? 'Foto'} (${_photoCount})')
+            : const Text('Ambil Foto'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            if (widget.batchMode && _photoCount > 0) {
+              showDialog(
+                context: context,
+                builder: (_) => AlertDialog(
+                  title: const Text('Keluar Batch?'),
+                  content: Text('${_photoCount} foto sudah diambil. Yakin keluar?'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Lanjutkan'),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        if (mounted) Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
+                      },
+                      child: const Text('Keluar'),
+                    ),
+                  ],
+                ),
+              );
+            } else {
+              Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
+            }
+          },
+        ),
+        actions: [
+          if (widget.batchMode && _photoCount > 0)
+            IconButton(
+              icon: const Icon(Icons.done_all, color: Colors.green),
+              onPressed: _finishBatch,
+              tooltip: 'Selesai Batch',
+            ),
+          if (_pendingTasks > 0)
+            IconButton(
+              icon: const Icon(Icons.cancel, color: AppTheme.error),
+              onPressed: () {
+                _taskQueue.cancelAllPending();
+                setState(() {});
+              },
+              tooltip: 'Batalkan semua antrian',
+            ),
+          ListenableBuilder(
+            listenable: _wmSettings,
+            builder: (context, _) {
+              return IconButton(
+                onPressed: _openWatermarkSettings,
+                icon: Stack(
+                  children: [
+                    const Icon(Icons.tune, color: Colors.white),
+                    if (_wmSettings.operatorName.isNotEmpty || _wmSettings.hasLogo)
+                      const Positioned(
+                        right: 0,
+                        top: 0,
+                        child: Icon(Icons.circle, size: 8, color: AppTheme.accent),
+                      ),
+                  ],
+                ),
+                tooltip: 'Pengaturan Watermark',
+              );
+            },
+          ),
+        ],
+      ),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _CameraIconWidget(batchMode: widget.batchMode, photoCount: _photoCount),
+              const Gap(24),
+              _HeaderWidget(batchMode: widget.batchMode, photoCount: _photoCount, barcode: widget.barcode),
+              if (widget.batchMode && _photoPaths.isNotEmpty)
+                _PhotoThumbnailsWidget(photoPaths: _photoPaths),
+              const Gap(48),
+              _ActionButtonsWidget(
+                onTakePhoto: _takePhoto,
+                onPickGallery: _pickFromGallery,
+                isSaving: _isSaving,
+                isCapturing: _isCapturing,
+                isProcessing: isProcessing,
+              ),
+              if (widget.batchMode)
+                _BatchFinishButtonWidget(photoCount: _photoCount, onFinish: _finishBatch),
+              const Gap(32),
+              _InfoBoxWidget(batchMode: widget.batchMode),
+              if (_isSaving || isProcessing)
+                Padding(
+                  padding: const EdgeInsets.only(top: 16),
+                  child: LinearProgressIndicator(
+                    backgroundColor: Colors.grey[800],
+                    valueColor: AlwaysStoppedAnimation(AppTheme.accentOrange),
+                  ),
+                ),
+              if (_statusText.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(_statusText, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                ),
+              if (_pendingTasks > 0)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text('$_pendingTasks foto dalam antrian...', style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                ),
+              if (_runningTasks > 0)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text('$_runningTasks foto sedang diproses...', style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
