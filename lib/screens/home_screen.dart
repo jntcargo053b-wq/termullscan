@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:gap/gap.dart';
 import 'package:flutter_animate/flutter_animate.dart';
-import 'package:file_picker/file_picker.dart'; // ← tambahkan dependency
+import 'package:file_picker/file_picker.dart';
 import '../services/storage_service.dart';
 import '../theme/app_theme.dart';
 import 'barcode_scan_screen.dart';
@@ -69,7 +69,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _restore() async {
-    // Pilih file ZIP
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['zip'],
@@ -88,7 +87,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         );
       }
-      if (success) await _loadData(); // refresh data
+      if (success) await _loadData();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -169,10 +168,15 @@ class _HomeScreenState extends State<HomeScreen> {
                       title: 'Ambil Foto',
                       subtitle: 'Foto langsung dengan watermark',
                       onTap: () async {
+                        // 🔥 FIXED: PhotoScanScreen butuh parameter
                         final result = await Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) => const PhotoScanScreen(),
+                            builder: (_) => PhotoScanScreen(
+                              barcode: null,
+                              batchMode: false,
+                              entryId: null,
+                            ),
                           ),
                         );
                         if (result != null) await _loadData();
