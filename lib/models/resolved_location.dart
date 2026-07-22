@@ -10,7 +10,7 @@
 
 class LocationSuggestion {
   final String label;
-  final double? distanceMeters; // null jika dari Nominatim (tanpa jarak eksplisit)
+  final double? distanceMeters;
   final String source; // 'poi' | 'address' | 'admin'
 
   const LocationSuggestion({
@@ -48,38 +48,48 @@ class LocationSuggestion {
 
 class ResolvedLocation {
   /// Nama tempat/POI paling spesifik, mis. "Alfamart Pondok Aren".
-  /// Null jika tidak ada POI yang cukup dekat/relevan.
   final String? primaryLabel;
 
-  /// Alamat jalan + area administratif, mis.
-  /// "Jl. Raya Pondok Aren No.12, Pondok Aren, Kota Tangerang Selatan".
-  /// Selalu non-empty (fallback DMS jika semua gagal).
+  /// Alamat jalan + area administratif.
   final String addressLine;
 
-  /// Daftar kandidat label tambahan untuk dipilih user,
-  /// sudah dedup & sort by distance (POI dulu, lalu address/admin).
+  /// Daftar kandidat label tambahan.
   final List<LocationSuggestion> suggestions;
+
+  // ─── TAMBAHKAN FIELD UNTUK KOMPATIBILITAS ────────────────────
+  final double? latitude;
+  final double? longitude;
+  final String? city;
+  final String? province;
+  final String? country;
+  final String? postalCode;
+  final String? street;
 
   const ResolvedLocation({
     required this.addressLine,
     this.primaryLabel,
     this.suggestions = const [],
+    this.latitude,
+    this.longitude,
+    this.city,
+    this.province,
+    this.country,
+    this.postalCode,
+    this.street,
   });
 
-  /// Empty location (fallback)
+  // ─── FACTORY ──────────────────────────────────────────────────
+
   factory ResolvedLocation.empty() => const ResolvedLocation(
     addressLine: 'Lokasi tidak tersedia',
   );
 
-  /// DMS fallback
   factory ResolvedLocation.dms(String dms) => ResolvedLocation(
     addressLine: dms,
   );
 
-  /// String tampilan utama — backward-compatible dengan field
-  /// `address` (String) yang dipakai watermark & UI lama.
-  /// Format: "Primary, AddressLine" jika primaryLabel ada,
-  /// selain itu cuma addressLine.
+  // ─── GETTERS ──────────────────────────────────────────────────
+
   String get display {
     if (primaryLabel != null &&
         primaryLabel!.isNotEmpty &&
@@ -89,7 +99,6 @@ class ResolvedLocation {
     return addressLine;
   }
 
-  /// Short display untuk preview (max 40 karakter)
   String get shortDisplay {
     final full = display;
     if (full.length > 40) {
@@ -98,24 +107,58 @@ class ResolvedLocation {
     return full;
   }
 
+  String get fullAddress {
+    final parts = <String>[];
+    if (street != null && street!.isNotEmpty) parts.add(street!);
+    if (city != null && city!.isNotEmpty) parts.add(city!);
+    if (province != null && province!.isNotEmpty) parts.add(province!);
+    if (country != null && country!.isNotEmpty) parts.add(country!);
+    return parts.join(', ');
+  }
+
   bool get isDmsFallback => addressLine.startsWith('GPS:');
   bool get isEmpty => addressLine == 'Lokasi tidak tersedia';
   bool get hasPrimaryLabel => primaryLabel != null && primaryLabel!.isNotEmpty;
+
+  // ─── COPYWITH ──────────────────────────────────────────────────
 
   ResolvedLocation copyWith({
     String? primaryLabel,
     String? addressLine,
     List<LocationSuggestion>? suggestions,
+    double? latitude,
+    double? longitude,
+    String? city,
+    String? province,
+    String? country,
+    String? postalCode,
+    String? street,
   }) => ResolvedLocation(
     primaryLabel: primaryLabel ?? this.primaryLabel,
     addressLine: addressLine ?? this.addressLine,
     suggestions: suggestions ?? this.suggestions,
+    latitude: latitude ?? this.latitude,
+    longitude: longitude ?? this.longitude,
+    city: city ?? this.city,
+    province: province ?? this.province,
+    country: country ?? this.country,
+    postalCode: postalCode ?? this.postalCode,
+    street: street ?? this.street,
   );
+
+  // ─── JSON ─────────────────────────────────────────────────────
 
   Map<String, dynamic> toJson() => {
         'primaryLabel': primaryLabel,
         'addressLine': addressLine,
         'suggestions': suggestions.map((s) => s.toJson()).toList(),
+        'latitude': latitude,
+        'longitude': longitude,
+        'city': city,
+        'province': province,
+        'country': country,
+        'postalCode': postalCode,
+        'street': street,
       };
 
   factory ResolvedLocation.fromJson(Map<String, dynamic> json) =>
@@ -125,7 +168,16 @@ class ResolvedLocation {
         suggestions: (json['suggestions'] as List<dynamic>? ?? [])
             .map((e) => LocationSuggestion.fromJson(e as Map<String, dynamic>))
             .toList(),
+        latitude: (json['latitude'] as num?)?.toDouble(),
+        longitude: (json['longitude'] as num?)?.toDouble(),
+        city: json['city'] as String?,
+        province: json['province'] as String?,
+        country: json['country'] as String?,
+        postalCode: json['postalCode'] as String?,
+        street: json['street'] as String?,
       );
+
+  // ─── EQUALITY ─────────────────────────────────────────────────
 
   @override
   String toString() {
