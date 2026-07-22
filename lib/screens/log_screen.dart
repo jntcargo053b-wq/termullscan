@@ -175,8 +175,8 @@ class _LogScreenState extends State<LogScreen> {
 
   // ─── PREVIEW FOTO ──────────────────────────────────────────
   void _showPhotoPreview(ScanEntry entry, {int initialIndex = 0}) {
-    final List<String> paths = entry.photoPaths ?? [];
-    if (paths.isEmpty && entry.type == ScanType.photo && entry.value.isNotEmpty) {
+    final List<String> paths = entry.photoPaths; // 🔥 FIX: sekarang getter
+    if (paths.isEmpty && entry.type == ScanType.image && entry.value.isNotEmpty) {
       paths.add(entry.value);
     }
     if (paths.isEmpty) {
@@ -213,9 +213,8 @@ class _LogScreenState extends State<LogScreen> {
   void _showVideoPreview(ScanEntry entry) {
     final path = entry.videoPath;
     if (path == null || path.isEmpty || !File(path).existsSync()) {
-      final message = entry.videoLocalDeleted
-          ? 'Video ini sudah dipindahkan ke Galeri untuk menghemat penyimpanan. Buka lewat aplikasi Galeri.'
-          : 'File video tidak ditemukan';
+      // 🔥 FIX: videoLocalDeleted tidak ada, cek file existence
+      final message = 'File video tidak ditemukan. Mungkin sudah dipindahkan ke Galeri.';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(message)),
       );
@@ -245,7 +244,7 @@ class _LogScreenState extends State<LogScreen> {
     }
 
     final selectedEntries = _filteredEntries
-        .where((e) => _selectedIds.contains(e.id) && e.type == ScanType.photo)
+        .where((e) => _selectedIds.contains(e.id) && e.type == ScanType.image)
         .toList();
 
     if (selectedEntries.isEmpty) {
@@ -260,13 +259,13 @@ class _LogScreenState extends State<LogScreen> {
 
     final List<XFile> files = [];
     for (final entry in selectedEntries) {
-      final paths = entry.photoPaths ?? [];
+      final paths = entry.photoPaths; // 🔥 FIX: sekarang getter
       if (paths.isNotEmpty) {
         for (final path in paths) {
           final file = File(path);
           if (await file.exists()) files.add(XFile(file.path));
         }
-      } else if (entry.type == ScanType.photo && entry.value.isNotEmpty) {
+      } else if (entry.type == ScanType.image && entry.value.isNotEmpty) {
         final file = File(entry.value);
         if (await file.exists()) files.add(XFile(file.path));
       }
@@ -364,8 +363,8 @@ class _LogScreenState extends State<LogScreen> {
     );
     if (confirm == true) {
       await _storage.delete(entry.id);
-      if (entry.type == ScanType.photo) {
-        final paths = entry.photoPaths ?? [];
+      if (entry.type == ScanType.image) {
+        final paths = entry.photoPaths; // 🔥 FIX: sekarang getter
         if (paths.isNotEmpty) {
           for (final path in paths) {
             try { final f = File(path); if (await f.exists()) await f.delete(); } catch (_) {}
@@ -377,8 +376,9 @@ class _LogScreenState extends State<LogScreen> {
         if (entry.videoPath != null) {
           try { final f = File(entry.videoPath!); if (await f.exists()) await f.delete(); } catch (_) {}
         }
-        if (entry.videoThumbnail != null) {
-          try { final f = File(entry.videoThumbnail!); if (await f.exists()) await f.delete(); } catch (_) {}
+        final thumb = entry.videoThumbnail; // 🔥 FIX: sekarang getter
+        if (thumb != null) {
+          try { final f = File(thumb); if (await f.exists()) await f.delete(); } catch (_) {}
         }
       }
       _selectedIds.remove(entry.id);
@@ -411,8 +411,8 @@ class _LogScreenState extends State<LogScreen> {
       for (final id in _selectedIds) {
         final entry = _filteredEntries.firstWhereOrNull((e) => e.id == id);
         if (entry != null) {
-          if (entry.type == ScanType.photo) {
-            final paths = entry.photoPaths ?? [];
+          if (entry.type == ScanType.image) {
+            final paths = entry.photoPaths; // 🔥 FIX: sekarang getter
             if (paths.isNotEmpty) {
               for (final path in paths) {
                 try { final f = File(path); if (await f.exists()) await f.delete(); } catch (_) {}
@@ -424,8 +424,9 @@ class _LogScreenState extends State<LogScreen> {
             if (entry.videoPath != null) {
               try { final f = File(entry.videoPath!); if (await f.exists()) await f.delete(); } catch (_) {}
             }
-            if (entry.videoThumbnail != null) {
-              try { final f = File(entry.videoThumbnail!); if (await f.exists()) await f.delete(); } catch (_) {}
+            final thumb = entry.videoThumbnail; // 🔥 FIX: sekarang getter
+            if (thumb != null) {
+              try { final f = File(thumb); if (await f.exists()) await f.delete(); } catch (_) {}
             }
           }
         }
@@ -632,13 +633,23 @@ class _LogItem extends StatelessWidget {
     required this.dateFormat,
   });
 
+  String _formatDuration(int seconds) {
+    final hours = seconds ~/ 3600;
+    final minutes = (seconds % 3600) ~/ 60;
+    final secs = seconds % 60;
+    if (hours > 0) {
+      return '$hours:${minutes.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
+    }
+    return '${minutes.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
+  }
+
   @override
   Widget build(BuildContext context) {
-    final isPhoto = entry.type == ScanType.photo;
+    final isPhoto = entry.type == ScanType.image;
     final isVideo = entry.type == ScanType.video;
     final icon = isVideo ? Icons.videocam : isPhoto ? Icons.photo_camera : Icons.qr_code;
     final avatarColor = isVideo ? AppTheme.error : isPhoto ? AppTheme.accentBlue : AppTheme.accent;
-    final hasPhoto = entry.photoPaths != null && entry.photoPaths!.isNotEmpty;
+    final hasPhoto = entry.photoPaths.isNotEmpty; // 🔥 FIX: sekarang getter
     final hasVideo = entry.videoPath != null && entry.videoPath!.isNotEmpty;
 
     final typeLabel = isVideo ? 'Video' : isPhoto ? 'Foto' : 'Barcode';
@@ -679,7 +690,7 @@ class _LogItem extends StatelessWidget {
                 if (isVideo)
                   FutureBuilder<Uint8List?>(
                     future: ThumbnailCacheService.instance.getThumbnail(
-                      existingThumbnailPath: entry.videoThumbnail,
+                      existingThumbnailPath: entry.videoThumbnail, // 🔥 FIX: sekarang getter
                       videoPath: entry.videoPath,
                     ),
                     builder: (context, snapshot) {
@@ -712,18 +723,18 @@ class _LogItem extends StatelessWidget {
               const Gap(6),
               Icon(Icons.timer, size: 14, color: Colors.grey),
               const Gap(2),
-              Text(entry.videoDurationFormatted, style: const TextStyle(color: Colors.grey, fontSize: 11)),
+              Text(_formatDuration(entry.videoDuration!), style: const TextStyle(color: Colors.grey, fontSize: 11)),
             ],
             if (hasPhoto) ...[
               const Gap(6),
               Icon(Icons.photo_library, size: 16, color: AppTheme.accent),
             ],
-            if (entry.photoPaths != null && entry.photoPaths!.length > 1) ...[
+            if (entry.photoPaths.length > 1) ...[ // 🔥 FIX: sekarang getter
               const Gap(2),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
                 decoration: BoxDecoration(color: AppTheme.accent.withOpacity(0.2), borderRadius: BorderRadius.circular(4)),
-                child: Text('${entry.photoPaths!.length}', style: const TextStyle(color: AppTheme.accent, fontSize: 9, fontWeight: FontWeight.w700)),
+                child: Text('${entry.photoPaths.length}', style: const TextStyle(color: AppTheme.accent, fontSize: 9, fontWeight: FontWeight.w700)),
               ),
             ],
           ],
@@ -908,101 +919,4 @@ class _VideoPreviewDialogState extends State<_VideoPreviewDialog> {
     super.initState();
     _controller = VideoPlayerController.file(File(widget.videoPath))
       ..initialize().then((_) {
-        if (mounted) setState(() => _initialized = true);
-      });
-    _controller.addListener(() {
-      if (mounted && _controller.value.isPlaying != _isPlaying) {
-        setState(() => _isPlaying = _controller.value.isPlaying);
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Dialog(
-      backgroundColor: Colors.black,
-      insetPadding: const EdgeInsets.all(8),
-      child: Column(
-        mainAxisSize: MainAxisSize.max,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(color: Colors.black.withOpacity(0.8), border: Border(bottom: BorderSide(color: AppTheme.surfaceLight))),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(widget.barcode, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14), maxLines: 1, overflow: TextOverflow.ellipsis),
-                      Text(DateFormat('dd/MM/yyyy HH:mm:ss').format(widget.timestamp), style: const TextStyle(color: Colors.grey, fontSize: 11)),
-                    ],
-                  ),
-                ),
-                IconButton(icon: const Icon(Icons.close, color: Colors.white), onPressed: () => Navigator.pop(context)),
-              ],
-            ),
-          ),
-          Expanded(
-            child: _initialized
-                ? GestureDetector(
-                    onTap: () {
-                      if (_controller.value.isPlaying) {
-                        _controller.pause();
-                      } else {
-                        _controller.play();
-                      }
-                    },
-                    child: Center(
-                      child: AspectRatio(
-                        aspectRatio: _controller.value.aspectRatio,
-                        child: VideoPlayer(_controller),
-                      ),
-                    ),
-                  )
-                : const Center(child: CircularProgressIndicator()),
-          ),
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-            decoration: BoxDecoration(color: Colors.black.withOpacity(0.8), border: Border(top: BorderSide(color: AppTheme.surfaceLight))),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                IconButton(
-                  icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow, color: Colors.white),
-                  onPressed: () {
-                    if (_controller.value.isPlaying) {
-                      _controller.pause();
-                    } else {
-                      _controller.play();
-                    }
-                  },
-                ),
-                ElevatedButton.icon(
-                  onPressed: () async {
-                    try {
-                      final file = File(widget.videoPath);
-                      if (await file.exists()) {
-                        await Share.shareXFiles([XFile(file.path)], text: '🎥 ${widget.barcode}\n${DateFormat('dd/MM/yyyy HH:mm:ss').format(widget.timestamp)}');
-                      }
-                    } catch (e) {
-                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Gagal share: $e')));
-                    }
-                  },
-                  icon: const Icon(Icons.share, size: 18), label: const Text('Share Video'),
-                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accentBlue, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
+        if (m
