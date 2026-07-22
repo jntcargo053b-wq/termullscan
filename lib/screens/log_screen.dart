@@ -734,6 +734,20 @@ class _LogItem extends StatelessWidget {
               ? Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    if (entry.isProofComplete)
+                      Container(
+                        margin: const EdgeInsets.only(right: 4),
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(color: Colors.green.withOpacity(0.2), borderRadius: BorderRadius.circular(4), border: Border.all(color: Colors.green.withOpacity(0.4))),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.verified, size: 10, color: Colors.green),
+                            SizedBox(width: 3),
+                            Text('Lengkap', style: TextStyle(color: Colors.green, fontSize: 9, fontWeight: FontWeight.w700)),
+                          ],
+                        ),
+                      ),
                     if (entry.isManual)
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
