@@ -1,48 +1,24 @@
-// lib/screens/video_scan_screen.dart
-// VERSI PRODUCTION – DENGAN PERBAIKAN WATERMARK DAN HANDLING ERROR
-
+// ============================================================
+// lib/screens/video_scan_screen.dart (FIXED)
+// ============================================================
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+import 'package:flutter/services.dart';
 import 'package:gap/gap.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:saver_gallery/saver_gallery.dart';
-import 'package:video_player/video_player.dart';
-import 'package:video_thumbnail/video_thumbnail.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:provider/provider.dart';
+import 'package:saver_gallery/saver_gallery.dart';
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
 import '../services/permission_service.dart';
-import '../services/task_queue.dart';
-import '../services/background/video_processing_service.dart';
 import '../services/pod_location_service.dart';
-import '../watermark/watermark_settings.dart';
-import '../watermark/watermark_style.dart';
-import '../services/watermark/video_watermark_service.dart';
 import '../theme/app_theme.dart';
-import '../utils/file_helper.dart';
-import 'preview_screen.dart';
+import '../watermark/watermark_settings.dart';
+import '../watermark/video_watermark_service.dart';
 import 'watermark_settings_sheet.dart';
-
-/// Hasil dari _prepareWatermarkedVideo: file video yang SUDAH siap
-/// (ber-watermark, atau raw jika watermark gagal) untuk ditampilkan
-/// langsung di preview dan disimpan apa adanya saat "Simpan" ditekan.
-class _VideoPrepResult {
-  final String path; // file final (watermark / raw) — inilah yang ditampilkan di preview & disimpan
-  final String originalPath; // file rekaman asli, dihapus setelah selesai
-  final int durationSeconds;
-  final bool watermarked;
-
-  const _VideoPrepResult({
-    required this.path,
-    required this.originalPath,
-    required this.durationSeconds,
-    required this.watermarked,
-  });
-}
+import 'preview_screen.dart';
 
 class VideoScanScreen extends StatefulWidget {
   final String? barcode;
@@ -53,113 +29,443 @@ class VideoScanScreen extends StatefulWidget {
 }
 
 class _VideoScanScreenState extends State<VideoScanScreen> {
-  final ImagePicker _picker = ImagePicker();
   final StorageService _storage = StorageService();
+  final WatermarkSettings _wmSettings = WatermarkSettings();
+  final ImagePicker _picker = ImagePicker();
 
-  late final TaskQueue _taskQueue = TaskQueue(
-    maxWorkers: 1,
-    onActiveStart: () => unawaited(VideoProcessingService.markBusy(
-      title: 'TERMULScan',
-      text: 'Menyiapkan render video...',
-    )),
-    onActiveEnd: () => unawaited(VideoProcessingService.markIdle()),
-  );
-  int _pendingTasks = 0;
-  int _runningTasks = 0;
-
-  bool _isSaving = false;
+  bool _isRecording = false;
   bool _isProcessing = false;
-  String _statusText = '';
-  double _progress = 0.0;
+  String? _videoPath;
+  int? _videoDuration;
+  String? _thumbnailPath;
+  bool _hasGalleryPermission = false;
 
-  static const int _maxVideoSizeBytes = 50 * 1024 * 1024;
-  static const int _minVideoDurationSeconds = 3;
-
-  // ─── LOCATION STATE ──────────────────────────────────────────
-  bool _locationAcquired = false;
+  // ─── LIFECYCLE ──────────────────────────────────────────────
 
   @override
   void initState() {
     super.initState();
-    PermissionService.requestGalleryPermission();
-    unawaited(VideoProcessingService.requestPermissions());
-    _taskQueue.statusStream.listen((task) {
-      if (!mounted) return;
-      setState(() {
-        _pendingTasks = _taskQueue.pendingCount;
-        _runningTasks = _taskQueue.runningCount;
-        _isProcessing = _pendingTasks > 0 || _runningTasks > 0;
-      });
-    });
-
-    // Inisialisasi lokasi jika diaktifkan di pengaturan
-    _initLocation();
-  }
-
-  Future<void> _initLocation() async {
-    try {
-      final settings = context.read<WatermarkSettings>();
-      if (settings.gpsWatermarkEnabled) {
-        await PodLocationService.instance.acquireForCapture();
-        _locationAcquired = true;
-        debugPrint('📍 Lokasi GPS diaktifkan untuk video');
-      }
-    } catch (e) {
-      debugPrint('⚠️ Gagal menginisialisasi lokasi: $e');
-      _locationAcquired = false;
+    _requestPermissions();
+    if (_wmSettings.gpsWatermarkEnabled) {
+      unawaited(PodLocationService.instance.acquireForCapture());
     }
   }
 
   @override
   void dispose() {
-    _taskQueue.dispose();
-    // Lepaskan lokasi jika sudah diakuisisi
-    try {
-      final settings = context.read<WatermarkSettings>();
-      if (settings.gpsWatermarkEnabled && _locationAcquired) {
-        PodLocationService.instance.releaseAfterCapture();
-        debugPrint('📍 Lokasi GPS dilepaskan');
-      }
-    } catch (_) {}
+    if (_wmSettings.gpsWatermarkEnabled) {
+      PodLocationService.instance.releaseAfterCapture();
+    }
     super.dispose();
   }
 
-  void _safeSetState(VoidCallback fn) {
-    if (!mounted) return;
-    setState(fn);
+  // ─── PERMISSIONS ────────────────────────────────────────────
+
+  Future<void> _requestPermissions() async {
+    final cameraStatus = await Permission.camera.status;
+    if (!cameraStatus.isGranted) {
+      final result = await Permission.camera.request();
+      if (!mounted) return;
+      if (!result.isGranted) {
+        if (result.isPermanentlyDenied) {
+          _showPermissionDeniedDialog(
+            'Izin Kamera',
+            'Aplikasi membutuhkan kamera untuk merekam video.',
+          );
+        }
+        return;
+      }
+    }
+
+    final storageStatus = await Permission.storage.status;
+    if (!storageStatus.isGranted && !storageStatus.isPermanentlyDenied) {
+      await Permission.storage.request();
+    }
+
+    final galleryStatus = await Permission.manageExternalStorage.status;
+    if (!galleryStatus.isGranted && !galleryStatus.isPermanentlyDenied) {
+      await Permission.manageExternalStorage.request();
+    }
+
+    if (mounted) {
+      setState(() {
+        _hasGalleryPermission = Permission.storage.isGranted ||
+            Permission.manageExternalStorage.isGranted;
+      });
+    }
   }
 
-  // ─── PERMISSION ─────────────────────────────────────────────
-  Future<bool> _ensureCameraPermission() async {
-    final status = await Permission.camera.status;
-    if (status.isGranted) return true;
-    if (status.isPermanentlyDenied) {
+  void _showPermissionDeniedDialog(String title, String message) {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Tutup'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              openAppSettings();
+            },
+            child: const Text('Buka Pengaturan'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ─── RECORD VIDEO ───────────────────────────────────────────
+
+  Future<void> _recordVideo() async {
+    if (_isRecording || _isProcessing) return;
+
+    try {
+      setState(() {
+        _isRecording = true;
+        _isProcessing = true;
+      });
+
+      final xfile = await _picker.pickVideo(
+        source: ImageSource.camera,
+        maxDuration: const Duration(minutes: 5),
+      );
+
+      if (!mounted) {
+        setState(() => _isProcessing = false);
+        return;
+      }
+
+      if (xfile != null) {
+        final savedPath = await _saveVideo(xfile.path);
+        if (savedPath != null) {
+          setState(() {
+            _videoPath = savedPath;
+            _isRecording = false;
+          });
+          await _processVideo(savedPath);
+        } else {
+          setState(() => _isProcessing = false);
+        }
+      } else {
+        setState(() => _isProcessing = false);
+      }
+    } catch (e) {
+      debugPrint('❌ Error recording video: $e');
+      if (mounted) {
+        setState(() => _isProcessing = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Gagal merekam video: $e')),
+        );
+      }
+    }
+  }
+
+  // ─── PICK FROM GALLERY ─────────────────────────────────────
+
+  Future<void> _pickFromGallery() async {
+    if (_isProcessing) return;
+
+    try {
+      setState(() => _isProcessing = true);
+
+      final xfile = await _picker.pickVideo(
+        source: ImageSource.gallery,
+      );
+
+      if (!mounted) {
+        setState(() => _isProcessing = false);
+        return;
+      }
+
+      if (xfile != null) {
+        final savedPath = await _saveVideo(xfile.path);
+        if (savedPath != null) {
+          setState(() {
+            _videoPath = savedPath;
+          });
+          await _processVideo(savedPath);
+        } else {
+          setState(() => _isProcessing = false);
+        }
+      } else {
+        setState(() => _isProcessing = false);
+      }
+    } catch (e) {
+      debugPrint('❌ Error picking video: $e');
+      if (mounted) {
+        setState(() => _isProcessing = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Gagal memilih video: $e')),
+        );
+      }
+    }
+  }
+
+  // ─── SAVE VIDEO ─────────────────────────────────────────────
+
+  Future<String?> _saveVideo(String sourcePath) async {
+    try {
+      final file = File(sourcePath);
+      if (!await file.exists()) {
+        throw Exception('File video tidak ditemukan');
+      }
+
+      final size = await file.length();
+      if (size == 0) {
+        throw Exception('File video kosong');
+      }
+
+      final name = widget.barcode ?? 'video_${DateTime.now().millisecondsSinceEpoch}';
+      final savedPath = await _storage.saveVideo(sourcePath, name: name);
+
+      debugPrint('✅ Video saved: $savedPath');
+      return savedPath;
+    } catch (e) {
+      debugPrint('❌ Error saving video: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Izin kamera ditolak permanen. Buka pengaturan.')),
+          SnackBar(content: Text('Gagal menyimpan video: $e')),
         );
-        await openAppSettings();
       }
-      return false;
+      return null;
     }
-    final result = await Permission.camera.request();
-    if (result.isGranted) return true;
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Izin kamera diperlukan untuk merekam video')),
-      );
-    }
-    return false;
   }
 
-  // ─── PREVIEW HELPER ─────────────────────────────────────────
-  Future<String?> _showPreview(XFile file, MediaType type) async {
+  // ─── PROCESS VIDEO ──────────────────────────────────────────
+
+  Future<void> _processVideo(String videoPath) async {
+    try {
+      setState(() => _isProcessing = true);
+
+      // Dapatkan durasi
+      final duration = await _getVideoDuration(videoPath);
+      if (duration != null) {
+        setState(() => _videoDuration = duration);
+      }
+
+      // Buat thumbnail
+      final thumbnailPath = await _generateThumbnail(videoPath);
+      if (thumbnailPath != null) {
+        setState(() => _thumbnailPath = thumbnailPath);
+      }
+
+      // Simpan ke gallery
+      if (_hasGalleryPermission) {
+        final saved = await SaverGallery.saveFile(
+          filePath: videoPath,
+          fileName: videoPath.split('/').last,
+          androidRelativePath: 'Movies/TERMULScan',
+          skipIfExists: false,
+        );
+        if (saved.isSuccess) {
+          debugPrint('✅ Video saved to gallery');
+        }
+      }
+
+      // ─── BUAT SCAN ENTRY ─────────────────────────────────────
+      // 🔥 FIXED: tambah operatorName, hapus videoThumbnail
+      final locState = _wmSettings.gpsWatermarkEnabled
+          ? PodLocationService.instance.currentState
+          : null;
+
+      final entry = ScanEntry(
+        id: _storage.generateId(),
+        value: widget.barcode ?? 'VIDEO_${DateTime.now().millisecondsSinceEpoch}',
+        type: ScanType.video,
+        videoPath: videoPath,
+        timestamp: DateTime.now(),
+        operatorName: _wmSettings.operatorName.isNotEmpty
+            ? _wmSettings.operatorName
+            : 'Operator', // ← WAJIB!
+        companyName: _wmSettings.companyName,
+        latitude: locState?.lat,
+        longitude: locState?.lon,
+        locationName: (locState != null && locState.address.isNotEmpty)
+            ? locState.address
+            : null,
+        videoDuration: duration,
+        // videoThumbnail: thumbnailPath, // ← HAPUS! (akan di-generate otomatis)
+        isManual: false,
+      );
+
+      await _storage.add(entry);
+
+      // Update lokasi di background jika GPS aktif
+      if (_wmSettings.gpsWatermarkEnabled) {
+        unawaited(_attachLocationUpdate(entry.id));
+      }
+
+      // Render watermark ke video
+      await _renderWatermark(videoPath, entry);
+
+      if (!mounted) return;
+
+      // Tampilkan preview
+      final result = await _showPreview(videoPath);
+
+      if (result == 'save') {
+        setState(() => _isProcessing = false);
+        Navigator.pop(context, {'path': videoPath, 'duration': duration});
+      } else if (result == 'retake') {
+        // Hapus video
+        try {
+          final file = File(videoPath);
+          if (await file.exists()) await file.delete();
+        } catch (_) {}
+        setState(() {
+          _videoPath = null;
+          _videoDuration = null;
+          _thumbnailPath = null;
+          _isProcessing = false;
+        });
+      } else {
+        setState(() => _isProcessing = false);
+      }
+    } catch (e) {
+      debugPrint('❌ Error processing video: $e');
+      if (mounted) {
+        setState(() => _isProcessing = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Gagal memproses video: $e')),
+        );
+      }
+    }
+  }
+
+  // ─── GET VIDEO DURATION ─────────────────────────────────────
+
+  Future<int?> _getVideoDuration(String videoPath) async {
+    try {
+      final file = File(videoPath);
+      if (!await file.exists()) return null;
+
+      // Gunakan FFmpeg untuk mendapatkan durasi
+      final result = await Process.run(
+        'ffprobe',
+        [
+          '-v',
+          'error',
+          '-show_entries',
+          'format=duration',
+          '-of',
+          'default=noprint_wrappers=1:nokey=1',
+          videoPath,
+        ],
+      );
+
+      if (result.exitCode == 0) {
+        final durationStr = result.stdout.toString().trim();
+        if (durationStr.isNotEmpty) {
+          return (double.tryParse(durationStr)?.ceil()) ?? null;
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ Error getting video duration: $e');
+    }
+    return null;
+  }
+
+  // ─── GENERATE THUMBNAIL ─────────────────────────────────────
+
+  Future<String?> _generateThumbnail(String videoPath) async {
+    try {
+      final dir = File(videoPath).parent.path;
+      final baseName = videoPath.split('/').last.split('.').first;
+      final thumbPath = '$dir/${baseName}_thumb.jpg';
+
+      // Gunakan FFmpeg untuk generate thumbnail
+      final result = await Process.run(
+        'ffmpeg',
+        [
+          '-i',
+          videoPath,
+          '-ss',
+          '00:00:01',
+          '-vframes',
+          '1',
+          '-q:v',
+          '2',
+          thumbPath,
+          '-y',
+        ],
+      );
+
+      if (result.exitCode == 0 && await File(thumbPath).exists()) {
+        return thumbPath;
+      }
+    } catch (e) {
+      debugPrint('⚠️ Error generating thumbnail: $e');
+    }
+    return null;
+  }
+
+  // ─── RENDER WATERMARK ──────────────────────────────────────
+
+  Future<void> _renderWatermark(String videoPath, ScanEntry entry) async {
+    try {
+      final outputDir = await getTemporaryDirectory();
+      final outputPath = '${outputDir.path}/watermarked_${DateTime.now().millisecondsSinceEpoch}.mp4';
+
+      final result = await VideoWatermarkService.renderVideo(
+        videoPath: videoPath,
+        outputPath: outputPath,
+        settings: _wmSettings,
+        entry: entry,
+      );
+
+      if (result != null && await File(result).exists()) {
+        // Simpan hasil watermark
+        final savedPath = await _storage.saveVideo(result);
+        if (savedPath.isNotEmpty) {
+          // Update entry dengan video yang sudah di-watermark
+          final updated = entry.copyWith(videoPath: savedPath);
+          await _storage.update(updated);
+          setState(() => _videoPath = savedPath);
+        }
+      } else {
+        debugPrint('⚠️ Watermark render failed, using original video');
+      }
+    } catch (e) {
+      debugPrint('⚠️ Error rendering watermark: $e');
+    }
+  }
+
+  // ─── ATTACH LOCATION UPDATE ────────────────────────────────
+
+  Future<void> _attachLocationUpdate(String entryId) async {
+    try {
+      final locState = await PodLocationService.instance.awaitAddressReady(
+        timeout: const Duration(seconds: 10),
+      );
+      if (!locState.hasPosition) return;
+      final stored = await _storage.getEntry(entryId);
+      if (stored == null) return;
+      final updated = stored.copyWith(
+        latitude: locState.lat,
+        longitude: locState.lon,
+        locationName: locState.address.isNotEmpty ? locState.address : null,
+      );
+      await _storage.update(updated);
+    } catch (e) {
+      debugPrint('❌ Error _attachLocationUpdate: $e');
+    }
+  }
+
+  // ─── SHOW PREVIEW ───────────────────────────────────────────
+
+  Future<String?> _showPreview(String videoPath) async {
+    final file = XFile(videoPath);
     return Navigator.push<String>(
       context,
       MaterialPageRoute(
         builder: (_) => PreviewScreen(
           file: file,
-          mediaType: type,
+          mediaType: MediaType.video,
           onSave: () => Navigator.pop(context, 'save'),
           onRetake: () => Navigator.pop(context, 'retake'),
         ),
@@ -167,427 +473,53 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     );
   }
 
-  // ─── PICK & RECORD ──────────────────────────────────────────
-  Future<void> _pickAndRecord() async {
-    if (_isSaving || _isProcessing) return;
-    if (!await _ensureCameraPermission()) return;
+  // ─── WATERMARK SETTINGS ─────────────────────────────────────
 
-    setState(() {
-      _isSaving = true;
-      _statusText = 'Membuka kamera...';
-    });
-
-    XFile? videoFile;
-    _VideoPrepResult? prep;
-
-    try {
-      videoFile = await _picker.pickVideo(
-        source: ImageSource.camera,
-        maxDuration: const Duration(seconds: 20),
-        preferredCameraDevice: CameraDevice.rear,
-      );
-      if (!mounted) return;
-      if (videoFile == null) {
-        setState(() {
-          _isSaving = false;
-          _statusText = 'Dibatalkan';
-        });
-        return;
-      }
-
-      // ─── ✅ Render watermark SEBELUM preview ──────────
-      prep = await _prepareWatermarkedVideo(videoFile);
-      if (!mounted) return;
-
-      final previewResult = await _showPreview(XFile(prep.path), MediaType.video);
-      if (previewResult == 'save') {
-        final finalPrep = prep;
-        _taskQueue.add(
-          label: 'Video ${widget.barcode ?? ''}',
-          priority: TaskPriority.high,
-          maxRetries: 2,
-          work: () => _finalizeVideo(finalPrep),
-          onSuccess: (entry) {
-            if (!mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('✅ Video tersimpan: ${(entry as ScanEntry).value}'),
-                backgroundColor: Colors.green,
-              ),
-            );
-            Navigator.pop(context, {'entry': entry});
-          },
-          onError: (error) {
-            if (!mounted) return;
-            _showError('Gagal memproses video: $error');
-          },
-        );
-        setState(() {
-          _isSaving = false;
-          _statusText = 'Video siap, menyimpan di background...';
-        });
-      } else {
-        // Retake → hapus hasil watermark & file rekaman asli
-        try { await File(prep.path).delete(); } catch (_) {}
-        if (prep.originalPath != prep.path) {
-          try { await File(prep.originalPath).delete(); } catch (_) {}
-        }
-        setState(() {
-          _isSaving = false;
-          _statusText = 'Dibatalkan';
-        });
-      }
-    } catch (e) {
-      debugPrint('❌ Gagal merekam video: $e');
-      if (prep != null) {
-        try { await File(prep.path).delete(); } catch (_) {}
-        if (prep.originalPath != prep.path) {
-          try { await File(prep.originalPath).delete(); } catch (_) {}
-        }
-      } else if (videoFile != null) {
-        try { await File(videoFile.path).delete(); } catch (_) {}
-      }
-      if (mounted) {
-        setState(() {
-          _isSaving = false;
-          _statusText = 'Gagal merekam';
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Gagal merekam: $e'), backgroundColor: AppTheme.error),
-        );
-      }
-    }
-  }
-
-  // ─── CORE PROCESSING ────────────────────────────────────────
-  Future<bool> _maybeDeleteLocalCopy(String path, bool galleryOk) async {
-    if (!galleryOk) return false;
-    final settings = context.read<WatermarkSettings>();
-    if (!settings.deleteLocalVideoAfterGalleryExport) return false;
-    try {
-      final f = File(path);
-      if (await f.exists()) await f.delete();
-      debugPrint('🗑️ Salinan lokal dihapus (sudah ada di Galeri): $path');
-      return true;
-    } catch (e) {
-      debugPrint('⚠️ Gagal menghapus salinan lokal: $e');
-      return false;
-    }
-  }
-
-  /// Validasi + render watermark, dipanggil SEBELUM preview ditampilkan.
-  Future<_VideoPrepResult> _prepareWatermarkedVideo(XFile videoFile) async {
-    final settings = context.read<WatermarkSettings>();
-
-    final file = File(videoFile.path);
-    if (!await file.exists()) throw Exception('File video tidak ditemukan');
-
-    final fileSize = await file.length();
-    if (fileSize > _maxVideoSizeBytes) {
-      await file.delete();
-      throw Exception('Video terlalu besar. Maks 50 MB.');
-    }
-
-    // 1. Durasi video
-    int durationSeconds = 0;
-    try {
-      final vc = VideoPlayerController.file(file);
-      await vc.initialize();
-      durationSeconds = vc.value.duration.inSeconds;
-      await vc.dispose();
-    } catch (_) {}
-
-    if (durationSeconds > 0 && durationSeconds < _minVideoDurationSeconds) {
-      await file.delete();
-      throw Exception(
-        'Video terlalu pendek (${durationSeconds}s). Minimal $_minVideoDurationSeconds detik.',
-      );
-    }
-
-    // 2. Output watermark di cache
-    final tempDir = await getTemporaryDirectory();
-    final wmOutputPath = '${tempDir.path}/wm_${DateTime.now().millisecondsSinceEpoch}.mp4';
-
-    _safeSetState(() {
-      _statusText = 'Menambahkan watermark...';
-      _progress = 0.0;
-    });
-
-    // ─── AMBIL LOKASI TERKINI ─────────────────────────────────
-    final wmLocState = settings.gpsWatermarkEnabled
-        ? PodLocationService.instance.currentState
-        : null;
-
-    // ─── BUAT SCAN ENTRY UNTUK WATERMARK ──────────────────────
-    final barcodeValue = widget.barcode ?? 'video_${DateTime.now().millisecondsSinceEpoch}';
-    final entry = ScanEntry(
-      id: _storage.generateId(),
-      type: ScanType.video,
-      value: barcodeValue,
-      timestamp: DateTime.now(),
-      latitude: wmLocState?.lat,
-      longitude: wmLocState?.lon,
-      locationName: (wmLocState != null && wmLocState.address.isNotEmpty) ? wmLocState.address : null,
-    );
-
-    // ─── PANGGIL VIDEO WATERMARK SERVICE ──────────────────────
-    final wmResult = await VideoWatermarkService.addWatermark(
-      inputPath: videoFile.path,
-      outputPath: wmOutputPath,
-      entry: entry,
-      settings: settings,
-      keepAudio: true,
-      onProgress: (p) {
-        _safeSetState(() => _progress = p);
-      },
-    );
-
-    if (wmResult == null && VideoWatermarkService.lastError != null) {
-      debugPrint('🩺 Diagnosis watermark video: ${VideoWatermarkService.lastError}');
-    }
-
-    _safeSetState(() {
-      _progress = 1.0;
-      _statusText = wmResult != null ? 'Watermark selesai!' : 'Watermark gagal';
-    });
-
-    if (wmResult != null) {
-      return _VideoPrepResult(
-        path: wmResult,
-        originalPath: videoFile.path,
-        durationSeconds: durationSeconds,
-        watermarked: true,
-      );
-    }
-
-    // Watermark gagal → tetap tampilkan & simpan video mentah
-    final diagnosis = VideoWatermarkService.lastError;
-    debugPrint('❌ Watermark video gagal${diagnosis != null ? ': $diagnosis' : ''}');
-    if (mounted) {
-      _showError(diagnosis != null
-          ? 'Watermark gagal ($diagnosis). Video akan disimpan tanpa watermark.'
-          : 'Watermark gagal. Video akan disimpan tanpa watermark.');
-    }
-    return _VideoPrepResult(
-      path: videoFile.path,
-      originalPath: videoFile.path,
-      durationSeconds: durationSeconds,
-      watermarked: false,
-    );
-  }
-
-  /// Dipanggil setelah pengguna menekan "Simpan" di preview.
-  Future<ScanEntry> _finalizeVideo(_VideoPrepResult prep) async {
-    String? finalPath;
-    String? thumbnailPath;
-    bool galleryOk = false;
-    bool localCopyDeleted = false;
-
-    try {
-      final preppedFile = File(prep.path);
-      if (!await preppedFile.exists()) {
-        throw Exception('File video (hasil preview) tidak ditemukan');
-      }
-
-      _safeSetState(() => _statusText = 'Menyimpan video...');
-      final savedPath = await _storage.saveVideo(prep.path, name: widget.barcode);
-      if (savedPath.isEmpty) throw Exception('Gagal menyimpan video');
-      finalPath = savedPath;
-
-      thumbnailPath = await _generateThumbnail(savedPath);
-
-      _safeSetState(() => _statusText = 'Ekspor ke Gallery...');
-      galleryOk = await _saveToGallery(savedPath);
-
-      if (galleryOk) {
-        debugPrint('✅ Video berhasil diekspor ke gallery');
-      } else {
-        debugPrint('⚠️ Gagal ekspor ke gallery setelah percobaan, file tetap tersimpan di internal');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Video tersimpan di internal, gagal ekspor ke gallery'),
-              backgroundColor: Colors.orange,
-            ),
-          );
-        }
-      }
-
-      localCopyDeleted = await _maybeDeleteLocalCopy(savedPath, galleryOk);
-
-      _safeSetState(() => _statusText = galleryOk
-          ? (localCopyDeleted
-              ? 'Video tersimpan di Galeri (lokal dihapus)'
-              : (prep.watermarked
-                  ? 'Video tersimpan di internal & Gallery'
-                  : 'Video tersimpan (tanpa watermark) & Gallery'))
-          : (prep.watermarked
-              ? 'Video tersimpan di internal (gagal ekspor)'
-              : 'Video tersimpan (tanpa watermark), gagal ekspor ke Gallery'));
-
-      // Ambil lokasi final untuk entry
-      final settings = context.read<WatermarkSettings>();
-      final finalLocState = settings.gpsWatermarkEnabled
-          ? PodLocationService.instance.currentState
-          : null;
-
-      final entry = ScanEntry(
-        id: _storage.generateId(),
-        type: ScanType.video,
-        value: widget.barcode ?? 'video_${DateTime.now().millisecondsSinceEpoch}',
-        timestamp: DateTime.now(),
-        latitude: finalLocState?.lat,
-        longitude: finalLocState?.lon,
-        locationName: (finalLocState != null && finalLocState.address.isNotEmpty) ? finalLocState.address : null,
-        videoPath: finalPath,
-        videoDuration: prep.durationSeconds,
-        videoThumbnail: thumbnailPath,
-        galleryExported: galleryOk,
-        videoLocalDeleted: localCopyDeleted,
-      );
-      await _storage.add(entry);
-
-      return entry;
-    } catch (e) {
-      debugPrint('❌ Error finalisasi video: $e');
-      _progress = 0.0;
-      _safeSetState(() {});
-      rethrow;
-    } finally {
-      // Bersihkan file temporary watermark
-      try {
-        final tempDir = await getTemporaryDirectory();
-        final tempFiles = await tempDir.list().where((e) => e is File && e.path.contains('wm_')).toList();
-        for (final f in tempFiles) {
-          try { await File(f.path).delete(); } catch (_) {}
-        }
-      } catch (_) {}
-      // Hapus file prep jika berbeda dari original
-      await FileHelper.deleteIfExists(prep.path);
-      if (prep.originalPath != prep.path) {
-        await FileHelper.deleteIfExists(prep.originalPath);
-      }
-    }
-  }
-
-  // ─── HELPER ──────────────────────────────────────────────────
-  Future<String?> _generateThumbnail(String videoPath) async {
-    try {
-      final dir = await getApplicationDocumentsDirectory();
-      return await VideoThumbnail.thumbnailFile(
-        video: videoPath,
-        thumbnailPath: dir.path,
-        imageFormat: ImageFormat.JPEG,
-        maxHeight: 200,
-        quality: 75,
-      );
-    } catch (e) {
-      debugPrint('Thumbnail error: $e');
-      return null;
-    }
-  }
-
-  Future<bool> _saveToGallery(String filePath) async {
-    try {
-      final file = File(filePath);
-      if (!await file.exists()) {
-        debugPrint('❌ File tidak ditemukan untuk ekspor: $filePath');
-        return false;
-      }
-
-      final fileSize = await file.length();
-      if (fileSize == 0) {
-        debugPrint('❌ File kosong: $filePath');
-        return false;
-      }
-
-      debugPrint('📤 Mengekspor video: $filePath (${fileSize ~/ 1024}KB)');
-
-      const maxRetries = 2;
-      for (int attempt = 0; attempt <= maxRetries; attempt++) {
-        try {
-          final filename = '${_entryFilenameBase(filePath)}_${DateTime.now().millisecondsSinceEpoch}.mp4';
-          final result = await SaverGallery.saveFile(
-            filePath: filePath,
-            fileName: filename,
-            androidRelativePath: 'Movies/TERMULScan',
-            skipIfExists: false,
-          );
-          if (result.isSuccess) {
-            debugPrint('✅ Ekspor gallery berhasil: $filename');
-            return true;
-          }
-          debugPrint('⚠️ Percobaan ${attempt + 1} gagal, retry...');
-          if (attempt < maxRetries) {
-            await Future.delayed(const Duration(milliseconds: 500));
-            if (!await file.exists()) {
-              debugPrint('❌ File hilang saat retry: $filePath');
-              break;
-            }
-          }
-        } catch (e) {
-          debugPrint('⚠️ Error ekspor (attempt ${attempt + 1}): $e');
-          if (attempt == maxRetries) rethrow;
-          await Future.delayed(const Duration(milliseconds: 500));
-        }
-      }
-      return false;
-    } catch (e, stack) {
-      debugPrint('❌ Error _saveToGallery: $e\n$stack');
-      return false;
-    }
-  }
-
-  String _entryFilenameBase(String path) {
-    final base = path.split('/').last;
-    return base.split('.').first;
-  }
-
-  void _showError(String msg) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: AppTheme.error,
-        content: Text(msg),
-        duration: const Duration(seconds: 3),
+  void _openWatermarkSettings() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppTheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
+      builder: (_) => const WatermarkSettingsSheet(),
     );
   }
 
   // ─── BUILD ──────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
-    final bool isProcessing = _pendingTasks > 0 || _runningTasks > 0;
+    final isProcessing = _isProcessing || _isRecording;
 
     return Scaffold(
       backgroundColor: AppTheme.bg,
       appBar: AppBar(
-        title: Text('Rekam Video ${widget.barcode ?? ""}'),
+        title: Text(widget.barcode != null
+            ? 'Video: ${widget.barcode}'
+            : 'Rekam Video'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.tune, color: Colors.grey),
-            tooltip: 'Gaya watermark video',
-            onPressed: () {
-              showModalBottomSheet(
-                context: context,
-                isScrollControlled: true,
-                backgroundColor: AppTheme.surface,
-                shape: const RoundedRectangleBorder(
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ListenableBuilder(
+            listenable: _wmSettings,
+            builder: (context, _) {
+              return IconButton(
+                onPressed: _openWatermarkSettings,
+                icon: Stack(
+                  children: [
+                    const Icon(Icons.tune, color: Colors.white),
+                    if (_wmSettings.operatorName.isNotEmpty || _wmSettings.hasLogo)
+                      const Positioned(
+                        right: 0,
+                        top: 0,
+                        child: Icon(Icons.circle, size: 8, color: AppTheme.accent),
+                      ),
+                  ],
                 ),
-                builder: (_) => const WatermarkSettingsSheet(),
+                tooltip: 'Pengaturan Watermark',
               );
             },
           ),
-          if (_pendingTasks > 0)
-            IconButton(
-              icon: const Icon(Icons.cancel, color: AppTheme.error),
-              onPressed: () {
-                _taskQueue.cancelAllPending();
-                setState(() {});
-              },
-              tooltip: 'Batalkan antrian',
-            ),
         ],
       ),
       body: Center(
@@ -596,61 +528,143 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
+              // Icon
               Container(
                 width: 120,
                 height: 120,
                 decoration: BoxDecoration(
                   color: AppTheme.accentOrange.withOpacity(0.1),
                   shape: BoxShape.circle,
-                  border: Border.all(color: AppTheme.accentOrange.withOpacity(0.4), width: 2),
+                  border: Border.all(
+                    color: AppTheme.accentOrange.withOpacity(0.4),
+                    width: 2,
+                  ),
                 ),
-                child: const Icon(Icons.videocam, size: 52, color: AppTheme.accentOrange),
-              ),
+                child: _isRecording
+                    ? const Icon(
+                        Icons.circle,
+                        color: Colors.red,
+                        size: 52,
+                      )
+                    : const Icon(
+                        Icons.videocam,
+                        color: AppTheme.accentOrange,
+                        size: 52,
+                      ),
+              ).animate().scale(duration: 400.ms, curve: Curves.elasticOut),
+
               const Gap(24),
-              Text('Rekam Video', style: Theme.of(context).textTheme.titleLarge),
+
+              // Header
+              Text(
+                _isRecording ? 'Merekam...' : 'Rekam Video',
+                style: Theme.of(context).textTheme.titleLarge,
+              ).animate().fadeIn(delay: 100.ms),
+
               const Gap(8),
-              Text('Maksimal 20 detik, akan diberi watermark otomatis',
-                  style: Theme.of(context).textTheme.bodyMedium, textAlign: TextAlign.center),
-              const Gap(48),
-              if (isProcessing) ...[
-                LinearProgressIndicator(value: _progress.clamp(0.0, 1.0)),
+
+              Text(
+                _isRecording
+                    ? 'Ketik tombol stop untuk menyelesaikan'
+                    : 'Video otomatis disertai timestamp & watermark',
+                style: Theme.of(context).textTheme.bodyMedium,
+                textAlign: TextAlign.center,
+              ).animate().fadeIn(delay: 200.ms),
+
+              if (_videoDuration != null) ...[
                 const Gap(8),
                 Text(
-                  '${(_progress * 100).toInt()}%',
-                  style: const TextStyle(color: Colors.grey),
+                  'Durasi: ${_formatDuration(_videoDuration!)}',
+                  style: const TextStyle(color: AppTheme.textSecondary, fontSize: 13),
                 ),
-                const Gap(16),
               ],
-              if (_statusText.isNotEmpty)
+
+              const Gap(48),
+
+              // Action Buttons
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: isProcessing ? null : _recordVideo,
+                  icon: isProcessing
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                              color: Colors.black, strokeWidth: 2),
+                        )
+                      : const Icon(Icons.videocam, size: 22),
+                  label: Text(isProcessing ? 'Memproses...' : 'Rekam Video'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.accentOrange,
+                    foregroundColor: Colors.black,
+                    padding: const EdgeInsets.symmetric(vertical: 18),
+                    textStyle: const TextStyle(
+                        fontWeight: FontWeight.w700, fontSize: 15),
+                  ),
+                ),
+              ).animate().fadeIn(delay: 250.ms),
+
+              const Gap(14),
+
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: isProcessing ? null : _pickFromGallery,
+                  icon: const Icon(Icons.photo_library_outlined, size: 20),
+                  label: const Text('Pilih dari Galeri'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTheme.accentOrange,
+                    side: BorderSide(
+                        color: AppTheme.accentOrange.withOpacity(0.6)),
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    textStyle: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ).animate().fadeIn(delay: 300.ms),
+
+              const Gap(32),
+
+              // Info Box
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: AppTheme.surface,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppTheme.border),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, size: 16, color: AppTheme.accentBlue),
+                    const Gap(10),
+                    Expanded(
+                      child: Text(
+                        'Video akan otomatis diberi watermark sesuai pengaturan',
+                        style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ).animate().fadeIn(delay: 350.ms),
+
+              if (_isProcessing)
                 Padding(
-                  padding: const EdgeInsets.only(bottom: 16),
-                  child: Text(_statusText, style: const TextStyle(color: Colors.grey)),
+                  padding: const EdgeInsets.only(top: 16),
+                  child: LinearProgressIndicator(
+                    backgroundColor: Colors.grey[800],
+                    valueColor: AlwaysStoppedAnimation(AppTheme.accentOrange),
+                  ),
                 ),
-              if (_pendingTasks > 0)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Text('$_pendingTasks video dalam antrian...', style: const TextStyle(color: Colors.grey, fontSize: 12)),
-                ),
-              if (_runningTasks > 0)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Text('$_runningTasks video sedang diproses...', style: const TextStyle(color: Colors.grey, fontSize: 12)),
-                ),
-              ElevatedButton.icon(
-                onPressed: (_isSaving || isProcessing) ? null : _pickAndRecord,
-                icon: const Icon(Icons.videocam),
-                label: const Text('Rekam Video'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.accentOrange,
-                  foregroundColor: Colors.black,
-                  padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 24),
-                  textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
-                ),
-              ),
             ],
           ),
         ),
       ),
     );
+  }
+
+  String _formatDuration(int seconds) {
+    final minutes = seconds ~/ 60;
+    final secs = seconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
   }
 }
