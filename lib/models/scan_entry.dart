@@ -30,7 +30,7 @@ class ScanEntry {
   final String? province;
   final String? country;
   final String? postalCode;
-  final int? videoDuration; // ← TAMBAHKAN
+  final int? videoDuration;
   final bool isManual;
   final bool isSynced;
 
@@ -82,6 +82,9 @@ class ScanEntry {
     );
   }
 
+  /// Alias untuk fromJson (kompatibilitas dengan database_helper)
+  factory ScanEntry.fromMap(Map<String, dynamic> json) => ScanEntry.fromJson(json);
+
   Map<String, dynamic> toJson() {
     return {
       'id': id,
@@ -105,6 +108,9 @@ class ScanEntry {
       'isSynced': isSynced,
     };
   }
+
+  /// Alias untuk toJson (kompatibilitas dengan database_helper)
+  Map<String, dynamic> toMap() => toJson();
 
   // ─── GETTERS ──────────────────────────────────────────────────
 
@@ -132,12 +138,14 @@ class ScanEntry {
     return dateFormat.format(timestamp);
   }
 
-  String get barcodeFormat => type == ScanType.manual ? 'MANUAL' : type.name.toUpperCase();
+  /// Alias untuk formattedTimestamp (kompatibilitas)
+  String get timestampFormatted => formattedTimestamp;
+
+  String get barcodeFormat => isManual ? 'MANUAL' : type.name.toUpperCase();
 
   List<String> get photoPaths {
     final paths = <String>[];
     if (imagePath != null && imagePath!.isNotEmpty) {
-      // Jika ada multiple foto, split
       if (imagePath!.contains(',')) {
         paths.addAll(imagePath!.split(',').where((p) => p.isNotEmpty));
       } else {
@@ -148,15 +156,23 @@ class ScanEntry {
   }
 
   String? get videoThumbnail {
-    // Jika videoPath ada, thumbnail biasanya di folder yang sama
     if (videoPath != null && videoPath!.isNotEmpty) {
+      // 🔥 FIX: menggunakan path yang benar
       final dir = videoPath!.substring(0, videoPath!.lastIndexOf('.'));
-      return '$dir_thumb.jpg';
+      return '${dir}_thumb.jpg';
     }
     return null;
   }
 
-  String get timestampFormatted => formattedTimestamp;
+  bool get hasVideo => videoPath != null && videoPath!.isNotEmpty;
+
+  String get videoDurationFormatted {
+    if (videoDuration == null) return '--:--';
+    final seconds = videoDuration!;
+    final minutes = seconds ~/ 60;
+    final secs = seconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
+  }
 
   // ─── COPYWITH ──────────────────────────────────────────────────
 
