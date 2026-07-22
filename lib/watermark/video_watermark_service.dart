@@ -112,10 +112,18 @@ class VideoWatermarkService {
 
       if (kDebugMode) debugPrint('⚙️ FFmpeg command: $command');
 
-      final session = await FFmpegKit.execute(command, (log) {
-        if (onProgress != null) {
-          final progress = _parseProgress(log.getMessage());
-          if (progress != null) onProgress(progress);
+      // 🔥 FIX: FFmpegKit.execute hanya menerima 1 parameter
+      // Progress callback menggunakan listener terpisah
+      final session = await FFmpegKit.execute(command);
+      
+      // Parse progress dari log menggunakan listener
+      FFmpegKit.addSessionListener((session) {
+        final logs = session.getAllLogs();
+        for (final log in logs) {
+          if (onProgress != null) {
+            final progress = _parseProgress(log.getMessage());
+            if (progress != null) onProgress(progress);
+          }
         }
       });
 
