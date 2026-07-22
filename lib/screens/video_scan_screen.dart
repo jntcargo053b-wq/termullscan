@@ -77,21 +77,24 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       }
     }
 
-    final storageStatus = await Permission.storage.status;
-    if (!storageStatus.isGranted && !storageStatus.isPermanentlyDenied) {
-      await Permission.storage.request();
-    }
+    // 🔥 FIX: gunakan await untuk mendapatkan bool
+    final storageGranted = await Permission.storage.isGranted;
+    final manageGranted = await Permission.manageExternalStorage.isGranted;
 
-    final galleryStatus = await Permission.manageExternalStorage.status;
-    if (!galleryStatus.isGranted && !galleryStatus.isPermanentlyDenied) {
-      await Permission.manageExternalStorage.request();
-    }
-
-    if (mounted) {
-      setState(() {
-        _hasGalleryPermission = Permission.storage.isGranted ||
-            Permission.manageExternalStorage.isGranted;
-      });
+    if (!storageGranted && !manageGranted) {
+      final storageResult = await Permission.storage.request();
+      final manageResult = await Permission.manageExternalStorage.request();
+      if (mounted) {
+        setState(() {
+          _hasGalleryPermission = storageResult.isGranted || manageResult.isGranted;
+        });
+      }
+    } else {
+      if (mounted) {
+        setState(() {
+          _hasGalleryPermission = storageGranted || manageGranted;
+        });
+      }
     }
   }
 
@@ -268,7 +271,6 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       }
 
       // ─── BUAT SCAN ENTRY ─────────────────────────────────────
-      // 🔥 FIXED: tambah operatorName, hapus videoThumbnail
       final locState = _wmSettings.gpsWatermarkEnabled
           ? PodLocationService.instance.currentState
           : null;
@@ -281,7 +283,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         timestamp: DateTime.now(),
         operatorName: _wmSettings.operatorName.isNotEmpty
             ? _wmSettings.operatorName
-            : 'Operator', // ← WAJIB!
+            : 'Operator',
         companyName: _wmSettings.companyName,
         latitude: locState?.lat,
         longitude: locState?.lon,
@@ -289,7 +291,6 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
             ? locState.address
             : null,
         videoDuration: duration,
-        // videoThumbnail: thumbnailPath, // ← HAPUS! (akan di-generate otomatis)
         isManual: false,
       );
 
@@ -312,7 +313,6 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         setState(() => _isProcessing = false);
         Navigator.pop(context, {'path': videoPath, 'duration': duration});
       } else if (result == 'retake') {
-        // Hapus video
         try {
           final file = File(videoPath);
           if (await file.exists()) await file.delete();
@@ -378,7 +378,6 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       final baseName = videoPath.split('/').last.split('.').first;
       final thumbPath = '$dir/${baseName}_thumb.jpg';
 
-      // Gunakan FFmpeg untuk generate thumbnail
       final result = await Process.run(
         'ffmpeg',
         [
@@ -419,10 +418,8 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       );
 
       if (result != null && await File(result).exists()) {
-        // Simpan hasil watermark
         final savedPath = await _storage.saveVideo(result);
         if (savedPath.isNotEmpty) {
-          // Update entry dengan video yang sudah di-watermark
           final updated = entry.copyWith(videoPath: savedPath);
           await _storage.update(updated);
           setState(() => _videoPath = savedPath);
@@ -551,7 +548,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
                         color: AppTheme.accentOrange,
                         size: 52,
                       ),
-              ).animate().scale(duration: 400.ms, curve: Curves.elasticOut),
+              ),
 
               const Gap(24),
 
@@ -559,7 +556,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
               Text(
                 _isRecording ? 'Merekam...' : 'Rekam Video',
                 style: Theme.of(context).textTheme.titleLarge,
-              ).animate().fadeIn(delay: 100.ms),
+              ),
 
               const Gap(8),
 
@@ -569,7 +566,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
                     : 'Video otomatis disertai timestamp & watermark',
                 style: Theme.of(context).textTheme.bodyMedium,
                 textAlign: TextAlign.center,
-              ).animate().fadeIn(delay: 200.ms),
+              ),
 
               if (_videoDuration != null) ...[
                 const Gap(8),
@@ -603,7 +600,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
                         fontWeight: FontWeight.w700, fontSize: 15),
                   ),
                 ),
-              ).animate().fadeIn(delay: 250.ms),
+              ),
 
               const Gap(14),
 
@@ -621,7 +618,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
                     textStyle: const TextStyle(fontWeight: FontWeight.w600),
                   ),
                 ),
-              ).animate().fadeIn(delay: 300.ms),
+              ),
 
               const Gap(32),
 
@@ -645,7 +642,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
                     ),
                   ],
                 ),
-              ).animate().fadeIn(delay: 350.ms),
+              ),
 
               if (_isProcessing)
                 Padding(
