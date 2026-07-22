@@ -238,12 +238,10 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       final gpsOn = _wmSettings.gpsWatermarkEnabled;
       final locState = gpsOn ? PodLocationService.instance.currentState : null;
       
-      // 🔥 FIX: barcodeFormat dihapus, gunakan isManual = false
       final entry = ScanEntry(
         id: _storage.generateId(),
         type: ScanType.barcode,
         value: code,
-        // barcodeFormat: format, // ← HAPUS!
         timestamp: DateTime.now(),
         operatorName: _wmSettings.operatorName.isNotEmpty 
             ? _wmSettings.operatorName 
@@ -252,7 +250,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         latitude: locState?.lat,
         longitude: locState?.lon,
         locationName: (locState != null && locState.address.isNotEmpty) ? locState.address : null,
-        isManual: false, // ← PAKAI INI
+        isManual: false,
       );
       await _storage.add(entry);
       if (gpsOn) unawaited(_attachLocationUpdate(entry.id));
@@ -307,12 +305,10 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       final gpsOn = _wmSettings.gpsWatermarkEnabled;
       final locState = gpsOn ? PodLocationService.instance.currentState : null;
       
-      // 🔥 FIX: barcodeFormat dihapus, gunakan isManual = true
       final entry = ScanEntry(
         id: _storage.generateId(),
         type: ScanType.manual,
         value: code,
-        // barcodeFormat: 'MANUAL', // ← HAPUS!
         timestamp: DateTime.now(),
         operatorName: _wmSettings.operatorName.isNotEmpty 
             ? _wmSettings.operatorName 
@@ -321,7 +317,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         latitude: locState?.lat,
         longitude: locState?.lon,
         locationName: (locState != null && locState.address.isNotEmpty) ? locState.address : null,
-        isManual: true, // ← PAKAI INI
+        isManual: true,
       );
       await _storage.add(entry);
       if (gpsOn) unawaited(_attachLocationUpdate(entry.id));
@@ -377,6 +373,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           builder: (_) => PhotoScanScreen(
             barcode: active.barcode,
             entryId: active.entryId,
+            batchMode: false, // ← TAMBAHKAN!
           ),
         ),
       );
