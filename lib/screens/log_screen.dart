@@ -173,9 +173,8 @@ class _LogScreenState extends State<LogScreen> {
     return _selectedIds.length == _filteredEntries.length;
   }
 
-  // ─── PREVIEW FOTO ──────────────────────────────────────────
   void _showPhotoPreview(ScanEntry entry, {int initialIndex = 0}) {
-    final List<String> paths = entry.photoPaths; // 🔥 FIX: sekarang getter
+    final paths = entry.photoPaths;
     if (paths.isEmpty && entry.type == ScanType.image && entry.value.isNotEmpty) {
       paths.add(entry.value);
     }
@@ -209,14 +208,11 @@ class _LogScreenState extends State<LogScreen> {
     );
   }
 
-  // ─── PREVIEW VIDEO ─────────────────────────────────────────
   void _showVideoPreview(ScanEntry entry) {
     final path = entry.videoPath;
     if (path == null || path.isEmpty || !File(path).existsSync()) {
-      // 🔥 FIX: videoLocalDeleted tidak ada, cek file existence
-      final message = 'File video tidak ditemukan. Mungkin sudah dipindahkan ke Galeri.';
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
+        const SnackBar(content: Text('File video tidak ditemukan')),
       );
       return;
     }
@@ -231,7 +227,6 @@ class _LogScreenState extends State<LogScreen> {
     );
   }
 
-  // ─── SHARE FOTO ──────────────────────────────────────────
   Future<void> _shareSelectedPhotos() async {
     if (_selectedIds.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -259,15 +254,12 @@ class _LogScreenState extends State<LogScreen> {
 
     final List<XFile> files = [];
     for (final entry in selectedEntries) {
-      final paths = entry.photoPaths; // 🔥 FIX: sekarang getter
+      final paths = entry.photoPaths;
       if (paths.isNotEmpty) {
         for (final path in paths) {
           final file = File(path);
           if (await file.exists()) files.add(XFile(file.path));
         }
-      } else if (entry.type == ScanType.image && entry.value.isNotEmpty) {
-        final file = File(entry.value);
-        if (await file.exists()) files.add(XFile(file.path));
       }
     }
 
@@ -322,7 +314,6 @@ class _LogScreenState extends State<LogScreen> {
     }
   }
 
-  // ─── EXPORT TEXT ──────────────────────────────────────────
   Future<void> _exportAndShare() async {
     if (_filteredEntries.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -340,7 +331,6 @@ class _LogScreenState extends State<LogScreen> {
     }
   }
 
-  // ─── DELETE ──────────────────────────────────────────────
   Future<void> _deleteEntry(ScanEntry entry) async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -364,19 +354,17 @@ class _LogScreenState extends State<LogScreen> {
     if (confirm == true) {
       await _storage.delete(entry.id);
       if (entry.type == ScanType.image) {
-        final paths = entry.photoPaths; // 🔥 FIX: sekarang getter
+        final paths = entry.photoPaths;
         if (paths.isNotEmpty) {
           for (final path in paths) {
             try { final f = File(path); if (await f.exists()) await f.delete(); } catch (_) {}
           }
-        } else if (entry.value.isNotEmpty) {
-          try { final f = File(entry.value); if (await f.exists()) await f.delete(); } catch (_) {}
         }
       } else if (entry.type == ScanType.video) {
         if (entry.videoPath != null) {
           try { final f = File(entry.videoPath!); if (await f.exists()) await f.delete(); } catch (_) {}
         }
-        final thumb = entry.videoThumbnail; // 🔥 FIX: sekarang getter
+        final thumb = entry.videoThumbnail;
         if (thumb != null) {
           try { final f = File(thumb); if (await f.exists()) await f.delete(); } catch (_) {}
         }
@@ -412,19 +400,17 @@ class _LogScreenState extends State<LogScreen> {
         final entry = _filteredEntries.firstWhereOrNull((e) => e.id == id);
         if (entry != null) {
           if (entry.type == ScanType.image) {
-            final paths = entry.photoPaths; // 🔥 FIX: sekarang getter
+            final paths = entry.photoPaths;
             if (paths.isNotEmpty) {
               for (final path in paths) {
                 try { final f = File(path); if (await f.exists()) await f.delete(); } catch (_) {}
               }
-            } else if (entry.value.isNotEmpty) {
-              try { final f = File(entry.value); if (await f.exists()) await f.delete(); } catch (_) {}
             }
           } else if (entry.type == ScanType.video) {
             if (entry.videoPath != null) {
               try { final f = File(entry.videoPath!); if (await f.exists()) await f.delete(); } catch (_) {}
             }
-            final thumb = entry.videoThumbnail; // 🔥 FIX: sekarang getter
+            final thumb = entry.videoThumbnail;
             if (thumb != null) {
               try { final f = File(thumb); if (await f.exists()) await f.delete(); } catch (_) {}
             }
@@ -649,7 +635,7 @@ class _LogItem extends StatelessWidget {
     final isVideo = entry.type == ScanType.video;
     final icon = isVideo ? Icons.videocam : isPhoto ? Icons.photo_camera : Icons.qr_code;
     final avatarColor = isVideo ? AppTheme.error : isPhoto ? AppTheme.accentBlue : AppTheme.accent;
-    final hasPhoto = entry.photoPaths.isNotEmpty; // 🔥 FIX: sekarang getter
+    final hasPhoto = entry.photoPaths.isNotEmpty;
     final hasVideo = entry.videoPath != null && entry.videoPath!.isNotEmpty;
 
     final typeLabel = isVideo ? 'Video' : isPhoto ? 'Foto' : 'Barcode';
@@ -657,111 +643,108 @@ class _LogItem extends StatelessWidget {
     return Semantics(
       label: '$typeLabel, ${entry.value}${isSelected ? ", dipilih" : ""}',
       child: Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      decoration: BoxDecoration(
-        color: isSelected ? AppTheme.accent.withOpacity(0.1) : AppTheme.surface,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: isSelected ? AppTheme.accent : AppTheme.surfaceLight,
-          width: isSelected ? 2 : 1,
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        decoration: BoxDecoration(
+          color: isSelected ? AppTheme.accent.withOpacity(0.1) : AppTheme.surface,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: isSelected ? AppTheme.accent : AppTheme.surfaceLight,
+            width: isSelected ? 2 : 1,
+          ),
         ),
-      ),
-      child: ListTile(
-        selected: isSelected,
-        onTap: onTap,
-        leading: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (onTap != null)
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: Icon(
-                  isSelected ? Icons.check_circle : Icons.circle_outlined,
-                  color: isSelected ? AppTheme.accent : Colors.grey,
-                  size: 22,
+        child: ListTile(
+          selected: isSelected,
+          onTap: onTap,
+          leading: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (onTap != null)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Icon(
+                    isSelected ? Icons.check_circle : Icons.circle_outlined,
+                    color: isSelected ? AppTheme.accent : Colors.grey,
+                    size: 22,
+                  ),
+                ),
+              Stack(
+                children: [
+                  CircleAvatar(backgroundColor: avatarColor, child: Icon(icon, color: Colors.white)),
+                  if (isVideo)
+                    FutureBuilder<Uint8List?>(
+                      future: ThumbnailCacheService.instance.getThumbnail(
+                        existingThumbnailPath: entry.videoThumbnail,
+                        videoPath: entry.videoPath,
+                      ),
+                      builder: (context, snapshot) {
+                        final bytes = snapshot.data;
+                        if (snapshot.connectionState != ConnectionState.done ||
+                            bytes == null) {
+                          return const SizedBox.shrink();
+                        }
+                        return CircleAvatar(
+                          backgroundColor: Colors.transparent,
+                          backgroundImage: MemoryImage(bytes),
+                        );
+                      },
+                    ),
+                ],
+              ),
+            ],
+          ),
+          title: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  entry.value,
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
-            Stack(
-              children: [
-                CircleAvatar(backgroundColor: avatarColor, child: Icon(icon, color: Colors.white)),
-                // Lazy: FutureBuilder ini hanya dieksekusi saat item benar-benar
-                // dibangun oleh ListView.builder (mis. saat terlihat di layar),
-                // bukan untuk seluruh daftar sekaligus.
-                if (isVideo)
-                  FutureBuilder<Uint8List?>(
-                    future: ThumbnailCacheService.instance.getThumbnail(
-                      existingThumbnailPath: entry.videoThumbnail, // 🔥 FIX: sekarang getter
-                      videoPath: entry.videoPath,
-                    ),
-                    builder: (context, snapshot) {
-                      final bytes = snapshot.data;
-                      if (snapshot.connectionState != ConnectionState.done ||
-                          bytes == null) {
-                        return const SizedBox.shrink();
-                      }
-                      return CircleAvatar(
-                        backgroundColor: Colors.transparent,
-                        backgroundImage: MemoryImage(bytes),
-                      );
-                    },
-                  ),
+              if (isVideo && entry.videoDuration != null) ...[
+                const Gap(6),
+                Icon(Icons.timer, size: 14, color: Colors.grey),
+                const Gap(2),
+                Text(_formatDuration(entry.videoDuration!), style: const TextStyle(color: Colors.grey, fontSize: 11)),
               ],
-            ),
-          ],
-        ),
-        title: Row(
-          children: [
-            Expanded(
-              child: Text(
-                entry.value,
-                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            if (isVideo && entry.videoDuration != null) ...[
-              const Gap(6),
-              Icon(Icons.timer, size: 14, color: Colors.grey),
-              const Gap(2),
-              Text(_formatDuration(entry.videoDuration!), style: const TextStyle(color: Colors.grey, fontSize: 11)),
+              if (hasPhoto) ...[
+                const Gap(6),
+                Icon(Icons.photo_library, size: 16, color: AppTheme.accent),
+              ],
+              if (entry.photoPaths.length > 1) ...[
+                const Gap(2),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                  decoration: BoxDecoration(color: AppTheme.accent.withOpacity(0.2), borderRadius: BorderRadius.circular(4)),
+                  child: Text('${entry.photoPaths.length}', style: const TextStyle(color: AppTheme.accent, fontSize: 9, fontWeight: FontWeight.w700)),
+                ),
+              ],
             ],
-            if (hasPhoto) ...[
-              const Gap(6),
-              Icon(Icons.photo_library, size: 16, color: AppTheme.accent),
+          ),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(dateFormat.format(entry.timestamp), style: const TextStyle(color: Colors.grey, fontSize: 12)),
+              if (entry.locationName != null && entry.locationName!.isNotEmpty)
+                Text(entry.locationName!, style: const TextStyle(color: Colors.grey, fontSize: 11), maxLines: 1, overflow: TextOverflow.ellipsis),
             ],
-            if (entry.photoPaths.length > 1) ...[ // 🔥 FIX: sekarang getter
-              const Gap(2),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                decoration: BoxDecoration(color: AppTheme.accent.withOpacity(0.2), borderRadius: BorderRadius.circular(4)),
-                child: Text('${entry.photoPaths.length}', style: const TextStyle(color: AppTheme.accent, fontSize: 9, fontWeight: FontWeight.w700)),
-              ),
-            ],
-          ],
+          ),
+          trailing: onTap == null
+              ? Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (entry.isManual)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(color: AppTheme.accent.withOpacity(0.2), borderRadius: BorderRadius.circular(4), border: Border.all(color: AppTheme.accent.withOpacity(0.4))),
+                        child: const Text('Manual', style: TextStyle(color: AppTheme.accent, fontSize: 9, fontWeight: FontWeight.w700)),
+                      ),
+                    IconButton(icon: const Icon(Icons.delete_outline, color: Colors.grey, size: 18), onPressed: onDelete, tooltip: 'Hapus'),
+                  ],
+                )
+              : null,
         ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(dateFormat.format(entry.timestamp), style: const TextStyle(color: Colors.grey, fontSize: 12)),
-            if (entry.locationName != null && entry.locationName!.isNotEmpty)
-              Text(entry.locationName!, style: const TextStyle(color: Colors.grey, fontSize: 11), maxLines: 1, overflow: TextOverflow.ellipsis),
-          ],
-        ),
-        trailing: onTap == null
-            ? Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (entry.barcodeFormat == 'MANUAL')
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(color: AppTheme.accent.withOpacity(0.2), borderRadius: BorderRadius.circular(4), border: Border.all(color: AppTheme.accent.withOpacity(0.4))),
-                      child: const Text('Manual', style: TextStyle(color: AppTheme.accent, fontSize: 9, fontWeight: FontWeight.w700)),
-                    ),
-                  IconButton(icon: const Icon(Icons.delete_outline, color: Colors.grey, size: 18), onPressed: onDelete, tooltip: 'Hapus'),
-                ],
-              )
-            : null,
-      ),
       ),
     );
   }
@@ -917,6 +900,74 @@ class _VideoPreviewDialogState extends State<_VideoPreviewDialog> {
   @override
   void initState() {
     super.initState();
-    _controller = VideoPlayerController.file(File(widget.videoPath))
-      ..initialize().then((_) {
-        if (m
+    _controller = VideoPlayerController.file(File(widget.videoPath));
+    _controller.initialize().then((_) {
+      if (mounted) {
+        setState(() {
+          _initialized = true;
+        });
+      }
+    });
+    _controller.addListener(() {
+      if (mounted && _controller.value.isPlaying != _isPlaying) {
+        setState(() {
+          _isPlaying = _controller.value.isPlaying;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.black,
+      insetPadding: const EdgeInsets.all(8),
+      child: Column(
+        mainAxisSize: MainAxisSize.max,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(color: Colors.black.withOpacity(0.8), border: Border(bottom: BorderSide(color: AppTheme.surfaceLight))),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(widget.barcode, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14), maxLines: 1, overflow: TextOverflow.ellipsis),
+                      Text(DateFormat('dd/MM/yyyy HH:mm:ss').format(widget.timestamp), style: const TextStyle(color: Colors.grey, fontSize: 11)),
+                    ],
+                  ),
+                ),
+                IconButton(icon: const Icon(Icons.close, color: Colors.white), onPressed: () => Navigator.pop(context)),
+              ],
+            ),
+          ),
+          Expanded(
+            child: _initialized
+                ? GestureDetector(
+                    onTap: () {
+                      if (_controller.value.isPlaying) {
+                        _controller.pause();
+                      } else {
+                        _controller.play();
+                      }
+                    },
+                    child: Center(
+                      child: AspectRatio(
+                        aspectRatio: _controller.value.aspectRatio,
+                        child: VideoPlayer(_controller),
+                      ),
+                    ),
+                  )
+                : const Center(child: CircularProgressIndicator()),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+            decoration: BoxDecoration(color: Colors.black.withOpacity(0.8),
