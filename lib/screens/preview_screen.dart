@@ -33,15 +33,25 @@ class _PreviewScreenState extends State<PreviewScreen> {
   bool _isVideoInitialized = false;
   bool _isVideoLoading = true;
   String? _videoError;
+  int _fileSizeBytes = 0;
 
   @override
   void initState() {
     super.initState();
+    _loadFileSize();
     if (widget.mediaType == MediaType.video) {
       _initVideo();
     } else {
       _isVideoLoading = false;
     }
+  }
+
+  Future<void> _loadFileSize() async {
+    final file = File(widget.file.path);
+    final exists = await file.exists();
+    final size = exists ? await file.length() : 0;
+    if (!mounted) return;
+    setState(() => _fileSizeBytes = size);
   }
 
   Future<void> _initVideo() async {
@@ -103,8 +113,7 @@ class _PreviewScreenState extends State<PreviewScreen> {
   @override
   Widget build(BuildContext context) {
     final file = File(widget.file.path);
-    final fileSize = file.existsSync() ? file.lengthSync() : 0;
-    final sizeInMB = (fileSize / (1024 * 1024)).toStringAsFixed(1);
+    final sizeInMB = (_fileSizeBytes / (1024 * 1024)).toStringAsFixed(1);
 
     return Scaffold(
       backgroundColor: Colors.black,
