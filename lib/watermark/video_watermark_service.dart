@@ -112,21 +112,31 @@ class VideoWatermarkService {
 
       if (kDebugMode) debugPrint('⚙️ FFmpeg command: $command');
 
-      // 🔥 FIX: FFmpegKit.execute hanya menerima 1 parameter
-      // Progress callback menggunakan listener terpisah
-      final session = await FFmpegKit.execute(command);
-      
-      // Parse progress dari log menggunakan listener
-      FFmpegKit.addSessionListener((session) {
-        final logs = session.getAllLogs();
-        for (final log in logs) {
+      // 🔥 FIX: Gunakan executeAsync dengan callback
+      // FFmpegKit.executeAsync(command, onComplete, onLog, onStatistics)
+      final completer = Completer<FFmpegSession>();
+
+      await FFmpegKit.executeAsync(
+        command,
+        (session) async {
+          // Selesai
+          completer.complete(session);
+        },
+        (log) {
+          // Progress log
           if (onProgress != null) {
             final progress = _parseProgress(log.getMessage());
             if (progress != null) onProgress(progress);
           }
-        }
-      });
+        },
+        (statistics) {
+          // Statistics (opsional)
+          // Bisa digunakan untuk progress alternatif
+        },
+      );
 
+      // Tunggu sampai selesai
+      final session = await completer.future;
       final returnCode = await session.getReturnCode();
 
       if (ReturnCode.isSuccess(returnCode)) {
