@@ -2,6 +2,7 @@
 // ============================================================
 // VIDEO WATERMARK SERVICE
 // ============================================================
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
@@ -110,17 +111,29 @@ class VideoWatermarkService {
             "-y '$outputPath'";
       }
 
-      if (kDebugMode) debugPrint('⚙️ FFmpeg command: $command');
+      if (kDebugMode) debugPrint('⚙️ FFmpeg command: ${command.substring(0, command.length > 200 ? 200 : command.length)}...');
 
-      // 🔥 FIX: Gunakan executeAsync dengan callback
-      // FFmpegKit.executeAsync(command, onComplete, onLog, onStatistics)
-      final completer = Completer<FFmpegSession>();
+      // 🔥 FIX: Gunakan executeAsync dengan callback sederhana
+      // Karena kita tidak bisa menggunakan Completer<FFmpegSession> dengan mudah,
+      // kita gunakan callback langsung
+      FFmpegSession? session;
+      final completer = Completer<String?>();
 
       await FFmpegKit.executeAsync(
         command,
-        (session) async {
+        (s) async {
           // Selesai
-          completer.complete(session);
+          session = s;
+          final returnCode = await s.getReturnCode();
+          if (ReturnCode.isSuccess(returnCode)) {
+            if (kDebugMode) debugPrint('✅ Video watermark success: $outputPath');
+            completer.complete(outputPath);
+          } else {
+            final logs = await s.getOutput();
+            lastError = logs ?? 'Unknown error';
+            debugPrint('❌ FFmpeg error: $lastError');
+            completer.complete(null);
+          }
         },
         (log) {
           // Progress log
@@ -131,23 +144,11 @@ class VideoWatermarkService {
         },
         (statistics) {
           // Statistics (opsional)
-          // Bisa digunakan untuk progress alternatif
         },
       );
 
-      // Tunggu sampai selesai
-      final session = await completer.future;
-      final returnCode = await session.getReturnCode();
-
-      if (ReturnCode.isSuccess(returnCode)) {
-        if (kDebugMode) debugPrint('✅ Video watermark success: $outputPath');
-        return outputPath;
-      } else {
-        final logs = await session.getOutput();
-        lastError = logs ?? 'Unknown error';
-        debugPrint('❌ FFmpeg error: $lastError');
-        return null;
-      }
+      // Tunggu hasil
+      return await completer.future;
     } catch (e) {
       lastError = e.toString();
       debugPrint('❌ Error rendering video: $e');
