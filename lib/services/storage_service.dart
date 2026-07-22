@@ -164,7 +164,6 @@ class StorageService {
     }
   }
 
-  // ✅ PERBAIKAN: pakai saveFile (bukan saveImage) untuk konsistensi
   Future<bool> savePhotoToGallery(String filePath, {String? fileName}) async {
     try {
       final file = File(filePath);
@@ -270,9 +269,19 @@ class StorageService {
       final entries = await _db.getAll();
       final activePaths = <String>{};
       for (final entry in entries) {
-        if (entry.videoPath != null) activePaths.add(entry.videoPath!);
-        activePaths.addAll(entry.photoPaths ?? []);
-        if (entry.videoThumbnail != null) activePaths.add(entry.videoThumbnail!);
+        // 🔥 FIX: photoPaths sekarang getter (bukan nullable)
+        activePaths.addAll(entry.photoPaths);
+
+        // 🔥 FIX: videoThumbnail sekarang getter
+        if (entry.videoThumbnail != null) {
+          activePaths.add(entry.videoThumbnail!);
+        }
+        if (entry.videoPath != null) {
+          activePaths.add(entry.videoPath!);
+        }
+        if (entry.imagePath != null) {
+          activePaths.add(entry.imagePath!);
+        }
       }
 
       final appDir = await getApplicationDocumentsDirectory();
@@ -406,19 +415,33 @@ class StorageService {
       buffer.writeln('ID: ${entry.id}');
       buffer.writeln('Type: ${entry.type.name}');
       buffer.writeln('Value: ${entry.value}');
-      buffer.writeln('Time: ${entry.timestampFormatted}');
+      buffer.writeln('Time: ${entry.formattedTimestamp}'); // 🔥 FIX
       if (entry.locationName != null) buffer.writeln('Location: ${entry.locationName}');
-      if (entry.photoPaths != null && entry.photoPaths!.isNotEmpty) {
-        buffer.writeln('Photos: ${entry.photoPaths!.join(', ')}');
+      // 🔥 FIX: photoPaths sekarang getter
+      if (entry.photoPaths.isNotEmpty) {
+        buffer.writeln('Photos: ${entry.photoPaths.join(', ')}');
       }
-      if (entry.hasVideo) {
+      // 🔥 FIX: hasVideo diganti dengan videoPath != null
+      if (entry.videoPath != null && entry.videoPath!.isNotEmpty) {
         buffer.writeln('Video: ${entry.videoPath}');
-        buffer.writeln('Duration: ${entry.videoDurationFormatted}');
+        if (entry.videoDuration != null) {
+          buffer.writeln('Duration: ${_formatDuration(entry.videoDuration!)}');
+        }
       }
       buffer.writeln('---');
     }
     await File(path).writeAsString(buffer.toString());
     return path;
+  }
+
+  String _formatDuration(int seconds) {
+    final hours = seconds ~/ 3600;
+    final minutes = (seconds % 3600) ~/ 60;
+    final secs = seconds % 60;
+    if (hours > 0) {
+      return '$hours:${minutes.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
+    }
+    return '${minutes.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
   }
 
   Future<void> shareTxt(String path) async {
