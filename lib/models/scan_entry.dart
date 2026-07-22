@@ -24,11 +24,13 @@ class ScanEntry {
   final String? companyName;
   final double? latitude;
   final double? longitude;
-  final String? locationName;   // ← ALAMAT LENGKAP (cukup satu field)
+  final String? locationName;
+  final String? address;
   final String? city;
   final String? province;
   final String? country;
   final String? postalCode;
+  final int? videoDuration; // ← TAMBAHKAN
   final bool isManual;
   final bool isSynced;
 
@@ -44,39 +46,43 @@ class ScanEntry {
     this.latitude,
     this.longitude,
     this.locationName,
+    this.address,
     this.city,
     this.province,
     this.country,
     this.postalCode,
+    this.videoDuration,
     this.isManual = false,
     this.isSynced = false,
   });
 
   // ─── FACTORY ──────────────────────────────────────────────────
 
-  factory ScanEntry.fromMap(Map<String, dynamic> map) {
+  factory ScanEntry.fromJson(Map<String, dynamic> json) {
     return ScanEntry(
-      id: map['id'] as String,
-      value: map['value'] as String,
-      type: ScanType.values[map['type'] as int],
-      imagePath: map['imagePath'] as String?,
-      videoPath: map['videoPath'] as String?,
-      timestamp: DateTime.fromMillisecondsSinceEpoch(map['timestamp'] as int),
-      operatorName: map['operatorName'] as String,
-      companyName: map['companyName'] as String?,
-      latitude: map['latitude'] as double?,
-      longitude: map['longitude'] as double?,
-      locationName: map['locationName'] as String?,
-      city: map['city'] as String?,
-      province: map['province'] as String?,
-      country: map['country'] as String?,
-      postalCode: map['postalCode'] as String?,
-      isManual: map['isManual'] as bool? ?? false,
-      isSynced: map['isSynced'] as bool? ?? false,
+      id: json['id'] as String,
+      value: json['value'] as String,
+      type: ScanType.values[json['type'] as int],
+      imagePath: json['imagePath'] as String?,
+      videoPath: json['videoPath'] as String?,
+      timestamp: DateTime.fromMillisecondsSinceEpoch(json['timestamp'] as int),
+      operatorName: json['operatorName'] as String,
+      companyName: json['companyName'] as String?,
+      latitude: (json['latitude'] as num?)?.toDouble(),
+      longitude: (json['longitude'] as num?)?.toDouble(),
+      locationName: json['locationName'] as String?,
+      address: json['address'] as String?,
+      city: json['city'] as String?,
+      province: json['province'] as String?,
+      country: json['country'] as String?,
+      postalCode: json['postalCode'] as String?,
+      videoDuration: json['videoDuration'] as int?,
+      isManual: json['isManual'] as bool? ?? false,
+      isSynced: json['isSynced'] as bool? ?? false,
     );
   }
 
-  Map<String, dynamic> toMap() {
+  Map<String, dynamic> toJson() {
     return {
       'id': id,
       'value': value,
@@ -89,10 +95,12 @@ class ScanEntry {
       'latitude': latitude,
       'longitude': longitude,
       'locationName': locationName,
+      'address': address,
       'city': city,
       'province': province,
       'country': country,
       'postalCode': postalCode,
+      'videoDuration': videoDuration,
       'isManual': isManual,
       'isSynced': isSynced,
     };
@@ -100,10 +108,12 @@ class ScanEntry {
 
   // ─── GETTERS ──────────────────────────────────────────────────
 
-  /// Display location: prioritaskan locationName, fallback ke koordinat
   String get displayLocation {
     if (locationName != null && locationName!.isNotEmpty) {
       return locationName!;
+    }
+    if (address != null && address!.isNotEmpty) {
+      return address!;
     }
     if (latitude != null && longitude != null) {
       return '${latitude!.toStringAsFixed(4)}, ${longitude!.toStringAsFixed(4)}';
@@ -113,16 +123,40 @@ class ScanEntry {
 
   bool get hasLocation {
     return (locationName != null && locationName!.isNotEmpty) ||
+           (address != null && address!.isNotEmpty) ||
            (latitude != null && longitude != null);
   }
 
-  /// Format timestamp untuk display
   String get formattedTimestamp {
     final dateFormat = DateFormat('dd/MM/yyyy HH:mm:ss');
     return dateFormat.format(timestamp);
   }
 
   String get barcodeFormat => type == ScanType.manual ? 'MANUAL' : type.name.toUpperCase();
+
+  List<String> get photoPaths {
+    final paths = <String>[];
+    if (imagePath != null && imagePath!.isNotEmpty) {
+      // Jika ada multiple foto, split
+      if (imagePath!.contains(',')) {
+        paths.addAll(imagePath!.split(',').where((p) => p.isNotEmpty));
+      } else {
+        paths.add(imagePath!);
+      }
+    }
+    return paths;
+  }
+
+  String? get videoThumbnail {
+    // Jika videoPath ada, thumbnail biasanya di folder yang sama
+    if (videoPath != null && videoPath!.isNotEmpty) {
+      final dir = videoPath!.substring(0, videoPath!.lastIndexOf('.'));
+      return '$dir_thumb.jpg';
+    }
+    return null;
+  }
+
+  String get timestampFormatted => formattedTimestamp;
 
   // ─── COPYWITH ──────────────────────────────────────────────────
 
@@ -138,10 +172,12 @@ class ScanEntry {
     double? latitude,
     double? longitude,
     String? locationName,
+    String? address,
     String? city,
     String? province,
     String? country,
     String? postalCode,
+    int? videoDuration,
     bool? isManual,
     bool? isSynced,
   }) {
@@ -157,10 +193,12 @@ class ScanEntry {
       latitude: latitude ?? this.latitude,
       longitude: longitude ?? this.longitude,
       locationName: locationName ?? this.locationName,
+      address: address ?? this.address,
       city: city ?? this.city,
       province: province ?? this.province,
       country: country ?? this.country,
       postalCode: postalCode ?? this.postalCode,
+      videoDuration: videoDuration ?? this.videoDuration,
       isManual: isManual ?? this.isManual,
       isSynced: isSynced ?? this.isSynced,
     );
