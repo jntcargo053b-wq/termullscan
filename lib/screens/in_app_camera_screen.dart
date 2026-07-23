@@ -40,6 +40,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:camera/camera.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -112,6 +113,38 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
     }
   }
 
+  // ─── PILIH RESOLUTION PRESET SECARA ADAPTIF ────────────────
+  // ✅ FIX: dulu fixed `ResolutionPreset.veryHigh` (preset tertinggi,
+  // bisa 4K+ tergantung sensor). Ini dua kali sia-sia:
+  //  1. Preview live di layar jadi berat → FPS drop, terutama di
+  //     device low-end/entry-level yang banyak dipakai di lapangan.
+  //  2. Foto hasil jepretan tetap di-downscale lagi ke maxDimension
+  //     1920px oleh ImageCompressor — jadi resolusi sensor penuh di
+  //     atas itu cuma menambah beban decode/encode tanpa menambah
+  //     kualitas akhir yang benar-benar dipakai.
+  //
+  // Sekarang default `ResolutionPreset.high` (umumnya ~1080p, pas
+  // dengan target 1920px itu), TAPI turun ke `ResolutionPreset.medium`
+  // di device yang oleh Android sendiri ditandai low-RAM
+  // (`ActivityManager.isLowRamDevice()`, diekspos device_info_plus
+  // sebagai `isLowRamDevice`) — ini flag resmi dari OS, bukan tebakan,
+  // jadi lebih bisa diandalkan daripada menebak dari model/brand.
+  // iOS tidak punya konsep low-RAM device yang setara & perangkatnya
+  // jauh lebih seragam, jadi selalu pakai `high`.
+  Future<ResolutionPreset> _pickResolutionPreset() async {
+    if (!Platform.isAndroid) return ResolutionPreset.high;
+    try {
+      final info = await DeviceInfoPlugin().androidInfo;
+      if (info.isLowRamDevice) {
+        debugPrint('📉 Low-RAM device terdeteksi → preview kamera pakai ResolutionPreset.medium');
+        return ResolutionPreset.medium;
+      }
+    } catch (e) {
+      debugPrint('⚠️ Gagal deteksi isLowRamDevice, fallback ke ResolutionPreset.high: $e');
+    }
+    return ResolutionPreset.high;
+  }
+
   Future<void> _initCamera() async {
     try {
       final cameras = await availableCameras();
@@ -125,7 +158,7 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
       );
       final controller = CameraController(
         backCamera,
-        ResolutionPreset.veryHigh,
+        await _pickResolutionPreset(),
         enableAudio: false,
         imageFormatGroup: ImageFormatGroup.jpeg,
       );
