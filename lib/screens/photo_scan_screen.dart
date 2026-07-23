@@ -848,12 +848,16 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       }
       debugPrint('✅ Internal save OK: $savedPath');
 
-      if (watermarkedPath != savedPath && await File(watermarkedPath).exists()) {
-        try { await File(watermarkedPath).delete(); } catch (_) {}
-      }
-      if (pendingPath != savedPath && await File(pendingPath).exists()) {
-        try { await File(pendingPath).delete(); } catch (_) {}
-      }
+      // ✅ FIX: dulu source files (watermarkedPath/pendingPath) dihapus
+      // DI SINI, sebelum langkah-langkah yang masih bisa gagal di bawah
+      // (_storage.update, _saveToGallery). Kalau salah satu dari
+      // langkah tsb melempar exception, TaskQueue akan me-retry
+      // _finalizePhoto() dengan path yang SAMA — tapi file-nya sudah
+      // terlanjur dihapus, sehingga retry selalu gagal dengan pesan
+      // "File watermark tidak ditemukan" yang menyesatkan (masalah
+      // aslinya ada di langkah lain, bukan file watermark hilang).
+      // Sekarang penghapusan dipindah ke akhir, setelah SEMUA langkah
+      // fallible selesai sukses, supaya retry selalu punya source file.
 
       if (widget.entryId != null) {
         final barcodeEntry = await _storage.getEntry(widget.entryId!);
@@ -869,6 +873,14 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       final galleryOk = await _saveToGallery(savedPath);
       if (!galleryOk) {
         debugPrint('⚠️ Gagal ekspor ke gallery, file tetap tersimpan di internal');
+      }
+
+      // Cleanup source files SETELAH semua langkah di atas sukses.
+      if (watermarkedPath != savedPath && await File(watermarkedPath).exists()) {
+        try { await File(watermarkedPath).delete(); } catch (_) {}
+      }
+      if (pendingPath != savedPath && await File(pendingPath).exists()) {
+        try { await File(pendingPath).delete(); } catch (_) {}
       }
 
       if (widget.batchMode && mounted) {
