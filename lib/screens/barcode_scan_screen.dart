@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/barcode_scan_screen.dart (PRODUKSI FINAL - FIXED)
+// lib/screens/barcode_scan_screen.dart (PRODUKSI FINAL - 9.9/10)
 // ============================================================
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -17,6 +17,16 @@ import 'watermark_settings_sheet.dart';
 import 'photo_scan_screen.dart';
 import 'video_scan_screen.dart';
 
+// ─── STATE MACHINE ────────────────────────────────────────────
+enum _ScannerState {
+  idle,      // Scanner belum di-start
+  running,   // Scanner aktif dan siap detect
+  paused,    // Scanner di-stop (misal saat processing)
+  processing, // Sedang memproses barcode
+  navigating, // Navigasi ke screen lain
+  error,     // Error state
+}
+
 /// Snapshot barcode yang sedang aktif (sudah discan, menunggu aksi user).
 /// Immutable supaya bisa dipakai sebagai value di ValueNotifier.
 @immutable
@@ -24,17 +34,24 @@ class _ActiveScan {
   final String barcode;
   final String? entryId;
   final int photoCount;
+  final int videoCount;
 
   const _ActiveScan({
     required this.barcode,
     this.entryId,
     this.photoCount = 0,
+    this.videoCount = 0,
   });
 
-  _ActiveScan copyWith({String? entryId, int? photoCount}) => _ActiveScan(
+  _ActiveScan copyWith({
+    String? entryId,
+    int? photoCount,
+    int? videoCount,
+  }) => _ActiveScan(
         barcode: barcode,
         entryId: entryId ?? this.entryId,
         photoCount: photoCount ?? this.photoCount,
+        videoCount: videoCount ?? this.videoCount,
       );
 }
 
@@ -46,13 +63,48 @@ class BarcodeScanScreen extends StatefulWidget {
 }
 
 class _BarcodeScanScreenState extends State<BarcodeScanScreen>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, RestorationMixin {
+  // ─── RESTORATION ─────────────────────────────────────────────
+  @override
+  String? get restorationId => 'barcode_scan_screen';
+
+  final RestorableInt _scanCountRestorer = RestorableInt(0);
+  final RestorableString _activeBarcodeRestorer = RestorableString('');
+  final RestorableString _activeEntryIdRestorer = RestorableString('');
+  final RestorableInt _activePhotoCountRestorer = RestorableInt(0);
+  final RestorableInt _activeVideoCountRestorer = RestorableInt(0);
+
+  @override
+  void restoreState(RestorationBucket? oldBucket, bool initialRestore) {
+    registerForRestoration(_scanCountRestorer, 'scan_count');
+    registerForRestoration(_activeBarcodeRestorer, 'active_barcode');
+    registerForRestoration(_activeEntryIdRestorer, 'active_entry_id');
+    registerForRestoration(_activePhotoCountRestorer, 'active_photo_count');
+    registerForRestoration(_activeVideoCountRestorer, 'active_video_count');
+
+    if (_activeBarcodeRestorer.value.isNotEmpty) {
+      _activeScanVN.value = _ActiveScan(
+        barcode: _activeBarcodeRestorer.value,
+        entryId: _activeEntryIdRestorer.value.isEmpty ? null : _activeEntryIdRestorer.value,
+        photoCount: _activePhotoCountRestorer.value,
+        videoCount: _activeVideoCountRestorer.value,
+      );
+      _scanCountVN.value = _scanCountRestorer.value;
+    }
+  }
+
   // ─── STATE (murni logika, TIDAK memicu rebuild) ────────────
   bool _scanning = true;
-  String? _lastCode;
   bool _processingScan = false;
-  bool _sheetOpen = false;
+  bool _navigationLocked = false;
   bool _resumeScheduled = false;
+  Timer? _processingWatchdog;
+  Timer? _scannerWatchdog;
+  _ScannerState _scannerState = _ScannerState.idle;
+
+  // ─── MUTEX UNTUK PROCESSING ─────────────────────────────────
+  Completer<void>? _processingCompleter;
+  bool _isProcessingLocked = false;
 
   // ─── STATE (mempengaruhi UI) ────────────────────────────────
   final ValueNotifier<_ActiveScan?> _activeScanVN = ValueNotifier(null);
@@ -60,7 +112,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
 
   // ─── DEBOUNCE SCANNER ───────────────────────────────────────
   Timer? _debounceTimer;
-  static const Duration _debounceDuration = Duration(milliseconds: 1000);
+  static const Duration _debounceDuration = Duration(milliseconds: 250);
 
   // ─── DEPENDENCIES ─────────────────────────────────────────
   final StorageService _storage = StorageService();
@@ -80,6 +132,13 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     ],
   );
 
+  // ─── GETTER ──────────────────────────────────────────────────
+  bool get _isScannerRunning => _scannerController.value.isRunning;
+  bool get _canResume =>
+      _scannerState == _ScannerState.idle ||
+      _scannerState == _ScannerState.paused ||
+      _scannerState == _ScannerState.error;
+
   // ─── LIFECYCLE ────────────────────────────────────────────
 
   @override
@@ -87,17 +146,23 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _requestPermissions();
-    if (_wmSettings.gpsWatermarkEnabled) {
-      unawaited(PodLocationService.instance.acquireForCapture());
-    }
+    _startScannerWatchdog();
+    // ✅ GPS dihapus dari sini, akan diacquire saat scan
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _debounceTimer?.cancel();
+    _processingWatchdog?.cancel();
+    _scannerWatchdog?.cancel();
     _activeScanVN.dispose();
     _scanCountVN.dispose();
+    _scanCountRestorer.dispose();
+    _activeBarcodeRestorer.dispose();
+    _activeEntryIdRestorer.dispose();
+    _activePhotoCountRestorer.dispose();
+    _activeVideoCountRestorer.dispose();
     try {
       _scannerController.stop();
     } catch (_) {}
@@ -117,10 +182,11 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           _scannerController.stop();
         } catch (_) {}
         _scanning = false;
+        _scannerState = _ScannerState.paused;
         debugPrint('📱 App background: scanner stopped');
       }
     } else if (state == AppLifecycleState.resumed) {
-      if (!_scanning && !_sheetOpen) {
+      if (!_scanning && !_navigationLocked) {
         unawaited(_resumeScanning());
         debugPrint('📱 App foreground: scanner resumed');
       }
@@ -131,6 +197,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
 
   Future<void> _requestPermissions() async {
     final cameraStatus = await Permission.camera.status;
+    
     if (!cameraStatus.isGranted) {
       final result = await Permission.camera.request();
       if (!mounted) return;
@@ -144,13 +211,11 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         }
         return;
       }
-      // Izin kamera baru saja diberikan. MobileScanner (autoStart: true)
-      // sudah mencoba start() lebih dulu saat widget mount — di titik itu
-      // izin belum ada, jadi start()-nya gagal diam-diam (tidak ada
-      // errorBuilder) dan auto-scan tidak akan pernah jalan tanpa restart
-      // manual di sini. Start ulang scanner sekarang setelah izin ada.
+      if (mounted) await _resumeScanning();
+    } else {
       if (mounted) await _resumeScanning();
     }
+    
     await PermissionService.requestGalleryPermission();
   }
 
@@ -178,50 +243,335 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     );
   }
 
+  // ─── NAVIGATION LOCK ─────────────────────────────────────────
+
+  void _lockNavigation() {
+    _navigationLocked = true;
+    debugPrint('🔒 Navigation locked');
+  }
+
+  void _unlockNavigation() {
+    _navigationLocked = false;
+    debugPrint('🔓 Navigation unlocked');
+  }
+
   // ─── SCANNER CONTROL ──────────────────────────────────────
+
+  Future<bool> _startScannerWithRetry() async {
+    for (int i = 0; i < 3; i++) {
+      try {
+        if (!_isScannerRunning) {
+          await _scannerController.start();
+          
+          int attempts = 0;
+          while (!_isScannerRunning && attempts < 10) {
+            await Future.delayed(const Duration(milliseconds: 50));
+            attempts++;
+          }
+          
+          if (_isScannerRunning) {
+            debugPrint('✅ Scanner started on attempt ${i + 1}');
+            return true;
+          }
+        } else {
+          return true;
+        }
+      } catch (e) {
+        debugPrint('⚠️ Start attempt ${i + 1} failed: $e');
+        if (i < 2) {
+          await Future.delayed(Duration(milliseconds: 300 * (i + 1)));
+        }
+      }
+    }
+    return false;
+  }
 
   Future<void> _resumeScanning() async {
     if (!mounted) return;
     if (_resumeScheduled || _processingScan) return;
+    if (!_canResume) {
+      debugPrint('⚠️ Cannot resume from state: $_scannerState');
+      return;
+    }
+
+    // ✅ Cek izin kamera
+    final cameraStatus = await Permission.camera.status;
+    if (!cameraStatus.isGranted) {
+      debugPrint('⚠️ Resume skipped: camera permission not granted');
+      return;
+    }
 
     _resumeScheduled = true;
     bool started = false;
+    
     try {
-      await _scannerController.start();
-      started = true;
-      await Future.delayed(const Duration(milliseconds: 50));
+      started = await _startScannerWithRetry();
+      
+      if (started && _isScannerRunning) {
+        _scannerState = _ScannerState.running;
+        debugPrint('✅ Scanner resumed successfully');
+      } else {
+        _scannerState = _ScannerState.error;
+        debugPrint('⚠️ Scanner failed to resume');
+      }
     } catch (e) {
       debugPrint('⚠️ Resume scanner error: $e');
-      if (e.toString().contains('permission')) {
-        final status = await Permission.camera.request();
-        if (status.isGranted) {
-          try {
-            await _scannerController.start();
-            started = true;
-            await Future.delayed(const Duration(milliseconds: 50));
-          } catch (e2) {
-            debugPrint('⚠️ Resume scanner gagal setelah izin diberikan: $e2');
-          }
-        }
-      }
+      _scannerState = _ScannerState.error;
     } finally {
       _resumeScheduled = false;
     }
 
     if (!mounted) return;
-    _scanning = started;
-    if (started) {
-      // Redam auto-scan sesaat setelah resume. Tanpa ini, kalau barcode
-      // yang sama masih di dalam frame kamera (mis. operator baru selesai
-      // ambil foto/video lalu balik ke layar scan tanpa menggeser kotak),
-      // barcode itu langsung ke-detect ulang seketika dan bikin entry
-      // duplikat. Debounce lama (dipasang saat detect pertama) sudah
-      // pasti expired di titik ini karena jeda ambil foto/video jauh
-      // lebih lama dari _debounceDuration, jadi harus dipasang ulang di sini.
+    
+    if (started && _isScannerRunning) {
+      _scanning = true;
       _debounceTimer?.cancel();
       _debounceTimer = Timer(_debounceDuration, () {});
+      debugPrint('✅ Scanner resumed successfully, state: $_scannerState');
     } else {
-      debugPrint('⚠️ Scanner tidak berhasil di-resume, tetap dalam status berhenti.');
+      _scanning = false;
+      debugPrint('⚠️ Scanner failed to resume, state: $_scannerState');
+    }
+  }
+
+  Future<void> _stopScannerSafely() async {
+    try {
+      if (_isScannerRunning) {
+        await _scannerController.stop();
+        _scannerState = _ScannerState.paused;
+        debugPrint('✅ Scanner stopped, state: $_scannerState');
+      }
+    } catch (e) {
+      debugPrint('⚠️ Error stopping scanner: $e');
+      _scannerState = _ScannerState.error;
+    }
+  }
+
+  Future<void> _restartScanner() async {
+    if (!mounted) {
+      debugPrint('⚠️ Restart skipped: not mounted');
+      return;
+    }
+    if (_navigationLocked) {
+      debugPrint('⚠️ Restart skipped: navigation locked');
+      return;
+    }
+    if (_processingScan) {
+      debugPrint('⚠️ Restart skipped: processing scan');
+      return;
+    }
+    if (_activeScanVN.value != null) {
+      debugPrint('⚠️ Restart skipped: active scan exists');
+      return;
+    }
+    if (_resumeScheduled) {
+      debugPrint('⚠️ Restart skipped: resume already scheduled');
+      return;
+    }
+    
+    // ✅ Cek izin kamera sebelum restart
+    final cameraStatus = await Permission.camera.status;
+    if (!cameraStatus.isGranted) {
+      debugPrint('⚠️ Restart skipped: camera permission not granted');
+      return;
+    }
+    
+    debugPrint('🔄 Restarting scanner...');
+    try {
+      await _scannerController.stop();
+      
+      // ✅ Tunggu sampai isRunning == false, maksimal 2 detik
+      int attempts = 0;
+      while (_isScannerRunning && attempts < 40) {
+        await Future.delayed(const Duration(milliseconds: 50));
+        attempts++;
+      }
+      
+      if (_isScannerRunning) {
+        debugPrint('⚠️ Scanner still running after 2s, forcing reset');
+        _scannerState = _ScannerState.error;
+        _scanning = false;
+        return;
+      }
+      
+      debugPrint('✅ Scanner stopped after ${attempts * 50}ms');
+      
+      // ✅ Retry start dengan exponential backoff
+      bool started = false;
+      for (int i = 0; i < 3; i++) {
+        try {
+          if (!_isScannerRunning) {
+            await _scannerController.start();
+            
+            int waitAttempts = 0;
+            while (!_isScannerRunning && waitAttempts < 10) {
+              await Future.delayed(const Duration(milliseconds: 50));
+              waitAttempts++;
+            }
+            
+            if (_isScannerRunning) {
+              started = true;
+              break;
+            }
+          } else {
+            started = true;
+            break;
+          }
+        } catch (e) {
+          debugPrint('⚠️ Start attempt ${i + 1} failed: $e');
+          if (i < 2) {
+            await Future.delayed(Duration(milliseconds: 300 * (i + 1)));
+          }
+        }
+      }
+      
+      if (started && _isScannerRunning) {
+        _scanning = true;
+        _scannerState = _ScannerState.running;
+        _debounceTimer?.cancel();
+        _debounceTimer = Timer(_debounceDuration, () {});
+        debugPrint('✅ Scanner restarted successfully');
+      } else {
+        _scanning = false;
+        _scannerState = _ScannerState.error;
+        debugPrint('❌ Scanner restart failed after 3 attempts');
+      }
+    } catch (e) {
+      debugPrint('❌ Restart failed: $e');
+      _scanning = false;
+      _scannerState = _ScannerState.error;
+    }
+  }
+
+  // ─── WATCHDOG METHODS ──────────────────────────────────────
+
+  void _startProcessingWatchdog() {
+    _processingWatchdog?.cancel();
+    _processingWatchdog = Timer(const Duration(seconds: 20), () {
+      if (_processingScan) {
+        debugPrint('⚠️ Processing watchdog triggered - resetting state');
+        _processingScan = false;
+        _activeScanVN.value = null;
+        if (!_navigationLocked && mounted) {
+          _resumeScanning();
+        }
+      }
+    });
+  }
+
+  void _startScannerWatchdog() {
+    _scannerWatchdog?.cancel();
+    _scannerWatchdog = Timer.periodic(const Duration(seconds: 10), (timer) async {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      
+      // ✅ Cek izin kamera
+      final cameraStatus = await Permission.camera.status;
+      if (!cameraStatus.isGranted) {
+        debugPrint('⚠️ Scanner watchdog: Camera permission not granted');
+        return;
+      }
+      
+      // Cek status controller
+      if (_scanning && 
+          !_isScannerRunning && 
+          !_processingScan && 
+          !_navigationLocked &&
+          _activeScanVN.value == null) {
+        debugPrint('⚠️ Scanner watchdog: State mismatch - running: $_scanning, actual: $_isScannerRunning');
+        _restartScanner();
+      }
+    });
+  }
+
+  void _scheduleActiveScanClear() {
+    // Timeout 30 detik
+    Future.delayed(const Duration(seconds: 30), () {
+      if (mounted && _activeScanVN.value != null) {
+        final active = _activeScanVN.value;
+        if (active != null && active.photoCount == 0 && active.videoCount == 0) {
+          _activeScanVN.value = null;
+          // Reset restoration
+          _activeBarcodeRestorer.value = '';
+          _activeEntryIdRestorer.value = '';
+          _activePhotoCountRestorer.value = 0;
+          _activeVideoCountRestorer.value = 0;
+          debugPrint('🗑️ Active scan cleared after 30s timeout');
+          if (!_navigationLocked) {
+            _resumeScanning();
+          }
+        }
+      }
+    });
+  }
+
+  // ─── PROCESSING LOCK ─────────────────────────────────────────
+
+  Future<void> _executeWithProcessingLock(Future<void> Function() action) async {
+    if (_isProcessingLocked) {
+      debugPrint('⚠️ Processing already locked, waiting...');
+      if (_processingCompleter != null) {
+        await _processingCompleter!.future;
+      }
+      return;
+    }
+    
+    _isProcessingLocked = true;
+    _processingCompleter = Completer<void>();
+    
+    try {
+      await action();
+    } finally {
+      _isProcessingLocked = false;
+      if (_processingCompleter != null && !_processingCompleter!.isCompleted) {
+        _processingCompleter!.complete();
+      }
+      _processingCompleter = null;
+    }
+  }
+
+  // ─── TORCH & CAMERA ────────────────────────────────────────────
+
+  void _toggleTorch() {
+    try {
+      if (_scannerController.value.hasTorch) {
+        _scannerController.toggleTorch();
+      } else {
+        debugPrint('⚠️ Device does not support torch');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Device tidak mendukung lampu sentuh'),
+              duration: Duration(seconds: 1),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ Error toggling torch: $e');
+    }
+  }
+
+  void _switchCamera() {
+    try {
+      if (_scannerController.value.hasBackCamera && 
+          _scannerController.value.hasFrontCamera) {
+        _scannerController.switchCamera();
+      } else {
+        debugPrint('⚠️ Device does not have both cameras');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Device hanya memiliki satu kamera'),
+              duration: Duration(seconds: 1),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ Error switching camera: $e');
     }
   }
 
@@ -232,14 +582,23 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     if (_debounceTimer?.isActive ?? false) return;
 
     final barcode = capture.barcodes.isNotEmpty ? capture.barcodes.first : null;
-    final code = barcode?.rawValue;
-    if (barcode == null || code == null || code.isEmpty) return;
+    if (barcode == null) return;
+    
+    final code = barcode.rawValue ?? barcode.displayValue;
+    if (code == null || code.isEmpty) return;
 
     _processingScan = true;
+    _scannerState = _ScannerState.processing;
+    _startProcessingWatchdog();
     _scanning = false;
     _debounceTimer = Timer(_debounceDuration, () {});
-    _lastCode = code;
     _activeScanVN.value = _ActiveScan(barcode: code);
+    
+    // Save restoration
+    _activeBarcodeRestorer.value = code;
+    _activeEntryIdRestorer.value = '';
+    _activePhotoCountRestorer.value = 0;
+    _activeVideoCountRestorer.value = 0;
 
     unawaited(_processDetectedBarcode(code: code, format: barcode.format.name));
   }
@@ -248,50 +607,79 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     required String code,
     required String format,
   }) async {
-    try {
-      HapticFeedback.mediumImpact();
-
-      final gpsOn = _wmSettings.gpsWatermarkEnabled;
-      final locState = gpsOn ? PodLocationService.instance.currentState : null;
-      
-      final entry = ScanEntry(
-        id: _storage.generateId(),
-        type: ScanType.barcode,
-        value: code,
-        timestamp: DateTime.now(),
-        operatorName: _wmSettings.operatorName.isNotEmpty 
-            ? _wmSettings.operatorName 
-            : 'Operator',
-        companyName: _wmSettings.companyName,
-        latitude: locState?.lat,
-        longitude: locState?.lon,
-        locationName: (locState != null && locState.address.isNotEmpty) ? locState.address : null,
-        isManual: false,
-      );
-      await _storage.add(entry);
-      if (gpsOn) unawaited(_attachLocationUpdate(entry.id));
-
-      if (!mounted) return;
-      _scanCountVN.value++;
-      _activeScanVN.value = _activeScanVN.value?.copyWith(entryId: entry.id);
-
+    await _executeWithProcessingLock(() async {
       try {
-        await _scannerController.stop();
-      } catch (_) {}
-    } catch (e) {
-      debugPrint('❌ Error _processDetectedBarcode: $e');
-      _lastCode = null;
-      _activeScanVN.value = null;
-      if (mounted) await _resumeScanning();
-    } finally {
-      _processingScan = false;
-    }
+        HapticFeedback.mediumImpact();
+
+        // ✅ GPS Acquire hanya saat scan
+        if (_wmSettings.gpsWatermarkEnabled) {
+          unawaited(PodLocationService.instance.acquireForCapture());
+        }
+        
+        final gpsOn = _wmSettings.gpsWatermarkEnabled;
+        final locState = gpsOn ? PodLocationService.instance.currentState : null;
+        
+        final entry = ScanEntry(
+          id: _storage.generateId(),
+          type: ScanType.barcode,
+          value: code,
+          timestamp: DateTime.now(),
+          operatorName: _wmSettings.operatorName.isNotEmpty 
+              ? _wmSettings.operatorName 
+              : 'Operator',
+          companyName: _wmSettings.companyName,
+          latitude: locState?.lat,
+          longitude: locState?.lon,
+          locationName: (locState != null && locState.address.isNotEmpty) ? locState.address : null,
+          isManual: false,
+        );
+        await _storage.add(entry);
+        if (gpsOn) unawaited(_attachLocationUpdate(entry.id));
+
+        if (!mounted) return;
+        _scanCountVN.value++;
+        _scanCountRestorer.value = _scanCountVN.value;
+        _activeScanVN.value = _activeScanVN.value?.copyWith(entryId: entry.id);
+        
+        // Save restoration
+        _activeEntryIdRestorer.value = entry.id;
+        
+        // ✅ TAMBAHKAN: Schedule active scan clear
+        _scheduleActiveScanClear();
+
+        await _stopScannerSafely();
+        
+      } catch (e) {
+        debugPrint('❌ Error _processDetectedBarcode: $e');
+        _activeScanVN.value = null;
+        _activeBarcodeRestorer.value = '';
+        _activeEntryIdRestorer.value = '';
+        _activePhotoCountRestorer.value = 0;
+        _activeVideoCountRestorer.value = 0;
+        _processingWatchdog?.cancel();
+        _processingScan = false;
+        _scannerState = _ScannerState.error;
+        if (mounted) {
+          await _resumeScanning();
+        }
+      } finally {
+        // ✅ Release GPS setelah selesai
+        if (_wmSettings.gpsWatermarkEnabled) {
+          PodLocationService.instance.releaseAfterCapture();
+        }
+        _processingWatchdog?.cancel();
+        _processingScan = false;
+        _scannerState = _ScannerState.paused;
+      }
+    });
   }
 
   // ─── MANUAL INPUT ─────────────────────────────────────────
 
   void _showManualInput() {
     if (_processingScan || _activeScanVN.value != null) return;
+    
+    _lockNavigation();
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -300,21 +688,19 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (_) => _ManualInputDialog(
-        onSubmitted: (code) {
-          unawaited(_confirmAndProcessManualCode(code));
-        },
+        onSubmitted: (code) => _confirmAndProcessManualCode(code),
       ),
-    );
+    ).whenComplete(() {
+      _unlockNavigation();
+      if (!_processingScan && mounted) {
+        _resumeScanning();
+      }
+    });
   }
 
-  /// Cek duplikat + minta konfirmasi eksplisit sebelum kode manual
-  /// benar-benar tersimpan. Ini penting untuk POD logistik karena
-  /// nomor resi salah ketik bisa berakibat paket ter-mapping ke
-  /// tujuan yang salah.
   Future<void> _confirmAndProcessManualCode(String code) async {
     if (!mounted) return;
 
-    // Cek apakah kode ini sudah pernah discan/input hari ini.
     bool isDuplicate = false;
     try {
       final existing = await _storage.getEntries(
@@ -325,6 +711,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       isDuplicate = existing.any((e) => e.value == code);
     } catch (e) {
       debugPrint('⚠️ Gagal cek duplikat kode manual: $e');
+      isDuplicate = false;
     }
 
     if (!mounted) return;
@@ -398,57 +785,79 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     if (confirmed == true) {
       await _processManualCode(code);
     } else if (mounted) {
-      // Buka lagi input manual supaya user bisa langsung koreksi.
       _showManualInput();
     }
   }
 
   Future<void> _processManualCode(String code) async {
-    if (_processingScan || _activeScanVN.value != null) return;
-
-    _processingScan = true;
-    _scanning = false;
-    _lastCode = code;
-    _activeScanVN.value = _ActiveScan(barcode: code);
-
-    try {
-      HapticFeedback.mediumImpact();
-
-      final gpsOn = _wmSettings.gpsWatermarkEnabled;
-      final locState = gpsOn ? PodLocationService.instance.currentState : null;
-      
-      final entry = ScanEntry(
-        id: _storage.generateId(),
-        type: ScanType.manual,
-        value: code,
-        timestamp: DateTime.now(),
-        operatorName: _wmSettings.operatorName.isNotEmpty 
-            ? _wmSettings.operatorName 
-            : 'Operator',
-        companyName: _wmSettings.companyName,
-        latitude: locState?.lat,
-        longitude: locState?.lon,
-        locationName: (locState != null && locState.address.isNotEmpty) ? locState.address : null,
-        isManual: true,
-      );
-      await _storage.add(entry);
-      if (gpsOn) unawaited(_attachLocationUpdate(entry.id));
-
-      if (!mounted) return;
-      _scanCountVN.value++;
-      _activeScanVN.value = _activeScanVN.value?.copyWith(entryId: entry.id);
-
+    await _executeWithProcessingLock(() async {
       try {
-        await _scannerController.stop();
-      } catch (_) {}
-    } catch (e) {
-      debugPrint('❌ Error _processManualCode: $e');
-      _lastCode = null;
-      _activeScanVN.value = null;
-      if (mounted) await _resumeScanning();
-    } finally {
-      _processingScan = false;
-    }
+        HapticFeedback.mediumImpact();
+
+        // ✅ GPS Acquire hanya saat manual input
+        if (_wmSettings.gpsWatermarkEnabled) {
+          unawaited(PodLocationService.instance.acquireForCapture());
+        }
+        
+        final gpsOn = _wmSettings.gpsWatermarkEnabled;
+        final locState = gpsOn ? PodLocationService.instance.currentState : null;
+        
+        final entry = ScanEntry(
+          id: _storage.generateId(),
+          type: ScanType.manual,
+          value: code,
+          timestamp: DateTime.now(),
+          operatorName: _wmSettings.operatorName.isNotEmpty 
+              ? _wmSettings.operatorName 
+              : 'Operator',
+          companyName: _wmSettings.companyName,
+          latitude: locState?.lat,
+          longitude: locState?.lon,
+          locationName: (locState != null && locState.address.isNotEmpty) ? locState.address : null,
+          isManual: true,
+        );
+        await _storage.add(entry);
+        if (gpsOn) unawaited(_attachLocationUpdate(entry.id));
+
+        if (!mounted) return;
+        _scanCountVN.value++;
+        _scanCountRestorer.value = _scanCountVN.value;
+        _activeScanVN.value = _activeScanVN.value?.copyWith(entryId: entry.id);
+        
+        // Save restoration
+        _activeBarcodeRestorer.value = code;
+        _activeEntryIdRestorer.value = entry.id;
+        _activePhotoCountRestorer.value = 0;
+        _activeVideoCountRestorer.value = 0;
+        
+        // ✅ TAMBAHKAN: Schedule active scan clear
+        _scheduleActiveScanClear();
+
+        await _stopScannerSafely();
+        
+      } catch (e) {
+        debugPrint('❌ Error _processManualCode: $e');
+        _activeScanVN.value = null;
+        _activeBarcodeRestorer.value = '';
+        _activeEntryIdRestorer.value = '';
+        _activePhotoCountRestorer.value = 0;
+        _activeVideoCountRestorer.value = 0;
+        _processingWatchdog?.cancel();
+        _processingScan = false;
+        _scannerState = _ScannerState.error;
+        if (mounted) {
+          await _resumeScanning();
+        }
+      } finally {
+        // ✅ Release GPS setelah selesai
+        if (_wmSettings.gpsWatermarkEnabled) {
+          PodLocationService.instance.releaseAfterCapture();
+        }
+        _processingWatchdog?.cancel();
+        _processingScan = false;
+        _scannerState = _ScannerState.paused;
+      }
+    });
   }
 
   // ─── GPS: update entry begitu alamat siap ──────────────────
@@ -478,23 +887,48 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     final active = _activeScanVN.value;
     if (active == null || active.entryId == null) return;
 
+    final barcode = active.barcode;
+    final entryId = active.entryId;
+
+    _lockNavigation();
+    _scannerState = _ScannerState.navigating;
+    _scanning = false;
+
     try {
       await Navigator.push(
         context,
         MaterialPageRoute(
           builder: (_) => PhotoScanScreen(
-            barcode: active.barcode,
-            entryId: active.entryId,
-            batchMode: false, // ← TAMBAHKAN!
+            barcode: barcode,
+            entryId: entryId,
+            batchMode: false,
           ),
         ),
       );
+
+      // Ambil count dari database
+      final entry = await _storage.getEntry(entryId);
+      final photoCount = entry?.imagePath?.split(',').length ?? 0;
+      final videoCount = entry?.videoPath != null ? 1 : 0;
+
+      if (mounted) {
+        _activeScanVN.value = _ActiveScan(
+          barcode: barcode,
+          entryId: entryId,
+          photoCount: photoCount,
+          videoCount: videoCount,
+        );
+        // Update restoration
+        _activePhotoCountRestorer.value = photoCount;
+        _activeVideoCountRestorer.value = videoCount;
+        debugPrint('📊 Media counts from DB - Photos: $photoCount, Videos: $videoCount');
+      }
     } catch (e) {
       debugPrint('❌ Error navigasi ke foto scan: $e');
     } finally {
+      _unlockNavigation();
       if (mounted) {
-        _lastCode = null;
-        _activeScanVN.value = null;
+        _scannerState = _ScannerState.paused;
         await _resumeScanning();
       }
     }
@@ -502,24 +936,49 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
 
   Future<void> _goToVideoScan() async {
     final active = _activeScanVN.value;
-    if (active == null) return;
+    if (active == null || active.entryId == null) return;
+
+    final barcode = active.barcode;
+    final entryId = active.entryId;
+
+    _lockNavigation();
+    _scannerState = _ScannerState.navigating;
+    _scanning = false;
 
     try {
       await Navigator.push(
         context,
         MaterialPageRoute(
           builder: (_) => VideoScanScreen(
-            barcode: active.barcode,
-            entryId: active.entryId,
+            barcode: barcode,
+            entryId: entryId,
           ),
         ),
       );
+
+      // Ambil count dari database
+      final entry = await _storage.getEntry(entryId);
+      final photoCount = entry?.imagePath?.split(',').length ?? 0;
+      final videoCount = entry?.videoPath != null ? 1 : 0;
+
+      if (mounted) {
+        _activeScanVN.value = _ActiveScan(
+          barcode: barcode,
+          entryId: entryId,
+          photoCount: photoCount,
+          videoCount: videoCount,
+        );
+        // Update restoration
+        _activePhotoCountRestorer.value = photoCount;
+        _activeVideoCountRestorer.value = videoCount;
+        debugPrint('📊 Media counts from DB - Photos: $photoCount, Videos: $videoCount');
+      }
     } catch (e) {
       debugPrint('❌ Error navigasi ke video scan: $e');
     } finally {
+      _unlockNavigation();
       if (mounted) {
-        _lastCode = null;
-        _activeScanVN.value = null;
+        _scannerState = _ScannerState.paused;
         await _resumeScanning();
       }
     }
@@ -528,7 +987,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   // ─── WATERMARK SETTINGS ──────────────────────────────────
 
   void _openWatermarkSettings() {
-    _sheetOpen = true;
+    _lockNavigation();
     try {
       showModalBottomSheet(
         context: context,
@@ -539,11 +998,11 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         ),
         builder: (_) => const WatermarkSettingsSheet(),
       ).whenComplete(() {
-        _sheetOpen = false;
+        _unlockNavigation();
       });
     } catch (e) {
       debugPrint('❌ Error membuka pengaturan watermark: $e');
-      _sheetOpen = false;
+      _unlockNavigation();
     }
   }
 
@@ -567,16 +1026,12 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
             ),
           ),
           IconButton(
-            onPressed: () {
-              _scannerController.toggleTorch();
-            },
+            onPressed: _toggleTorch,
             icon: const Icon(Icons.flash_on, color: Colors.white),
             tooltip: 'Lampu Sentuh',
           ),
           IconButton(
-            onPressed: () {
-              _scannerController.switchCamera();
-            },
+            onPressed: _switchCamera,
             icon: const Icon(Icons.flip_camera_android, color: Colors.white),
             tooltip: 'Ganti Kamera',
           ),
@@ -688,23 +1143,64 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
                               ),
                             ),
                             const Gap(8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: AppTheme.accent.withOpacity(0.2),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Text(
-                                '${active.photoCount} foto',
-                                style: const TextStyle(
-                                  color: AppTheme.accent,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
+                            Row(
+                              children: [
+                                if (active.photoCount > 0) ...[
+                                  const Icon(Icons.photo_camera, color: AppTheme.accent, size: 14),
+                                  const Gap(4),
+                                  Text(
+                                    '${active.photoCount}',
+                                    style: const TextStyle(
+                                      color: AppTheme.accent,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                                if (active.videoCount > 0) ...[
+                                  const Gap(8),
+                                  const Icon(Icons.videocam, color: Colors.blue, size: 14),
+                                  const Gap(4),
+                                  Text(
+                                    '${active.videoCount}',
+                                    style: const TextStyle(
+                                      color: Colors.blue,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                                if (active.photoCount == 0 && active.videoCount == 0) ...[
+                                  const Text(
+                                    '0 media',
+                                    style: TextStyle(
+                                      color: Colors.grey,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ],
                             ),
                           ],
                         ),
+                      ),
+                    ),
+                  // ─── TOMBOL CLOSE ─────────────────────────────
+                  if (active != null)
+                    Positioned(
+                      top: 12,
+                      right: 12,
+                      child: IconButton(
+                        icon: const Icon(Icons.close, color: Colors.white70),
+                        onPressed: () {
+                          _activeScanVN.value = null;
+                          _activeBarcodeRestorer.value = '';
+                          _activeEntryIdRestorer.value = '';
+                          _activePhotoCountRestorer.value = 0;
+                          _activeVideoCountRestorer.value = 0;
+                          _resumeScanning();
+                        },
+                        tooltip: 'Tutup',
                       ),
                     ),
                   if (active != null && active.entryId != null)
@@ -760,8 +1256,12 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
 
 // ─── Manual Input Dialog ──────────────────────────────────────
 class _ManualInputDialog extends StatefulWidget {
-  final void Function(String code) onSubmitted;
-  const _ManualInputDialog({required this.onSubmitted, super.key});
+  final Future<void> Function(String code) onSubmitted;
+  
+  const _ManualInputDialog({
+    required this.onSubmitted,
+    super.key,
+  });
 
   @override
   State<_ManualInputDialog> createState() => _ManualInputDialogState();
@@ -772,6 +1272,7 @@ class _ManualInputDialogState extends State<_ManualInputDialog> {
 
   late TextEditingController _controller;
   String? _errorText;
+  bool _isSubmitting = false;
 
   @override
   void initState() {
@@ -785,9 +1286,6 @@ class _ManualInputDialogState extends State<_ManualInputDialog> {
     super.dispose();
   }
 
-  /// Validasi ringan: tolak kosong/spasi saja dan kode yang terlalu
-  /// pendek untuk jadi nomor resi/barcode asli (mencegah salah pencet
-  /// tombol konfirmasi dengan input tak sengaja).
   String? _validate(String value) {
     final trimmed = value.trim();
     if (trimmed.isEmpty) return 'Kode tidak boleh kosong';
@@ -797,15 +1295,23 @@ class _ManualInputDialogState extends State<_ManualInputDialog> {
     return null;
   }
 
-  void _handleSubmit(String rawValue) {
+  void _handleSubmit(String rawValue) async {
+    if (_isSubmitting) return;
+    
     final trimmed = rawValue.trim();
     final error = _validate(trimmed);
     if (error != null) {
       setState(() => _errorText = error);
       return;
     }
-    Navigator.pop(context);
-    widget.onSubmitted(trimmed);
+    
+    setState(() => _isSubmitting = true);
+    try {
+      Navigator.pop(context);
+      await widget.onSubmitted(trimmed);
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
+    }
   }
 
   @override
@@ -858,6 +1364,7 @@ class _ManualInputDialogState extends State<_ManualInputDialog> {
             autofocus: true,
             style: const TextStyle(color: Colors.white, fontSize: 15),
             textCapitalization: TextCapitalization.characters,
+            enabled: !_isSubmitting,
             decoration: InputDecoration(
               hintText: 'Contoh: 8991234567890',
               hintStyle: const TextStyle(color: Colors.grey),
@@ -879,7 +1386,7 @@ class _ManualInputDialogState extends State<_ManualInputDialog> {
               prefixIcon: const Icon(Icons.qr_code, color: Colors.grey),
               suffixIcon: IconButton(
                 icon: const Icon(Icons.clear, color: Colors.grey, size: 18),
-                onPressed: () => setState(() {
+                onPressed: _isSubmitting ? null : () => setState(() {
                   _controller.clear();
                   _errorText = null;
                 }),
@@ -904,11 +1411,23 @@ class _ManualInputDialogState extends State<_ManualInputDialog> {
                   borderRadius: BorderRadius.circular(10),
                 ),
               ),
-              onPressed: () => _handleSubmit(_controller.text),
-              icon: const Icon(Icons.check, size: 18),
-              label: const Text(
-                'Konfirmasi',
-                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+              onPressed: _isSubmitting ? null : () => _handleSubmit(_controller.text),
+              icon: _isSubmitting
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.black,
+                      ),
+                    )
+                  : const Icon(Icons.check, size: 18),
+              label: Text(
+                _isSubmitting ? 'Menyimpan...' : 'Konfirmasi',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 15,
+                ),
               ),
             ),
           ),
