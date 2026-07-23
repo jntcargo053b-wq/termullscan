@@ -83,19 +83,31 @@ Future<String> _compressInIsolate(_CompressArgs args) async {
     }
 
     // Jika masih terlalu besar, turunkan resolusi lagi
+    // ✅ FIX MEMORY: dulu `resized` adalah variabel BARU, sedangkan
+    // `image` (bitmap resolusi sebelumnya) tetap hidup di memory sampai
+    // fungsi selesai — untuk foto besar (mis. 4000x3000 dari kamera
+    // modern), satu bitmap mentah bisa ~48MB, dan sebelumnya bitmap versi
+    // lama & baru bisa numpuk 2-3x lipat secara bersamaan. Sekarang di-
+    // reassign ke `image` supaya bitmap versi sebelumnya langsung lepas
+    // referensi (eligible di-GC) sebelum bitmap berikutnya dialokasikan:
+    // decode → process → (lepas referensi lama) → GC → process berikutnya.
+    // Ini juga sekaligus memperbaiki bug logika: sebelumnya turunan
+    // "smaller" di bawah selalu resize dari `image` ASLI (mengabaikan
+    // resize di blok ini), sekarang benar berantai dari hasil resize
+    // paling akhir.
     if (compressedSize > args.targetSizeBytes * 3) {
       double scale = (args.targetSizeBytes * 2) / compressedSize;
       scale = scale.clamp(0.3, 0.9);
-      final resized = img.copyResize(image, width: (image.width * scale).toInt(), height: (image.height * scale).toInt());
-      compressedBytes = img.encodeJpg(resized, quality: quality);
+      image = img.copyResize(image, width: (image.width * scale).toInt(), height: (image.height * scale).toInt());
+      compressedBytes = img.encodeJpg(image, quality: quality);
       compressedSize = compressedBytes.length;
     }
 
     // Pastikan tidak melebihi batas maksimum
     if (compressedSize > args.maxSizeBytes) {
-      final scale = 0.7;
-      final smaller = img.copyResize(image, width: (image.width * scale).toInt(), height: (image.height * scale).toInt());
-      compressedBytes = img.encodeJpg(smaller, quality: 70);
+      const scale = 0.7;
+      image = img.copyResize(image, width: (image.width * scale).toInt(), height: (image.height * scale).toInt());
+      compressedBytes = img.encodeJpg(image, quality: 70);
     }
 
     // Simpan hasil
