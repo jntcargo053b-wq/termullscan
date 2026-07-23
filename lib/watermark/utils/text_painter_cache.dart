@@ -193,26 +193,25 @@ class TextPainterCache {
   }
 
   /// Menghitung jumlah baris teks (menggunakan computeLineMetrics)
+  // ✅ FIX: dulu method ini SELALU bikin TextPainter baru & layout baru,
+  // beda sendiri dari getPainter/getMultiLinePainter di atas yang
+  // konsisten lewat cache — padahal untuk teks yang tidak berubah
+  // (mis. alamat yang sama dicek ulang tiap paintOnCanvas untuk
+  // menentukan wrap 1/2 baris), ini kerja layout dobel yang sia-sia.
+  // Sekarang pakai getMultiLinePainter() yang sama, supaya hasil
+  // layout-nya benar-benar dipakai ulang dari cache kalau teks & style
+  // sama seperti pemanggilan sebelumnya.
   static int countLines({
     required String text,
     required TextStyle style,
     double? maxWidth,
   }) {
-    final painter = TextPainter(
-      text: TextSpan(text: text, style: style),
-      textDirection: TextDirection.ltr,
-      maxLines: null, // Tidak ada batas untuk menghitung semua baris
+    final painter = getMultiLinePainter(
+      text: text,
+      style: style,
+      maxWidth: maxWidth,
     );
-
-    if (maxWidth != null) {
-      painter.layout(maxWidth: maxWidth);
-    } else {
-      painter.layout();
-    }
-
-    // 🔥 FIX: Gunakan computeLineMetrics() untuk mendapatkan jumlah baris
-    final lineMetrics = painter.computeLineMetrics();
-    return lineMetrics.length;
+    return painter.computeLineMetrics().length;
   }
 
   // ─── UTILITY ──────────────────────────────────────────────────
