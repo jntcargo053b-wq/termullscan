@@ -17,7 +17,7 @@ dependencies:
   image_picker: ^1.1.2
   intl: ^0.19.0
   uuid: ^4.3.1
-  device_info_plus: ^9.1.0
+  device_info_plus: ^10.1.2 # dinaikkan dari ^9.1.0: field `isLowRamDevice` (dipakai in_app_camera_screen.dart utk resolusi kamera adaptif) baru ada di 10.1.2+
   gap: ^3.0.1
   flutter_animate: ^4.5.0
   collection: ^1.18.0
