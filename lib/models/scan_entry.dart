@@ -77,9 +77,18 @@ class ScanEntry {
       country: json['country'] as String?,
       postalCode: json['postalCode'] as String?,
       videoDuration: json['videoDuration'] as int?,
-      isManual: json['isManual'] as bool? ?? false,
-      isSynced: json['isSynced'] as bool? ?? false,
+      isManual: _parseBool(json['isManual']),
+      isSynced: _parseBool(json['isSynced']),
     );
+  }
+
+  /// sqflite mengembalikan INTEGER (0/1), sedangkan backup JSON lama
+  /// bisa saja menyimpan bool asli — terima keduanya supaya tidak crash
+  /// saat membaca ulang data dari database.
+  static bool _parseBool(dynamic value) {
+    if (value is bool) return value;
+    if (value is int) return value != 0;
+    return false;
   }
 
   /// Alias untuk fromJson (kompatibilitas dengan database_helper)
@@ -104,8 +113,8 @@ class ScanEntry {
       'country': country,
       'postalCode': postalCode,
       'videoDuration': videoDuration,
-      'isManual': isManual,
-      'isSynced': isSynced,
+      'isManual': isManual ? 1 : 0,
+      'isSynced': isSynced ? 1 : 0,
     };
   }
 

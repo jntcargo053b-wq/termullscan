@@ -24,7 +24,7 @@ class DatabaseHelper {
     final path = join(dir.path, 'scan_log.db');
     return await openDatabase(
       path,
-      version: 5, // ⬆️ upgrade ke versi 5
+      version: 6, // ⬆️ upgrade ke versi 6: tambah kolom yang dipakai ScanEntry.toMap()
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -50,7 +50,17 @@ class DatabaseHelper {
         videoDuration INTEGER,
         videoThumbnail TEXT,
         galleryExported INTEGER DEFAULT 0,
-        videoLocalDeleted INTEGER DEFAULT 0
+        videoLocalDeleted INTEGER DEFAULT 0,
+        imagePath TEXT,
+        operatorName TEXT DEFAULT '',
+        companyName TEXT,
+        address TEXT,
+        city TEXT,
+        province TEXT,
+        country TEXT,
+        postalCode TEXT,
+        isManual INTEGER DEFAULT 0,
+        isSynced INTEGER DEFAULT 0
       )
     ''');
     await db.execute('CREATE INDEX idx_value ON scan_entries(value)');
@@ -76,6 +86,25 @@ class DatabaseHelper {
     if (oldVersion < 5) {
       await db.execute('ALTER TABLE scan_entries ADD COLUMN videoLocalDeleted INTEGER DEFAULT 0');
       debugPrint('✅ Database migrated to version 5: added videoLocalDeleted column');
+    }
+    // ─── MIGRASI VERSI 5 → 6 ──────────────────────────────
+    // Kolom-kolom ini sudah lama ditulis oleh ScanEntry.toMap() tapi belum
+    // pernah ada di skema tabel, sehingga SETIAP db.insert() (scan otomatis
+    // maupun input manual) gagal dengan error "no such column" dan proses
+    // scan terlihat "tidak berfungsi" karena entry-nya di-rollback diam-diam.
+    if (oldVersion < 6) {
+      await db.execute('ALTER TABLE scan_entries ADD COLUMN imagePath TEXT');
+      await db.execute("ALTER TABLE scan_entries ADD COLUMN operatorName TEXT DEFAULT ''");
+      await db.execute('ALTER TABLE scan_entries ADD COLUMN companyName TEXT');
+      await db.execute('ALTER TABLE scan_entries ADD COLUMN address TEXT');
+      await db.execute('ALTER TABLE scan_entries ADD COLUMN city TEXT');
+      await db.execute('ALTER TABLE scan_entries ADD COLUMN province TEXT');
+      await db.execute('ALTER TABLE scan_entries ADD COLUMN country TEXT');
+      await db.execute('ALTER TABLE scan_entries ADD COLUMN postalCode TEXT');
+      await db.execute('ALTER TABLE scan_entries ADD COLUMN isManual INTEGER DEFAULT 0');
+      await db.execute('ALTER TABLE scan_entries ADD COLUMN isSynced INTEGER DEFAULT 0');
+      debugPrint('✅ Database migrated to version 6: added operatorName/companyName/address/'
+          'city/province/country/postalCode/isManual/isSynced/imagePath columns');
     }
   }
 
