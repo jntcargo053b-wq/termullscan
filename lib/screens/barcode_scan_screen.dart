@@ -1,5 +1,5 @@
 // ============================================================
-// lib/screens/barcode_scan_screen.dart (PRODUKSI FINAL - 9.9/10)
+// lib/screens/barcode_scan_screen.dart (PRODUKSI FINAL - ALL ERRORS FIXED)
 // ============================================================
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -19,16 +19,15 @@ import 'video_scan_screen.dart';
 
 // ─── STATE MACHINE ────────────────────────────────────────────
 enum _ScannerState {
-  idle,      // Scanner belum di-start
-  running,   // Scanner aktif dan siap detect
-  paused,    // Scanner di-stop (misal saat processing)
-  processing, // Sedang memproses barcode
-  navigating, // Navigasi ke screen lain
-  error,     // Error state
+  idle,
+  running,
+  paused,
+  processing,
+  navigating,
+  error,
 }
 
-/// Snapshot barcode yang sedang aktif (sudah discan, menunggu aksi user).
-/// Immutable supaya bisa dipakai sebagai value di ValueNotifier.
+/// Snapshot barcode yang sedang aktif
 @immutable
 class _ActiveScan {
   final String barcode;
@@ -93,7 +92,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     }
   }
 
-  // ─── STATE (murni logika, TIDAK memicu rebuild) ────────────
+  // ─── STATE ────────────────────────────────────────────────────
   bool _scanning = true;
   bool _processingScan = false;
   bool _navigationLocked = false;
@@ -110,7 +109,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   final ValueNotifier<_ActiveScan?> _activeScanVN = ValueNotifier(null);
   final ValueNotifier<int> _scanCountVN = ValueNotifier(0);
 
-  // ─── DEBOUNCE SCANNER ───────────────────────────────────────
+  // ─── DEBOUNCE ────────────────────────────────────────────────
   Timer? _debounceTimer;
   static const Duration _debounceDuration = Duration(milliseconds: 250);
 
@@ -147,7 +146,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     WidgetsBinding.instance.addObserver(this);
     _requestPermissions();
     _startScannerWatchdog();
-    // ✅ GPS dihapus dari sini, akan diacquire saat scan
   }
 
   @override
@@ -294,7 +292,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       return;
     }
 
-    // ✅ Cek izin kamera
     final cameraStatus = await Permission.camera.status;
     if (!cameraStatus.isGranted) {
       debugPrint('⚠️ Resume skipped: camera permission not granted');
@@ -369,7 +366,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       return;
     }
     
-    // ✅ Cek izin kamera sebelum restart
     final cameraStatus = await Permission.camera.status;
     if (!cameraStatus.isGranted) {
       debugPrint('⚠️ Restart skipped: camera permission not granted');
@@ -380,7 +376,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     try {
       await _scannerController.stop();
       
-      // ✅ Tunggu sampai isRunning == false, maksimal 2 detik
       int attempts = 0;
       while (_isScannerRunning && attempts < 40) {
         await Future.delayed(const Duration(milliseconds: 50));
@@ -396,7 +391,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       
       debugPrint('✅ Scanner stopped after ${attempts * 50}ms');
       
-      // ✅ Retry start dengan exponential backoff
       bool started = false;
       for (int i = 0; i < 3; i++) {
         try {
@@ -467,14 +461,12 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         return;
       }
       
-      // ✅ Cek izin kamera
       final cameraStatus = await Permission.camera.status;
       if (!cameraStatus.isGranted) {
         debugPrint('⚠️ Scanner watchdog: Camera permission not granted');
         return;
       }
       
-      // Cek status controller
       if (_scanning && 
           !_isScannerRunning && 
           !_processingScan && 
@@ -487,13 +479,11 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   }
 
   void _scheduleActiveScanClear() {
-    // Timeout 30 detik
     Future.delayed(const Duration(seconds: 30), () {
       if (mounted && _activeScanVN.value != null) {
         final active = _activeScanVN.value;
         if (active != null && active.photoCount == 0 && active.videoCount == 0) {
           _activeScanVN.value = null;
-          // Reset restoration
           _activeBarcodeRestorer.value = '';
           _activeEntryIdRestorer.value = '';
           _activePhotoCountRestorer.value = 0;
@@ -536,8 +526,11 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
 
   void _toggleTorch() {
     try {
-      if (_scannerController.value.hasTorch) {
+      // ✅ FIX: Cek torchState untuk mengetahui apakah torch tersedia
+      // MobileScanner versi 5.x menggunakan torchState
+      if (_scannerController.value.torchState != null) {
         _scannerController.toggleTorch();
+        debugPrint('✅ Torch toggled');
       } else {
         debugPrint('⚠️ Device does not support torch');
         if (mounted) {
@@ -551,27 +544,32 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       }
     } catch (e) {
       debugPrint('⚠️ Error toggling torch: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Gagal mengaktifkan lampu sentuh'),
+            duration: Duration(seconds: 1),
+          ),
+        );
+      }
     }
   }
 
   void _switchCamera() {
     try {
-      if (_scannerController.value.hasBackCamera && 
-          _scannerController.value.hasFrontCamera) {
-        _scannerController.switchCamera();
-      } else {
-        debugPrint('⚠️ Device does not have both cameras');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Device hanya memiliki satu kamera'),
-              duration: Duration(seconds: 1),
-            ),
-          );
-        }
-      }
+      // ✅ FIX: Langsung switch, MobileScanner akan throw jika tidak tersedia
+      _scannerController.switchCamera();
+      debugPrint('✅ Camera switched');
     } catch (e) {
       debugPrint('⚠️ Error switching camera: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Device hanya memiliki satu kamera'),
+            duration: Duration(seconds: 1),
+          ),
+        );
+      }
     }
   }
 
@@ -594,7 +592,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     _debounceTimer = Timer(_debounceDuration, () {});
     _activeScanVN.value = _ActiveScan(barcode: code);
     
-    // Save restoration
     _activeBarcodeRestorer.value = code;
     _activeEntryIdRestorer.value = '';
     _activePhotoCountRestorer.value = 0;
@@ -611,7 +608,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       try {
         HapticFeedback.mediumImpact();
 
-        // ✅ GPS Acquire hanya saat scan
         if (_wmSettings.gpsWatermarkEnabled) {
           unawaited(PodLocationService.instance.acquireForCapture());
         }
@@ -641,10 +637,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         _scanCountRestorer.value = _scanCountVN.value;
         _activeScanVN.value = _activeScanVN.value?.copyWith(entryId: entry.id);
         
-        // Save restoration
         _activeEntryIdRestorer.value = entry.id;
         
-        // ✅ TAMBAHKAN: Schedule active scan clear
         _scheduleActiveScanClear();
 
         await _stopScannerSafely();
@@ -663,7 +657,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           await _resumeScanning();
         }
       } finally {
-        // ✅ Release GPS setelah selesai
         if (_wmSettings.gpsWatermarkEnabled) {
           PodLocationService.instance.releaseAfterCapture();
         }
@@ -794,7 +787,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       try {
         HapticFeedback.mediumImpact();
 
-        // ✅ GPS Acquire hanya saat manual input
         if (_wmSettings.gpsWatermarkEnabled) {
           unawaited(PodLocationService.instance.acquireForCapture());
         }
@@ -824,13 +816,11 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         _scanCountRestorer.value = _scanCountVN.value;
         _activeScanVN.value = _activeScanVN.value?.copyWith(entryId: entry.id);
         
-        // Save restoration
         _activeBarcodeRestorer.value = code;
         _activeEntryIdRestorer.value = entry.id;
         _activePhotoCountRestorer.value = 0;
         _activeVideoCountRestorer.value = 0;
         
-        // ✅ TAMBAHKAN: Schedule active scan clear
         _scheduleActiveScanClear();
 
         await _stopScannerSafely();
@@ -849,7 +839,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           await _resumeScanning();
         }
       } finally {
-        // ✅ Release GPS setelah selesai
         if (_wmSettings.gpsWatermarkEnabled) {
           PodLocationService.instance.releaseAfterCapture();
         }
@@ -888,7 +877,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     if (active == null || active.entryId == null) return;
 
     final barcode = active.barcode;
-    final entryId = active.entryId;
+    final entryId = active.entryId!; // ✅ Non-null assertion
 
     _lockNavigation();
     _scannerState = _ScannerState.navigating;
@@ -906,7 +895,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         ),
       );
 
-      // Ambil count dari database
       final entry = await _storage.getEntry(entryId);
       final photoCount = entry?.imagePath?.split(',').length ?? 0;
       final videoCount = entry?.videoPath != null ? 1 : 0;
@@ -918,7 +906,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           photoCount: photoCount,
           videoCount: videoCount,
         );
-        // Update restoration
         _activePhotoCountRestorer.value = photoCount;
         _activeVideoCountRestorer.value = videoCount;
         debugPrint('📊 Media counts from DB - Photos: $photoCount, Videos: $videoCount');
@@ -939,7 +926,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     if (active == null || active.entryId == null) return;
 
     final barcode = active.barcode;
-    final entryId = active.entryId;
+    final entryId = active.entryId!; // ✅ Non-null assertion
 
     _lockNavigation();
     _scannerState = _ScannerState.navigating;
@@ -956,7 +943,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         ),
       );
 
-      // Ambil count dari database
       final entry = await _storage.getEntry(entryId);
       final photoCount = entry?.imagePath?.split(',').length ?? 0;
       final videoCount = entry?.videoPath != null ? 1 : 0;
@@ -968,7 +954,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           photoCount: photoCount,
           videoCount: videoCount,
         );
-        // Update restoration
         _activePhotoCountRestorer.value = photoCount;
         _activeVideoCountRestorer.value = videoCount;
         debugPrint('📊 Media counts from DB - Photos: $photoCount, Videos: $videoCount');
