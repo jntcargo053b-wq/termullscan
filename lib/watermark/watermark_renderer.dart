@@ -14,6 +14,50 @@ class WatermarkRenderer {
   /// menyimpan foto tanpa watermark seperti sebelumnya.
   static String? lastError;
 
+  // ─── CACHE LOGO (SEKALI PER SESI, BUKAN PER RENDER) ────────
+  // ✅ FIX: dulu setiap render() (baik foto maupun overlay video)
+  // selalu baca ulang file logo dari disk + decode ulang, walau logo
+  // yang dipakai SAMA PERSIS antar pemanggilan. Ini kerja berulang
+  // yang paling terasa saat batch foto (beberapa foto per barcode) —
+  // logo perusahaan yang sama di-decode ulang untuk tiap foto. Logo
+  // hasil decode berukuran kecil (di-clamp 40–200px), jadi aman
+  // disimpan resident di memory selama path & targetWidth-nya sama;
+  // begitu logo diganti (path baru dari image_picker selalu unik) key
+  // otomatis beda dan cache lama diganti.
+  static ui.Image? _cachedLogoImage;
+  static String? _cachedLogoKey;
+
+  static Future<ui.Image?> _getLogoImage(
+    String logoPath, {
+    required int targetWidth,
+  }) async {
+    final key = '$logoPath|$targetWidth';
+    if (_cachedLogoKey == key && _cachedLogoImage != null) {
+      return _cachedLogoImage;
+    }
+
+    final codec = await _loadLogoCodec(logoPath, targetWidth: targetWidth);
+    if (codec == null) return null;
+    final frame = await codec.getNextFrame();
+    codec.dispose();
+
+    // Ganti cache: lepas gambar lama (kalau ada) sebelum simpan yang baru.
+    _cachedLogoImage?.dispose();
+    _cachedLogoImage = frame.image;
+    _cachedLogoKey = key;
+    return _cachedLogoImage;
+  }
+
+  /// Panggil kalau perlu paksa lepas cache logo (mis. saat memory
+  /// warning atau app dimatikan). Tidak wajib dipanggil saat user
+  /// ganti logo — path baru dari image picker selalu unik sehingga
+  /// cache lama otomatis tidak terpakai lagi.
+  static void clearLogoCache() {
+    _cachedLogoImage?.dispose();
+    _cachedLogoImage = null;
+    _cachedLogoKey = null;
+  }
+
   /// Render watermark ke file output (FOTO)
   static Future<String?> render({
     required String imagePath,
@@ -30,7 +74,6 @@ class WatermarkRenderer {
     ui.Image? srcImage;
     ui.Image? logoImage;
     ui.Codec? codec;
-    ui.Codec? logoCodec;
     ui.Image? outputImage;
 
     try {
@@ -56,13 +99,7 @@ class WatermarkRenderer {
       final photoHeight = srcImage.height.toDouble();
 
       if (settings.hasLogo && settings.logoPath != null && settings.logoPath!.isNotEmpty) {
-        logoCodec = await _loadLogoCodec(settings.logoPath!, targetWidth: 1600);
-        if (logoCodec != null) {
-          final logoFrame = await logoCodec.getNextFrame();
-          logoImage = logoFrame.image;
-          logoCodec.dispose();
-          logoCodec = null;
-        }
+        logoImage = await _getLogoImage(settings.logoPath!, targetWidth: 1600);
       }
 
       final data = WatermarkData(
@@ -132,9 +169,12 @@ class WatermarkRenderer {
       return null;
     } finally {
       codec?.dispose();
-      logoCodec?.dispose();
       srcImage?.dispose();
-      logoImage?.dispose();
+      // ✅ logoImage TIDAK di-dispose di sini lagi — itu instance cache
+      // yang dipakai ulang lintas pemanggilan render() (lihat
+      // _getLogoImage). Dispose-nya ditangani _getLogoImage sendiri
+      // saat cache diganti, atau lewat clearLogoCache() saat memory
+      // warning/app dimatikan.
       outputImage?.dispose();
     }
   }
@@ -148,18 +188,11 @@ class WatermarkRenderer {
     required ScanEntry entry,
   }) async {
     ui.Image? logoImage;
-    ui.Codec? logoCodec;
     ui.Image? outputImage;
 
     try {
       if (settings.hasLogo && settings.logoPath != null && settings.logoPath!.isNotEmpty) {
-        logoCodec = await _loadLogoCodec(settings.logoPath!, targetWidth: canvasWidth);
-        if (logoCodec != null) {
-          final logoFrame = await logoCodec.getNextFrame();
-          logoImage = logoFrame.image;
-          logoCodec.dispose();
-          logoCodec = null;
-        }
+        logoImage = await _getLogoImage(settings.logoPath!, targetWidth: canvasWidth);
       }
 
       final data = WatermarkData(
@@ -224,11 +257,8 @@ class WatermarkRenderer {
       debugPrint('❌ Gagal render overlay PNG: $e');
       return null;
     } finally {
-      // ✅ Dijamin dispose apa pun yang sempat ter-load, termasuk di jalur
-      // exception (mis. paintWatermarkOnly gagal) — sebelumnya logoImage
-      // hanya di-dispose di jalur sukses sehingga bocor di jalur gagal.
-      logoCodec?.dispose();
-      logoImage?.dispose();
+      // ✅ logoImage TIDAK di-dispose di sini lagi — instance cache
+      // bersama, lihat _getLogoImage/clearLogoCache di atas.
       outputImage?.dispose();
     }
   }
