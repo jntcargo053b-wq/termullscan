@@ -62,10 +62,10 @@ class ScanEntry {
     return ScanEntry(
       id: json['id'] as String,
       value: json['value'] as String,
-      type: ScanType.values[json['type'] as int],
+      type: ScanType.values[_parseInt(json['type']) ?? 0],
       imagePath: json['imagePath'] as String?,
       videoPath: json['videoPath'] as String?,
-      timestamp: DateTime.fromMillisecondsSinceEpoch(json['timestamp'] as int),
+      timestamp: DateTime.fromMillisecondsSinceEpoch(_parseInt(json['timestamp']) ?? 0),
       operatorName: json['operatorName'] as String,
       companyName: json['companyName'] as String?,
       latitude: (json['latitude'] as num?)?.toDouble(),
@@ -76,7 +76,7 @@ class ScanEntry {
       province: json['province'] as String?,
       country: json['country'] as String?,
       postalCode: json['postalCode'] as String?,
-      videoDuration: json['videoDuration'] as int?,
+      videoDuration: _parseInt(json['videoDuration']),
       isManual: _parseBool(json['isManual']),
       isSynced: _parseBool(json['isSynced']),
     );
@@ -89,6 +89,25 @@ class ScanEntry {
     if (value is bool) return value;
     if (value is int) return value != 0;
     return false;
+  }
+
+  /// ✅ FIX: kolom `type` di skema sqlite dideklarasikan sebagai TEXT,
+  /// sementara toJson() menyimpan `type.index` (int). Karena kolom TEXT
+  /// punya "type affinity" di SQLite, nilai integer yang di-insert
+  /// otomatis dikonversi/tersimpan sebagai teks — jadi saat dibaca
+  /// kembali, sqflite bisa mengembalikan String, bukan int. Cast paksa
+  /// `as int` pada nilai itu menyebabkan crash
+  /// "type 'String' is not a subtype of type 'int' in type cast" saat
+  /// aplikasi mencoba update entry lama (mis. menambah path foto baru)
+  /// yang datanya sudah kadung tersimpan dalam bentuk teks. Parser ini
+  /// menerima int, String angka, maupun num generik supaya proses baca
+  /// tidak pernah crash karena perbedaan tipe penyimpanan.
+  static int? _parseInt(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value);
+    return null;
   }
 
   /// Alias untuk fromJson (kompatibilitas dengan database_helper)
