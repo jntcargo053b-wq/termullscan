@@ -4,7 +4,7 @@
 // ============================================================
 // Spec:
 //   accuracy threshold (terima sample) : 25m
-//   capture threshold (status Good)    : 15m
+//   capture threshold (status Good)    : 20m
 //   excellent threshold                : 10m
 //   excellent max stdDev (cluster)     : 8m
 //   excellent max radius (cluster)     : 12m
@@ -44,7 +44,7 @@ class GpsConfig {
 
   const GpsConfig({
     this.accuracyThreshold = 25.0,
-    this.captureThreshold = 15.0,
+    this.captureThreshold = 20.0,
     this.excellentThreshold = 10.0,
     this.excellentMaxStdDev = 8.0,
     this.excellentMaxRadius = 12.0,

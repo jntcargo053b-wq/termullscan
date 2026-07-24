@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
+import 'package:image/image.dart' as img;
 import '../models/scan_entry.dart';
 import 'models/watermark_data.dart';
 import 'watermark_factory.dart';
@@ -148,20 +149,51 @@ class WatermarkRenderer {
         metrics.canvasHeight.round(),
       );
 
-      final byteData = await outputImage.toByteData(format: ui.ImageByteFormat.png);
+      // ✅ FIX PERFORMA: dulu di-encode PNG (lossless, besar) di sini,
+      // padahal ImageCompressor sebelumnya sudah mengecilkan foto ke
+      // target KB dalam bentuk JPEG — manfaat itu hilang lagi karena
+      // hasil akhir yang benar-benar disimpan/di-export ke gallery
+      // adalah PNG yang jauh lebih besar (bisa 3-10x lipat), sehingga
+      // tulis-disk, pindah ke storage internal, dan terutama export ke
+      // gallery (copy ke MediaStore) jadi lebih lambat tanpa menambah
+      // kualitas visual yang benar-benar terlihat (ini foto natural +
+      // teks, bukan grafis dengan area flat besar yang diuntungkan PNG).
+      // Ambil raw RGBA dulu (masih di main isolate, murni memory copy,
+      // cepat), lalu encode ke JPEG di ISOLATE TERPISAH via compute()
+      // supaya proses encode (yang bisa berat utk foto besar) tidak
+      // memblokir UI thread.
+      final rawBytes = await outputImage.toByteData(format: ui.ImageByteFormat.rawRgba);
+      final outWidth = outputImage.width;
+      final outHeight = outputImage.height;
       outputImage.dispose();
       outputImage = null;
 
-      if (byteData == null) {
-        lastError = 'Gagal meng-encode PNG hasil watermark';
-        debugPrint('❌ Gagal encode PNG');
+      if (rawBytes == null) {
+        lastError = 'Gagal membaca hasil watermark (raw RGBA)';
+        debugPrint('❌ Gagal membaca raw RGBA hasil watermark');
+        return null;
+      }
+
+      final jpegBytes = await compute(
+        _encodeWatermarkJpeg,
+        _JpegEncodeArgs(
+          rgbaBytes: rawBytes.buffer.asUint8List(),
+          width: outWidth,
+          height: outHeight,
+          quality: 92,
+        ),
+      );
+
+      if (jpegBytes == null) {
+        lastError = 'Gagal meng-encode JPEG hasil watermark';
+        debugPrint('❌ Gagal encode JPEG');
         return null;
       }
 
       final outputFile = File(outputPath);
-      await outputFile.writeAsBytes(byteData.buffer.asUint8List());
+      await outputFile.writeAsBytes(jpegBytes);
 
-      if (kDebugMode) debugPrint('✅ Watermark saved: $outputPath');
+      if (kDebugMode) debugPrint('✅ Watermark saved (JPEG): $outputPath');
       return outputPath;
     } catch (e, stack) {
       lastError = e.toString();
@@ -282,5 +314,41 @@ class WatermarkRenderer {
       if (kDebugMode) debugPrint('⚠️ Error memuat logo: $e');
       return null;
     }
+  }
+}
+
+// ─── ENCODE JPEG DI ISOLATE (untuk hasil watermark FOTO) ─────────
+// Dipisah jadi top-level function (bukan method) supaya bisa dikirim
+// ke isolate lewat compute() — sama pola dengan ImageCompressor.
+class _JpegEncodeArgs {
+  final Uint8List rgbaBytes;
+  final int width;
+  final int height;
+  final int quality;
+
+  _JpegEncodeArgs({
+    required this.rgbaBytes,
+    required this.width,
+    required this.height,
+    required this.quality,
+  });
+}
+
+Uint8List? _encodeWatermarkJpeg(_JpegEncodeArgs args) {
+  try {
+    final image = img.Image.fromBytes(
+      width: args.width,
+      height: args.height,
+      bytes: args.rgbaBytes.buffer,
+      numChannels: 4,
+      order: img.ChannelOrder.rgba,
+    );
+    return Uint8List.fromList(img.encodeJpg(image, quality: args.quality));
+  } catch (e) {
+    // Tidak pakai debugPrint di sini karena ini jalan di isolate
+    // terpisah — kDebugMode/debugPrint bisa tidak konsisten di luar
+    // isolate utama. Kegagalan cukup dikembalikan sebagai null;
+    // pemanggil (render()) yang menangani sebagai error.
+    return null;
   }
 }

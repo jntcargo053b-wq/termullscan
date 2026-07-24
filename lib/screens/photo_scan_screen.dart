@@ -462,7 +462,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   Future<String> _applyWatermark(String imagePath, DateTime timestamp, int photoIndex) async {
     final fileName = _resolveFileName(photoIndex);
     final outputPath =
-        '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.png';
+        '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.jpg';
 
     // ✅ FIX RACE CONDITION ALAMAT: dulu pakai `.currentState` (snapshot
     // instan), sehingga watermark foto sering "kepalang dibakar" duluan

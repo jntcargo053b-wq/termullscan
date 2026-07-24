@@ -282,6 +282,19 @@ class PodLocationService {
           debugPrint('PodLocationService: OS lastKnown injected '
               'acc=${osLast.accuracy.toStringAsFixed(1)}m');
         }
+
+        // ✅ FIX ALAMAT TIDAK MUNCUL: jangan tunggu event stream
+        // pertama untuk mulai geocode — di indoor/gudang, stream bisa
+        // lambat atau sample-nya keburu tidak memenuhi accuracyThreshold.
+        // Koordinat OS cache ini sudah cukup untuk mulai reverse-geocode
+        // di background; kalau nanti stream dapat posisi yang jauh
+        // berbeda, _onPosition akan re-geocode via cek `movedFar`.
+        if (!_geocodeDone) {
+          _geocodeDone    = true;
+          _lastGeocodeLat = osLast.latitude;
+          _lastGeocodeLon = osLast.longitude;
+          unawaited(_geocode(osLast.latitude, osLast.longitude));
+        }
       }
     } catch (e) {
       if (kDebugMode) debugPrint('PodLocationService: getLastKnownPosition error $e');
@@ -373,13 +386,22 @@ class PodLocationService {
       mode:           PodGpsMode.acquiring,
     ));
 
-    // Geocode: canCapture pertama kali ATAU bergerak > _geocodeMoveM
+    // ✅ FIX ALAMAT TIDAK MUNCUL: dulu geocode hanya dipicu kalau
+    // conf.canCapture (confidence good/excellent, akurasi <=15m).
+    // Di dalam gudang/gedung, GPS sering tidak pernah setepat itu —
+    // bahkan banyak sample ditolak duluan oleh processSample() karena
+    // akurasi >25m — sehingga confidence mentok di poor/fair selamanya
+    // dan alamat tidak pernah di-resolve, walau lat/lon sudah ada
+    // (makanya watermark cuma tampilkan koordinat). Reverse-geocoding
+    // tidak butuh presisi setinggi capture; cukup ada posisi valid.
+    // Geocode sekarang dipicu begitu ada lat/lon pertama kali ATAU
+    // sudah bergerak > _geocodeMoveM dari titik geocode terakhir.
     final movedFar = _geocodeDone &&
         _lastGeocodeLat != null &&
         PodGpsEngine.haversinePublic(
             _lastGeocodeLat!, _lastGeocodeLon!, lat, lon) > _geocodeMoveM;
 
-    if ((!_geocodeDone && conf.canCapture) || movedFar) {
+    if (!_geocodeDone || movedFar) {
       _geocodeDone    = true;
       _lastGeocodeLat = lat;
       _lastGeocodeLon = lon;

@@ -91,20 +91,21 @@ class _LogScreenState extends State<LogScreen> {
         sortDir: _sortDir,
       );
 
-      final totalCount = await _storage.getCount(
-        searchQuery: _searchQuery.isNotEmpty ? _searchQuery : null,
-        period: _filterPeriod != 'Semua' ? _filterPeriod : null,
-      );
-
       if (refresh) {
         _filteredEntries = newEntries;
       } else {
         _filteredEntries.addAll(newEntries);
       }
 
-      _hasMore = _filteredEntries.length < totalCount;
+      // ✅ FIX PERFORMA: dulu ada query getCount() terpisah (full scan
+      // dengan 5 klausa LIKE) di SETIAP page load hanya untuk menghitung
+      // _hasMore — padahal totalCount tidak pernah ditampilkan ke user
+      // (cek: tidak ada UI "X dari Y hasil"). Kalau jumlah baris yang
+      // kembali lebih kecil dari pageSize yang diminta, otomatis berarti
+      // sudah halaman terakhir — tidak perlu query kedua sama sekali.
+      _hasMore = newEntries.length >= _pageSize;
       _currentPage++;
-      debugPrint('📊 Loaded ${newEntries.length} entries, total: $totalCount');
+      debugPrint('📊 Loaded ${newEntries.length} entries (page $_currentPage)');
     } catch (e) {
       debugPrint('Error loading entries: $e');
       if (refresh) _filteredEntries = [];

@@ -3,6 +3,7 @@
 // ============================================================
 import 'dart:async';
 import 'dart:io';
+import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:gap/gap.dart';
@@ -10,13 +11,16 @@ import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:saver_gallery/saver_gallery.dart';
+import 'package:video_thumbnail/video_thumbnail.dart';
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
 import '../services/permission_service.dart';
 import '../services/pod_location_service.dart';
+import '../services/task_queue.dart';
+import '../services/background/video_processing_service.dart';
 import '../theme/app_theme.dart';
 import '../watermark/watermark_settings.dart';
-import '../watermark/video_watermark_service.dart';
+import '../services/watermark/watermark_service.dart';
 import 'watermark_settings_sheet.dart';
 import 'preview_screen.dart';
 
@@ -34,6 +38,23 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
   final WatermarkSettings _wmSettings = WatermarkSettings();
   final ImagePicker _picker = ImagePicker();
 
+  // ─── TaskQueue (render watermark video) ──────────────────────
+  // maxWorkers: 1 — beda dengan foto (2 worker): render video FFmpeg
+  // berat di CPU/encoder, jalan 2 sekaligus cuma bikin keduanya lebih
+  // lambat, bukan lebih cepat. onActiveStart/onActiveEnd disambungkan ke
+  // VideoProcessingService supaya notifikasi foreground service otomatis
+  // menyala selama task render berjalan (proteksi dari Android membekukan
+  // proses saat app di-background) dan mati begitu antrian benar-benar
+  // kosong.
+  late final TaskQueue _taskQueue = TaskQueue(
+    maxWorkers: 1,
+    onActiveStart: () => VideoProcessingService.markBusy(
+      title: 'TERMULScan',
+      text: 'Memproses video...',
+    ),
+    onActiveEnd: () => VideoProcessingService.markIdle(),
+  );
+
   bool _isRecording = false;
   bool _isProcessing = false;
   String? _videoPath;
@@ -47,6 +68,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
   void initState() {
     super.initState();
     _requestPermissions();
+    unawaited(VideoProcessingService.requestPermissions());
     if (_wmSettings.gpsWatermarkEnabled) {
       unawaited(PodLocationService.instance.acquireForCapture());
     }
@@ -54,6 +76,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
 
   @override
   void dispose() {
+    _taskQueue.dispose();
     if (_wmSettings.gpsWatermarkEnabled) {
       PodLocationService.instance.releaseAfterCapture();
     }
@@ -252,12 +275,6 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         setState(() => _videoDuration = duration);
       }
 
-      // Buat thumbnail
-      final thumbnailPath = await _generateThumbnail(videoPath);
-      if (thumbnailPath != null) {
-        setState(() => _thumbnailPath = thumbnailPath);
-      }
-
       // Simpan ke gallery
       if (_hasGalleryPermission) {
         final saved = await SaverGallery.saveFile(
@@ -388,26 +405,17 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       final file = File(videoPath);
       if (!await file.exists()) return null;
 
-      // Gunakan FFmpeg untuk mendapatkan durasi
-      final result = await Process.run(
-        'ffprobe',
-        [
-          '-v',
-          'error',
-          '-show_entries',
-          'format=duration',
-          '-of',
-          'default=noprint_wrappers=1:nokey=1',
-          videoPath,
-        ],
-      );
+      // FFprobeKit: binding native ke libffprobe lewat method channel.
+      // Bukan lewat Process.run — tidak ada binary 'ffprobe' di PATH
+      // Android/iOS untuk di-exec seperti CLI biasa.
+      final session = await FFprobeKit.getMediaInformation(videoPath)
+          .timeout(const Duration(seconds: 10));
+      final mediaInfo = session.getMediaInformation();
+      if (mediaInfo == null) return null;
 
-      if (result.exitCode == 0) {
-        final durationStr = result.stdout.toString().trim();
-        if (durationStr.isNotEmpty) {
-          return (double.tryParse(durationStr)?.ceil()) ?? null;
-        }
-      }
+      final durationStr = mediaInfo.getDuration();
+      final duration = double.tryParse(durationStr?.toString() ?? '');
+      if (duration != null) return duration.ceil();
     } catch (e) {
       debugPrint('⚠️ Error getting video duration: $e');
     }
@@ -415,50 +423,73 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
   }
 
   // ─── GENERATE THUMBNAIL ─────────────────────────────────────
-
-  Future<String?> _generateThumbnail(String videoPath) async {
+  // Dipanggil dari _renderWatermark() SETELAH path final (pasca-watermark,
+  // pasca-_storage.saveVideo) diketahui — supaya thumbPath yang ditulis di
+  // sini cocok persis dengan konvensi ScanEntry.videoThumbnail (dipakai
+  // ThumbnailCacheService/log_screen.dart). Generate di path lama (pra-
+  // watermark) percuma: nama file akhir video berubah setelah disimpan
+  // ulang, jadi thumbnail lama tidak akan pernah ketemu.
+  //
+  // Pakai video_thumbnail (native plugin, sudah jadi dependency & sudah
+  // dipakai ThumbnailCacheService untuk fallback on-demand) — bukan FFmpeg.
+  // Decode 1 frame lewat decoder native jauh lebih ringan daripada spawn
+  // proses FFmpeg penuh cuma untuk 1 gambar.
+  Future<String?> _generateThumbnail(String videoPath, String thumbnailPath) async {
     try {
-      final dir = File(videoPath).parent.path;
-      final baseName = videoPath.split('/').last.split('.').first;
-      final thumbPath = '$dir/${baseName}_thumb.jpg';
-
-      final result = await Process.run(
-        'ffmpeg',
-        [
-          '-i',
-          videoPath,
-          '-ss',
-          '00:00:01',
-          '-vframes',
-          '1',
-          '-q:v',
-          '2',
-          thumbPath,
-          '-y',
-        ],
+      final bytes = await VideoThumbnail.thumbnailData(
+        video: videoPath,
+        imageFormat: ImageFormat.JPEG,
+        maxHeight: 200,
+        quality: 70,
       );
+      if (bytes == null || bytes.isEmpty) return null;
 
-      if (result.exitCode == 0 && await File(thumbPath).exists()) {
-        return thumbPath;
-      }
+      await File(thumbnailPath).writeAsBytes(bytes);
+      return thumbnailPath;
     } catch (e) {
       debugPrint('⚠️ Error generating thumbnail: $e');
+      return null;
     }
-    return null;
   }
 
   // ─── RENDER WATERMARK ──────────────────────────────────────
-
+  // Dijalankan lewat _taskQueue (bukan langsung di-await inline) supaya:
+  // 1. Foreground service (VideoProcessingService) otomatis menyala selama
+  //    render FFmpeg berjalan — proteksi dari Android membekukan proses
+  //    saat app di-background di tengah render yang panjang.
+  // 2. Fondasi siap untuk pengembangan lanjut (mis. batch/antrian video)
+  //    tanpa perlu menulis ulang alur ini.
+  // Alur _processVideo tetap menunggu (await) hasilnya seperti sebelumnya —
+  // preview baru ditampilkan setelah render selesai — jadi perilaku yang
+  // terlihat user tidak berubah, cuma proteksinya yang bertambah.
   Future<void> _renderWatermark(String videoPath, ScanEntry entry) async {
+    final completer = Completer<void>();
+    _taskQueue.add(
+      label: 'Render video ${entry.id}',
+      maxRetries: 0, // encode gagal biasanya bukan soal transient — addWatermark sendiri sudah punya fallback drawtext internal, retry otomatis cuma bikin gagal 2x lebih lama.
+      work: () => _doRenderWatermark(videoPath, entry),
+      onSuccess: (_) {
+        if (!completer.isCompleted) completer.complete();
+      },
+      onError: (error) {
+        debugPrint('⚠️ Error rendering watermark: $error');
+        if (!completer.isCompleted) completer.complete();
+      },
+    );
+    return completer.future;
+  }
+
+  Future<void> _doRenderWatermark(String videoPath, ScanEntry entry) async {
     try {
       final outputDir = await getTemporaryDirectory();
       final outputPath = '${outputDir.path}/watermarked_${DateTime.now().millisecondsSinceEpoch}.mp4';
 
-      final result = await VideoWatermarkService.renderVideo(
-        videoPath: videoPath,
+      final result = await VideoWatermarkService.addWatermark(
+        inputPath: videoPath,
         outputPath: outputPath,
-        settings: _wmSettings,
         entry: entry,
+        settings: _wmSettings,
+        keepAudio: true,
       );
 
       if (result != null && await File(result).exists()) {
@@ -466,7 +497,17 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         if (savedPath.isNotEmpty) {
           final updated = entry.copyWith(videoPath: savedPath);
           await _storage.update(updated);
-          setState(() => _videoPath = savedPath);
+          if (mounted) setState(() => _videoPath = savedPath);
+
+          // Thumbnail baru dibuat sekarang, di lokasi yang diturunkan dari
+          // path FINAL — bukan dari path rekaman mentah sebelum watermark.
+          final thumbPath = updated.videoThumbnail;
+          if (thumbPath != null) {
+            final generated = await _generateThumbnail(savedPath, thumbPath);
+            if (generated != null && mounted) {
+              setState(() => _thumbnailPath = generated);
+            }
+          }
         }
       } else {
         debugPrint('⚠️ Watermark render failed, using original video');
