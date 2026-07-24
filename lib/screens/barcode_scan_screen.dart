@@ -657,9 +657,23 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           await _resumeScanning();
         }
       } finally {
-        if (_wmSettings.gpsWatermarkEnabled) {
-          PodLocationService.instance.releaseAfterCapture();
-        }
+        // ✅ FIX: dulu releaseAfterCapture() dipanggil DI SINI, tepat
+        // setelah try block selesai (yang isinya cuma kerja ringan:
+        // haptic, simpan entry, stop scanner — beres dalam hitungan
+        // milidetik). Ini menghentikan stream GPS jauh sebelum sempat
+        // lock, apalagi sebelum geocode() sempat terpicu (geocode baru
+        // jalan setelah confidence mencapai canCapture). Akibatnya:
+        // acquireForCapture() yang dipanggil di atas jadi sia-sia —
+        // begitu PhotoScanScreen/VideoScanScreen dibuka, GPS+alamat
+        // mulai dari nol lagi via acquireForCapture() miliknya sendiri,
+        // padahal maksud awal manggil acquire di titik scan barcode
+        // justru supaya GPS+alamat sudah "panas" duluan saat user
+        // lanjut ke kamera. Sekarang release TIDAK dipanggil di sini —
+        // GPS dibiarkan tetap jalan (auto-stop sendiri lewat
+        // _acquireDeadline 12 detik kalau tidak kunjung lock, jadi
+        // tetap aman dari sisi baterai). Kalau user tidak lanjut ke
+        // kamera sama sekali, release tetap terjadi lewat dispose()
+        // layar ini.
         _processingWatchdog?.cancel();
         _processingScan = false;
         _scannerState = _ScannerState.paused;
@@ -839,9 +853,10 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           await _resumeScanning();
         }
       } finally {
-        if (_wmSettings.gpsWatermarkEnabled) {
-          PodLocationService.instance.releaseAfterCapture();
-        }
+        // ✅ FIX: sama seperti _processDetectedBarcode — releaseAfterCapture()
+        // dihapus dari sini supaya GPS+geocode tetap "panas" sampai
+        // user membuka PhotoScanScreen/VideoScanScreen, bukan restart
+        // dari nol. Lihat komentar lengkap di _processDetectedBarcode.
         _processingWatchdog?.cancel();
         _processingScan = false;
         _scannerState = _ScannerState.paused;

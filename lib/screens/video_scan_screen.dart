@@ -288,9 +288,15 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       // penting dari bukti pengiriman, jadi di sini kita tunggu dulu
       // (dengan timeout wajar) sebelum entry final dibuat & video
       // di-watermark.
+      //
+      // ✅ FIX #2: timeout di sini sempat cuma 6 detik walau
+      // `_attachLocationUpdate()` di bawah (dan barcode_scan_screen)
+      // sudah pakai 10 detik — inkonsistensi ini yang bikin gejala di
+      // atas ("hasilnya cuma koordinat") masih sering muncul walau
+      // sudah menunggu. Disamakan ke 10 detik.
       final locState = _wmSettings.gpsWatermarkEnabled
           ? await PodLocationService.instance.awaitAddressReady(
-              timeout: const Duration(seconds: 6),
+              timeout: const Duration(seconds: 10),
             )
           : null;
 

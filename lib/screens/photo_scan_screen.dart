@@ -474,9 +474,18 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     // kita tunggu (dengan timeout wajar) sampai alamat siap — tombol
     // jepret kamera TETAP instan, yang ditunda hanya tahap render
     // watermark (yang memang sudah menampilkan indikator "memproses").
+    // ✅ FIX: dulu timeout di sini cuma 6 detik, padahal jalur lain yang
+    // menunggu alamat (barcode_scan_screen, video_scan_screen bagian
+    // _attachLocationUpdate) sudah pakai 10 detik. Rantai geocoding
+    // (resolveDetailed: Nominatim multi-zoom + POI lookup + Overpass,
+    // masing-masing dijaga rate-limit 1req/detik) realistiknya sering
+    // butuh lebih dari 6 detik, terutama di area yang datanya kurang
+    // lengkap di zoom tinggi — akibatnya alamat sering belum siap saat
+    // watermark foto dirender, dan watermark jatuh ke koordinat saja.
+    // Disamakan ke 10 detik seperti jalur lain.
     final locState = _wmSettings.gpsWatermarkEnabled
         ? await PodLocationService.instance.awaitAddressReady(
-            timeout: const Duration(seconds: 6),
+            timeout: const Duration(seconds: 10),
           )
         : null;
 
@@ -631,12 +640,13 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
           final photoIndex = _nextPhotoIndex++;
           final finalWatermarkedPath = watermarkedPath;
           final finalPendingPath = pendingPath;
+          final finalizeState = _FinalizeState();
 
           _taskQueue.add(
             label: 'Foto $photoIndex',
             priority: TaskPriority.high,
             maxRetries: 3,
-            work: () => _finalizePhoto(finalWatermarkedPath, finalPendingPath, photoIndex),
+            work: () => _finalizePhoto(finalWatermarkedPath, finalPendingPath, photoIndex, finalizeState),
             onSuccess: (path) {
               if (mounted) {
                 setState(() {
@@ -722,12 +732,13 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
           final photoIndex = _nextPhotoIndex++;
           final finalWatermarkedPath = watermarkedPath;
           final finalPendingPath = pendingPath;
+          final finalizeState = _FinalizeState();
 
           _taskQueue.add(
             label: 'Foto dari Galeri $photoIndex',
             priority: TaskPriority.high,
             maxRetries: 3,
-            work: () => _finalizePhoto(finalWatermarkedPath, finalPendingPath, photoIndex),
+            work: () => _finalizePhoto(finalWatermarkedPath, finalPendingPath, photoIndex, finalizeState),
             onSuccess: (path) {
               if (mounted) {
                 setState(() {
@@ -826,40 +837,51 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     String watermarkedPath,
     String pendingPath,
     int photoIndex,
+    _FinalizeState state,
   ) async {
     try {
-      final watermarkedFile = File(watermarkedPath);
-      if (!await watermarkedFile.exists()) {
-        throw Exception('File watermark tidak ditemukan: $watermarkedPath');
-      }
-      final watermarkSize = await watermarkedFile.length();
-      if (watermarkSize == 0) {
-        throw Exception('File watermark kosong: $watermarkedPath');
+      String savedPath;
+
+      if (state.savedPath != null) {
+        // ✅ FIX RETRY: percobaan sebelumnya sudah berhasil memindah
+        // (rename/move) watermarkedPath -> internal storage. Karena
+        // _storage.savePhoto() MEMINDAHKAN file (bukan copy), file di
+        // watermarkedPath sudah tidak ada lagi setelah sukses — kalau
+        // langkah SETELAHNYA (mis. _storage.update / _saveToGallery)
+        // baru gagal dan TaskQueue me-retry _finalizePhoto() dari
+        // awal, cek exists() di watermarkedPath pasti gagal walau
+        // sebenarnya foto SUDAH tersimpan dengan aman. Ini akar dari
+        // error "File watermark tidak ditemukan" yang dilaporkan user
+        // padahal proses pemindahan filenya sendiri sukses. Solusinya:
+        // ingat hasil savePhoto lintas percobaan lewat `state`, dan
+        // pada retry langsung lanjut dari langkah setelah move, tanpa
+        // mengulang cek/eksekusi move yang sudah tidak relevan lagi.
+        savedPath = state.savedPath!;
+        debugPrint('↩️ Retry: pakai hasil save sebelumnya: $savedPath');
+      } else {
+        final watermarkedFile = File(watermarkedPath);
+        if (!await watermarkedFile.exists()) {
+          throw Exception('File watermark tidak ditemukan: $watermarkedPath');
+        }
+        final watermarkSize = await watermarkedFile.length();
+        if (watermarkSize == 0) {
+          throw Exception('File watermark kosong: $watermarkedPath');
+        }
+
+        final name = _resolveFileName(photoIndex);
+        savedPath = await _storage.savePhoto(watermarkedPath, name: name);
+        if (savedPath.isEmpty) {
+          throw Exception('Gagal menyimpan file foto internal');
+        }
+        final savedFile = File(savedPath);
+        if (!await savedFile.exists()) {
+          throw Exception('File internal tidak ditemukan setelah save: $savedPath');
+        }
+        state.savedPath = savedPath;
+        debugPrint('✅ Internal save OK: $savedPath');
       }
 
-      final name = _resolveFileName(photoIndex);
-      final savedPath = await _storage.savePhoto(watermarkedPath, name: name);
-      if (savedPath.isEmpty) {
-        throw Exception('Gagal menyimpan file foto internal');
-      }
-      final savedFile = File(savedPath);
-      if (!await savedFile.exists()) {
-        throw Exception('File internal tidak ditemukan setelah save: $savedPath');
-      }
-      debugPrint('✅ Internal save OK: $savedPath');
-
-      // ✅ FIX: dulu source files (watermarkedPath/pendingPath) dihapus
-      // DI SINI, sebelum langkah-langkah yang masih bisa gagal di bawah
-      // (_storage.update, _saveToGallery). Kalau salah satu dari
-      // langkah tsb melempar exception, TaskQueue akan me-retry
-      // _finalizePhoto() dengan path yang SAMA — tapi file-nya sudah
-      // terlanjur dihapus, sehingga retry selalu gagal dengan pesan
-      // "File watermark tidak ditemukan" yang menyesatkan (masalah
-      // aslinya ada di langkah lain, bukan file watermark hilang).
-      // Sekarang penghapusan dipindah ke akhir, setelah SEMUA langkah
-      // fallible selesai sukses, supaya retry selalu punya source file.
-
-      if (widget.entryId != null) {
+      if (widget.entryId != null && !state.dbUpdated) {
         final barcodeEntry = await _storage.getEntry(widget.entryId!);
         if (barcodeEntry != null) {
           final allPaths = [..._photoPaths, savedPath];
@@ -868,11 +890,23 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
           );
           await _storage.update(updated);
         }
+        // ✅ FIX RETRY: tandai sudah dijalankan supaya retry berikutnya
+        // (dipicu langkah lain yang gagal setelah ini) tidak mengulang
+        // update DB — kalau diulang, `savedPath` bisa ke-append dua kali
+        // ke `imagePath` karena `_photoPaths` di state UI baru diperbarui
+        // di `onSuccess`, bukan di sini.
+        state.dbUpdated = true;
+      } else if (state.dbUpdated) {
+        debugPrint('↩️ Retry: lewati update DB, sudah sukses sebelumnya');
       }
 
-      final galleryOk = await _saveToGallery(savedPath);
-      if (!galleryOk) {
-        debugPrint('⚠️ Gagal ekspor ke gallery, file tetap tersimpan di internal');
+      if (!state.galleryOk) {
+        state.galleryOk = await _saveToGallery(savedPath);
+        if (!state.galleryOk) {
+          debugPrint('⚠️ Gagal ekspor ke gallery, file tetap tersimpan di internal');
+        }
+      } else {
+        debugPrint('↩️ Retry: lewati ekspor gallery, sudah sukses sebelumnya');
       }
 
       // Cleanup source files SETELAH semua langkah di atas sukses.
@@ -901,6 +935,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   }
 
   // ─── Batch finish ───────────────────────────────────────────
+
 
   Future<void> _finishBatch() async {
     if (widget.entryId != null && _photoPaths.isNotEmpty) {
@@ -1125,4 +1160,15 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       ),
     );
   }
+}
+
+/// Menyimpan hasil pemindahan file (savePhoto) dan status langkah-
+/// langkah fallible berikutnya lintas percobaan TaskQueue, supaya
+/// retry _finalizePhoto() tidak mengulang langkah yang sudah sukses
+/// (file sudah dipindah, DB sudah di-update, atau foto sudah masuk
+/// galeri).
+class _FinalizeState {
+  String? savedPath;
+  bool dbUpdated = false;
+  bool galleryOk = false;
 }

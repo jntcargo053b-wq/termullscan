@@ -202,7 +202,15 @@ class PodAddressResolver {
     final lonS = lon.toStringAsFixed(7);
     
     // Nominatim: coba zoom 18 → 16 → 14
-    for (final zoom in [18, 16, 14, 12]) {
+    // ✅ FIX LATENSI: dulu 4 level zoom (18→16→14→12), tiap level
+    // dijaga rate-limit 1req/detik Nominatim secara berurutan — kalau
+    // level pertama kosong (bukan error, cuma area yang datanya kurang
+    // detail), butuh 3 kali lagi menunggu rate-limit + response
+    // sebelum akhirnya dapat alamat. Ini penyumbang utama kenapa
+    // resolveDetailed() sering menembus 8-10+ detik dan watermark
+    // foto/video jatuh ke koordinat saja. Dipangkas ke 3 level yang
+    // tetap mewakili building → jalan/lingkungan → kota.
+    for (final zoom in [18, 15, 12]) {
       try {
         final r = await _nominatim(latS, lonS, zoom: zoom);
         if (r.isNotEmpty) {
