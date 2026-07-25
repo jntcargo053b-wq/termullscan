@@ -129,19 +129,43 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   final StorageService _storage = StorageService();
   final WatermarkSettings _wmSettings = WatermarkSettings();
 
-  final MobileScannerController _scannerController = MobileScannerController(
-    detectionSpeed: DetectionSpeed.noDuplicates,
-    returnImage: false,
-    facing: CameraFacing.back,
-    formats: const [
-      BarcodeFormat.code128,
-      BarcodeFormat.code39,
-      BarcodeFormat.ean13,
-      BarcodeFormat.qrCode,
-      BarcodeFormat.upcA,
-      BarcodeFormat.upcE,
-    ],
-  );
+  // ✅ FIX: TIDAK LAGI `final`. Setelah kembali dari PhotoScanScreen/
+  // VideoScanScreen (yang keduanya sempat memegang sesi kamera fisik
+  // sendiri — PhotoScanScreen lewat CameraController paket `camera` di
+  // InAppCameraScreen, VideoScanScreen lewat kamera native OS via
+  // image_picker), controller scanner lama ini TIDAK CUKUP hanya
+  // di-stop lalu di-start lagi. Root cause bug "kamera scan tidak bisa
+  // terbuka seperti awal, selalu error" setelah ambil foto/video:
+  // MobileScannerController membungkus SATU sesi native/texture yang
+  // bisa "rusak" begitu perangkat kamera sempat direbut sesi lain —
+  // start() berikutnya di controller yang sama gagal terus meski
+  // kamera fisik sudah bebas. Fix-nya: dispose controller lama & buat
+  // instance BARU (persis seperti kondisi saat layar ini pertama kali
+  // dibuka) lewat _recreateScannerController(), dipanggil setelah
+  // kembali dari PhotoScanScreen/VideoScanScreen alih-alih sekadar
+  // _resumeScanning().
+  MobileScannerController _scannerController = _buildScannerController();
+
+  // Key pembungkus widget MobileScanner — diganti tiap kali controller
+  // di-recreate supaya Flutter benar-benar unmount platform view lama
+  // dan mount yang baru, bukan sekadar swap parameter `controller`.
+  int _scannerRebuildKey = 0;
+
+  static MobileScannerController _buildScannerController() {
+    return MobileScannerController(
+      detectionSpeed: DetectionSpeed.noDuplicates,
+      returnImage: false,
+      facing: CameraFacing.back,
+      formats: const [
+        BarcodeFormat.code128,
+        BarcodeFormat.code39,
+        BarcodeFormat.ean13,
+        BarcodeFormat.qrCode,
+        BarcodeFormat.upcA,
+        BarcodeFormat.upcE,
+      ],
+    );
+  }
 
   // ─── GETTER ──────────────────────────────────────────────────
   bool get _isScannerRunning => _scannerController.value.isRunning;
@@ -288,6 +312,16 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         }
       } catch (e) {
         debugPrint('⚠️ Start attempt ${i + 1} failed: $e');
+        // ✅ Dari perbandingan dengan versi "master fix": kalau error-nya
+        // terkait izin (mis. sempat dicabut user di tengah sesi / OS
+        // minta izin ulang), coba re-request sekali sebelum retry
+        // berikutnya — tanpa ini, start() akan gagal terus loop demi
+        // loop walau user sudah kasih izin lagi lewat dialog OS.
+        if (e.toString().toLowerCase().contains('permission')) {
+          try {
+            await Permission.camera.request();
+          } catch (_) {}
+        }
         if (i < 2) {
           await Future.delayed(Duration(milliseconds: 300 * (i + 1)));
         }
@@ -354,6 +388,41 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       debugPrint('⚠️ Error stopping scanner: $e');
       _scannerState = _ScannerState.error;
     }
+  }
+
+  // ─── RECREATE (bukan sekadar restart) ──────────────────────
+  // Dipanggil setelah kembali dari PhotoScanScreen/VideoScanScreen.
+  // Lihat komentar di deklarasi _scannerController untuk alasannya.
+  Future<void> _recreateScannerController() async {
+    if (!mounted) return;
+
+    final old = _scannerController;
+    try {
+      await old.stop();
+    } catch (e) {
+      debugPrint('⚠️ Error stop controller lama sebelum recreate: $e');
+    }
+    try {
+      await old.dispose();
+    } catch (e) {
+      debugPrint('⚠️ Error dispose controller lama sebelum recreate: $e');
+    }
+
+    // Beri jeda singkat supaya OS benar-benar melepas sesi kamera lama
+    // (CameraController paket `camera` / kamera native OS) sebelum
+    // controller baru mencoba membuka kamera fisik yang sama.
+    await Future.delayed(const Duration(milliseconds: 250));
+    if (!mounted) return;
+
+    setState(() {
+      _scannerController = _buildScannerController();
+      _scannerRebuildKey++;
+      _scannerState = _ScannerState.idle;
+      _scanning = false;
+    });
+
+    debugPrint('♻️ Scanner controller di-recreate (rebuild #$_scannerRebuildKey)');
+    await _resumeScanning();
   }
 
   Future<void> _restartScanner() async {
@@ -425,6 +494,11 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           }
         } catch (e) {
           debugPrint('⚠️ Start attempt ${i + 1} failed: $e');
+          if (e.toString().toLowerCase().contains('permission')) {
+            try {
+              await Permission.camera.request();
+            } catch (_) {}
+          }
           if (i < 2) {
             await Future.delayed(Duration(milliseconds: 300 * (i + 1)));
           }
@@ -972,11 +1046,21 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     } catch (e) {
       debugPrint('❌ Error navigasi ke foto scan: $e');
     } finally {
-      _unlockNavigation();
+      // ✅ FIX: unlock dipindah ke SETELAH recreate selesai (bukan
+      // sebelum). Kalau unlock duluan, ada jendela singkat di mana
+      // _scannerWatchdog (timer 10 detik yang cek _navigationLocked)
+      // bisa ikut memanggil _restartScanner() di tengah proses
+      // recreate dan tabrakan dengan controller yang baru dibuat.
       if (mounted) {
-        _scannerState = _ScannerState.paused;
-        await _resumeScanning();
+        // ✅ FIX: dulu cuma _resumeScanning() pada controller lama —
+        // itu sebabnya "kamera scan tidak bisa terbuka seperti awal"
+        // setelah ambil foto. PhotoScanScreen sempat memegang sesi
+        // kamera fisik sendiri (InAppCameraScreen pakai CameraController
+        // paket `camera`), jadi controller scanner di sini di-recreate
+        // dari nol, bukan sekadar di-start lagi.
+        await _recreateScannerController();
       }
+      _unlockNavigation();
     }
   }
 
@@ -1020,11 +1104,17 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     } catch (e) {
       debugPrint('❌ Error navigasi ke video scan: $e');
     } finally {
-      _unlockNavigation();
+      // ✅ FIX: sama seperti _goToPhotoScan — unlock dipindah ke
+      // setelah recreate selesai supaya watchdog tidak ikut campur
+      // di tengah proses.
       if (mounted) {
-        _scannerState = _ScannerState.paused;
-        await _resumeScanning();
+        // ✅ FIX: sama seperti _goToPhotoScan — VideoScanScreen sempat
+        // membuka kamera native OS (image_picker) untuk merekam video,
+        // jadi controller scanner di-recreate dari nol, bukan sekadar
+        // di-resume di controller lama yang bisa sudah "rusak".
+        await _recreateScannerController();
       }
+      _unlockNavigation();
     }
   }
 
@@ -1101,6 +1191,11 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       body: Stack(
         children: [
           RepaintBoundary(
+            // ✅ FIX: key berubah tiap _recreateScannerController() —
+            // memaksa Flutter unmount widget MobileScanner lama (dengan
+            // platform view/texture lamanya) dan mount yang baru,
+            // supaya benar-benar setara "kamera dibuka dari awal".
+            key: ValueKey(_scannerRebuildKey),
             child: MobileScanner(
               controller: _scannerController,
               onDetect: _onDetect,
