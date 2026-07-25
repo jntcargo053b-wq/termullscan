@@ -97,6 +97,18 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   bool _processingScan = false;
   bool _navigationLocked = false;
   bool _resumeScheduled = false;
+  // ✅ FIX: penanda bahwa alur input manual (cek duplikat → dialog
+  // konfirmasi → simpan entry) masih berjalan, MESKIPUN bottom sheet
+  // input-nya sendiri sudah tertutup (Navigator.pop dipanggil duluan
+  // di _ManualInputDialog agar terasa responsif). Tanpa flag ini,
+  // whenComplete() bottom sheet akan resume kamera scanner terlalu
+  // cepat — tepat saat dialog konfirmasi kode manual masih tampil di
+  // atasnya — sehingga _scannerState bisa tabrakan dengan barcode
+  // yang kebaca kamera di jendela waktu itu, dan _resumeScanning()
+  // berikutnya jadi ditolak (_canResume) karena state sudah kepeleset
+  // dari idle/paused/error. Efek yang terlihat: kamera "diam" dan
+  // baru hidup lagi kalau app di-background/foreground.
+  bool _manualFlowBusy = false;
   Timer? _processingWatchdog;
   Timer? _scannerWatchdog;
   _ScannerState _scannerState = _ScannerState.idle;
@@ -687,6 +699,14 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     if (_processingScan || _activeScanVN.value != null) return;
     
     _lockNavigation();
+    // ✅ FIX: set busy SEBELUM sheet dibuka. _ManualInputDialog menutup
+    // dirinya sendiri (Navigator.pop) sebelum widget.onSubmitted selesai
+    // di-await, jadi whenComplete() di bawah ini bisa terpicu jauh lebih
+    // awal daripada selesainya alur cek-duplikat → dialog konfirmasi →
+    // simpan entry. Selama _manualFlowBusy masih true, resume kamera
+    // DITUNDA sampai alur itu benar-benar tuntas (lihat finally di
+    // _confirmAndProcessManualCode).
+    _manualFlowBusy = true;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -699,7 +719,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       ),
     ).whenComplete(() {
       _unlockNavigation();
-      if (!_processingScan && mounted) {
+      if (!_manualFlowBusy && !_processingScan && mounted) {
         _resumeScanning();
       }
     });
@@ -707,6 +727,13 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
 
   Future<void> _confirmAndProcessManualCode(String code) async {
     if (!mounted) return;
+
+    // ✅ FIX: dilacak supaya finally di bawah TIDAK mereset _manualFlowBusy
+    // saat kita justru sedang membuka ulang _showManualInput() (kasus
+    // "Ketik Ulang") — karena _showManualInput() sendiri sudah set
+    // _manualFlowBusy = true untuk sheet berikutnya, dan reset di sini
+    // akan menimpanya balik ke false tepat setelah itu.
+    bool reopenedManualInput = false;
 
     bool isDuplicate = false;
     try {
@@ -722,77 +749,94 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     }
 
     if (!mounted) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: AppTheme.surface,
-        title: Text(
-          isDuplicate ? '⚠️ Kode Sudah Pernah Diinput' : 'Konfirmasi Kode',
-          style: const TextStyle(color: Colors.white, fontSize: 16),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (isDuplicate)
-              const Padding(
-                padding: EdgeInsets.only(bottom: 10),
-                child: Text(
-                  'Kode ini sudah tercatat hari ini. Pastikan tidak salah ketik/duplikat sebelum lanjut.',
-                  style: TextStyle(color: AppTheme.error, fontSize: 12.5),
+    try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          backgroundColor: AppTheme.surface,
+          title: Text(
+            isDuplicate ? '⚠️ Kode Sudah Pernah Diinput' : 'Konfirmasi Kode',
+            style: const TextStyle(color: Colors.white, fontSize: 16),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (isDuplicate)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 10),
+                  child: Text(
+                    'Kode ini sudah tercatat hari ini. Pastikan tidak salah ketik/duplikat sebelum lanjut.',
+                    style: TextStyle(color: AppTheme.error, fontSize: 12.5),
+                  ),
+                )
+              else
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 10),
+                  child: Text(
+                    'Pastikan nomor resi berikut sudah benar sebelum disimpan:',
+                    style: TextStyle(color: Colors.grey, fontSize: 12.5),
+                  ),
                 ),
-              )
-            else
-              const Padding(
-                padding: EdgeInsets.only(bottom: 10),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2A2A2A),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: isDuplicate ? AppTheme.error : AppTheme.accent,
+                  ),
+                ),
                 child: Text(
-                  'Pastikan nomor resi berikut sudah benar sebelum disimpan:',
-                  style: TextStyle(color: Colors.grey, fontSize: 12.5),
+                  code,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.5,
+                  ),
                 ),
               ),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-              decoration: BoxDecoration(
-                color: const Color(0xFF2A2A2A),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: isDuplicate ? AppTheme.error : AppTheme.accent,
-                ),
-              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Ketik Ulang', style: TextStyle(color: Colors.grey)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
               child: Text(
-                code,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: 0.5,
-                ),
+                isDuplicate ? 'Tetap Simpan' : 'Konfirmasi',
+                style: TextStyle(color: isDuplicate ? AppTheme.error : AppTheme.accent),
               ),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Ketik Ulang', style: TextStyle(color: Colors.grey)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(
-              isDuplicate ? 'Tetap Simpan' : 'Konfirmasi',
-              style: TextStyle(color: isDuplicate ? AppTheme.error : AppTheme.accent),
-            ),
-          ),
-        ],
-      ),
-    );
+      );
 
-    if (confirmed == true) {
-      await _processManualCode(code);
-    } else if (mounted) {
-      _showManualInput();
+      if (confirmed == true) {
+        await _processManualCode(code);
+      } else if (mounted) {
+        reopenedManualInput = true;
+        _showManualInput();
+      }
+    } finally {
+      // ✅ FIX: baru sekarang seluruh alur input manual (cek duplikat →
+      // dialog konfirmasi → simpan entry) benar-benar tuntas, jadi baru
+      // di sini _manualFlowBusy boleh direset dan resume kamera scanner
+      // dicoba lagi — BUKAN saat bottom sheet-nya saja yang tertutup.
+      // Dilewati kalau kita baru saja membuka ulang sheet ("Ketik Ulang"),
+      // supaya tidak menimpa _manualFlowBusy yang baru di-set true lagi
+      // oleh _showManualInput().
+      if (!reopenedManualInput) {
+        _manualFlowBusy = false;
+        if (mounted && !_processingScan) {
+          await _resumeScanning();
+        }
+      }
     }
   }
 
