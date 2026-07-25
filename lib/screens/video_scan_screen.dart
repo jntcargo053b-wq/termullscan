@@ -1,5 +1,6 @@
 // ============================================================
-// lib/screens/video_scan_screen.dart (FIXED)
+// lib/screens/video_scan_screen.dart
+// Versi refaktor – mempertahankan semua fitur & perbaikan
 // ============================================================
 import 'dart:async';
 import 'dart:io';
@@ -24,28 +25,29 @@ import '../services/watermark/watermark_service.dart';
 import 'watermark_settings_sheet.dart';
 import 'preview_screen.dart';
 
+// ─── MAIN SCREEN ──────────────────────────────────────────────
 class VideoScanScreen extends StatefulWidget {
   final String? barcode;
   final String? entryId;
+
   const VideoScanScreen({super.key, this.barcode, this.entryId});
 
   @override
   State<VideoScanScreen> createState() => _VideoScanScreenState();
 }
 
+// ─── STATE CLASS ──────────────────────────────────────────────
 class _VideoScanScreenState extends State<VideoScanScreen> {
+  // ─── DEPENDENCIES ───────────────────────────────────────────
   final StorageService _storage = StorageService();
-  final WatermarkSettings _wmSettings = WatermarkSettings();
+  final WatermarkSettings _watermarkSettings = WatermarkSettings();
   final ImagePicker _picker = ImagePicker();
 
-  // ─── TaskQueue (render watermark video) ──────────────────────
-  // maxWorkers: 1 — beda dengan foto (2 worker): render video FFmpeg
-  // berat di CPU/encoder, jalan 2 sekaligus cuma bikin keduanya lebih
-  // lambat, bukan lebih cepat. onActiveStart/onActiveEnd disambungkan ke
-  // VideoProcessingService supaya notifikasi foreground service otomatis
-  // menyala selama task render berjalan (proteksi dari Android membekukan
-  // proses saat app di-background) dan mati begitu antrian benar-benar
-  // kosong.
+  // ─── TASK QUEUE (RENDER VIDEO) ─────────────────────────────
+  // Hanya satu worker karena render video menggunakan FFmpeg yang berat
+  // dan berjalan paralel justru memperlambat. Digabungkan dengan
+  // VideoProcessingService untuk menampilkan notifikasi foreground
+  // selama proses render.
   late final TaskQueue _taskQueue = TaskQueue(
     maxWorkers: 1,
     onActiveStart: () => VideoProcessingService.markBusy(
@@ -55,6 +57,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     onActiveEnd: () => VideoProcessingService.markIdle(),
   );
 
+  // ─── STATE UI ───────────────────────────────────────────────
   bool _isRecording = false;
   bool _isProcessing = false;
   String? _videoPath;
@@ -69,7 +72,8 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     super.initState();
     _requestPermissions();
     unawaited(VideoProcessingService.requestPermissions());
-    if (_wmSettings.gpsWatermarkEnabled) {
+
+    if (_watermarkSettings.gpsWatermarkEnabled) {
       unawaited(PodLocationService.instance.acquireForCapture());
     }
   }
@@ -77,7 +81,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
   @override
   void dispose() {
     _taskQueue.dispose();
-    if (_wmSettings.gpsWatermarkEnabled) {
+    if (_watermarkSettings.gpsWatermarkEnabled) {
       PodLocationService.instance.releaseAfterCapture();
     }
     super.dispose();
@@ -101,7 +105,6 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       }
     }
 
-    // 🔥 FIX: gunakan await untuk mendapatkan bool
     final storageGranted = await Permission.storage.isGranted;
     final manageGranted = await Permission.manageExternalStorage.isGranted;
 
@@ -146,7 +149,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     );
   }
 
-  // ─── RECORD VIDEO ───────────────────────────────────────────
+  // ─── REKAM VIDEO ────────────────────────────────────────────
 
   Future<void> _recordVideo() async {
     if (_isRecording || _isProcessing) return;
@@ -192,7 +195,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     }
   }
 
-  // ─── PICK FROM GALLERY ─────────────────────────────────────
+  // ─── PILIH DARI GALERI ──────────────────────────────────────
 
   Future<void> _pickFromGallery() async {
     if (_isProcessing) return;
@@ -200,9 +203,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     try {
       setState(() => _isProcessing = true);
 
-      final xfile = await _picker.pickVideo(
-        source: ImageSource.gallery,
-      );
+      final xfile = await _picker.pickVideo(source: ImageSource.gallery);
 
       if (!mounted) {
         setState(() => _isProcessing = false);
@@ -233,7 +234,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     }
   }
 
-  // ─── SAVE VIDEO ─────────────────────────────────────────────
+  // ─── SIMPAN VIDEO ───────────────────────────────────────────
 
   Future<String?> _saveVideo(String sourcePath) async {
     try {
@@ -263,7 +264,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     }
   }
 
-  // ─── PROCESS VIDEO ──────────────────────────────────────────
+  // ─── PROSES VIDEO (INTI) ────────────────────────────────────
 
   Future<void> _processVideo(String videoPath) async {
     try {
@@ -275,7 +276,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         setState(() => _videoDuration = duration);
       }
 
-      // Simpan ke gallery
+      // Simpan ke galeri (jika izin diberikan)
       if (_hasGalleryPermission) {
         final saved = await SaverGallery.saveFile(
           filePath: videoPath,
@@ -288,39 +289,28 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         }
       }
 
-      // ─── GABUNGKAN KE SCAN ENTRY ─────────────────────────────
-      // Jika video ini hasil dari alur "Rekam Video" setelah scan
-      // barcode, entryId sudah ada → video digabung ke record yang
-      // sama (satu paket bukti pengiriman: barcode + foto + video +
-      // GPS + timestamp), bukan jadi record terpisah.
-      //
-      // ✅ FIX RACE CONDITION ALAMAT: dulu pakai `.currentState`
-      // (snapshot instan). Karena reverse-geocoding adalah panggilan
-      // jaringan (Nominatim/Photon/Android Geocoder) yang bisa makan
-      // beberapa detik, watermark video sering sudah "dibakar" ke
-      // pixel duluan sebelum alamat siap — hasilnya cuma koordinat
-      // yang tampil, walau `_attachLocationUpdate()` di bawah nanti
-      // berhasil dapat alamat (tapi sudah terlambat untuk video yang
-      // sudah jadi file). Untuk aplikasi POD, alamat adalah bagian
-      // penting dari bukti pengiriman, jadi di sini kita tunggu dulu
-      // (dengan timeout wajar) sebelum entry final dibuat & video
-      // di-watermark.
-      //
-      // ✅ FIX #2: timeout di sini sempat cuma 6 detik walau
-      // `_attachLocationUpdate()` di bawah (dan barcode_scan_screen)
-      // sudah pakai 10 detik — inkonsistensi ini yang bikin gejala di
-      // atas ("hasilnya cuma koordinat") masih sering muncul walau
-      // sudah menunggu. Disamakan ke 10 detik.
-      final locState = _wmSettings.gpsWatermarkEnabled
+      // ─── AMBIL LOKASI (DENGAN TIMEOUT) ──────────────────────
+      // Tunggu hingga alamat siap (hingga 10 detik) agar watermark
+      // video dapat menampilkan alamat lengkap, bukan hanya koordinat.
+      final locState = _watermarkSettings.gpsWatermarkEnabled
           ? await PodLocationService.instance.awaitAddressReady(
               timeout: const Duration(seconds: 10),
             )
           : null;
 
+      // ─── GABUNGKAN KE SCAN ENTRY ────────────────────────────
       ScanEntry entry;
-      final existingEntry = widget.entryId != null
+      ScanEntry? existingEntry = widget.entryId != null
           ? await _storage.getEntry(widget.entryId!)
           : null;
+
+      // Jika entry belum tersimpan (race condition), tunggu sebentar
+      if (widget.entryId != null && existingEntry == null) {
+        for (int i = 0; i < 3 && existingEntry == null; i++) {
+          await Future.delayed(const Duration(milliseconds: 150));
+          existingEntry = await _storage.getEntry(widget.entryId!);
+        }
+      }
 
       if (existingEntry != null) {
         entry = existingEntry.copyWith(
@@ -340,10 +330,10 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
           type: ScanType.video,
           videoPath: videoPath,
           timestamp: DateTime.now(),
-          operatorName: _wmSettings.operatorName.isNotEmpty
-              ? _wmSettings.operatorName
+          operatorName: _watermarkSettings.operatorName.isNotEmpty
+              ? _watermarkSettings.operatorName
               : 'Operator',
-          companyName: _wmSettings.companyName,
+          companyName: _watermarkSettings.companyName,
           latitude: locState?.lat,
           longitude: locState?.lon,
           locationName: (locState != null && locState.address.isNotEmpty)
@@ -355,19 +345,17 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         await _storage.add(entry);
       }
 
-      // Safety-net: kalau timeout di atas terlampaui & alamat masih
-      // belum siap, tetap coba update record (bukan watermark video
-      // yang sudah jadi, tapi minimal data di riwayat/gallery benar).
-      if (_wmSettings.gpsWatermarkEnabled) {
+      // Safety-net: jika alamat belum siap, tetap coba update nanti
+      if (_watermarkSettings.gpsWatermarkEnabled) {
         unawaited(_attachLocationUpdate(entry.id));
       }
 
-      // Render watermark ke video
+      // ─── RENDER WATERMARK ────────────────────────────────────
       await _renderWatermark(videoPath, entry);
 
       if (!mounted) return;
 
-      // Tampilkan preview
+      // ─── TAMPILKAN PREVIEW ───────────────────────────────────
       final result = await _showPreview(videoPath);
 
       if (result == 'save') {
@@ -398,16 +386,13 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     }
   }
 
-  // ─── GET VIDEO DURATION ─────────────────────────────────────
+  // ─── AMBIL DURASI VIDEO ─────────────────────────────────────
 
   Future<int?> _getVideoDuration(String videoPath) async {
     try {
       final file = File(videoPath);
       if (!await file.exists()) return null;
 
-      // FFprobeKit: binding native ke libffprobe lewat method channel.
-      // Bukan lewat Process.run — tidak ada binary 'ffprobe' di PATH
-      // Android/iOS untuk di-exec seperti CLI biasa.
       final session = await FFprobeKit.getMediaInformation(videoPath)
           .timeout(const Duration(seconds: 10));
       final mediaInfo = session.getMediaInformation();
@@ -423,17 +408,8 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
   }
 
   // ─── GENERATE THUMBNAIL ─────────────────────────────────────
-  // Dipanggil dari _renderWatermark() SETELAH path final (pasca-watermark,
-  // pasca-_storage.saveVideo) diketahui — supaya thumbPath yang ditulis di
-  // sini cocok persis dengan konvensi ScanEntry.videoThumbnail (dipakai
-  // ThumbnailCacheService/log_screen.dart). Generate di path lama (pra-
-  // watermark) percuma: nama file akhir video berubah setelah disimpan
-  // ulang, jadi thumbnail lama tidak akan pernah ketemu.
-  //
-  // Pakai video_thumbnail (native plugin, sudah jadi dependency & sudah
-  // dipakai ThumbnailCacheService untuk fallback on-demand) — bukan FFmpeg.
-  // Decode 1 frame lewat decoder native jauh lebih ringan daripada spawn
-  // proses FFmpeg penuh cuma untuk 1 gambar.
+  // Dibuat setelah video final (sudah watermark & tersimpan) agar
+  // path thumbnail sesuai dengan konvensi ScanEntry.videoThumbnail.
   Future<String?> _generateThumbnail(String videoPath, String thumbnailPath) async {
     try {
       final bytes = await VideoThumbnail.thumbnailData(
@@ -452,21 +428,14 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     }
   }
 
-  // ─── RENDER WATERMARK ──────────────────────────────────────
-  // Dijalankan lewat _taskQueue (bukan langsung di-await inline) supaya:
-  // 1. Foreground service (VideoProcessingService) otomatis menyala selama
-  //    render FFmpeg berjalan — proteksi dari Android membekukan proses
-  //    saat app di-background di tengah render yang panjang.
-  // 2. Fondasi siap untuk pengembangan lanjut (mis. batch/antrian video)
-  //    tanpa perlu menulis ulang alur ini.
-  // Alur _processVideo tetap menunggu (await) hasilnya seperti sebelumnya —
-  // preview baru ditampilkan setelah render selesai — jadi perilaku yang
-  // terlihat user tidak berubah, cuma proteksinya yang bertambah.
+  // ─── RENDER WATERMARK (MELALUI TASK QUEUE) ─────────────────
+  // Menjalankan render melalui TaskQueue agar foreground service
+  // aktif selama proses berlangsung (mencegah Android membekukan app).
   Future<void> _renderWatermark(String videoPath, ScanEntry entry) async {
     final completer = Completer<void>();
     _taskQueue.add(
       label: 'Render video ${entry.id}',
-      maxRetries: 0, // encode gagal biasanya bukan soal transient — addWatermark sendiri sudah punya fallback drawtext internal, retry otomatis cuma bikin gagal 2x lebih lama.
+      maxRetries: 0,
       work: () => _doRenderWatermark(videoPath, entry),
       onSuccess: (_) {
         if (!completer.isCompleted) completer.complete();
@@ -488,7 +457,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         inputPath: videoPath,
         outputPath: outputPath,
         entry: entry,
-        settings: _wmSettings,
+        settings: _watermarkSettings,
         keepAudio: true,
       );
 
@@ -499,8 +468,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
           await _storage.update(updated);
           if (mounted) setState(() => _videoPath = savedPath);
 
-          // Thumbnail baru dibuat sekarang, di lokasi yang diturunkan dari
-          // path FINAL — bukan dari path rekaman mentah sebelum watermark.
+          // Buat thumbnail dari video final
           final thumbPath = updated.videoThumbnail;
           if (thumbPath != null) {
             final generated = await _generateThumbnail(savedPath, thumbPath);
@@ -517,7 +485,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     }
   }
 
-  // ─── ATTACH LOCATION UPDATE ────────────────────────────────
+  // ─── UPDATE LOKASI (SAFETY-NET) ────────────────────────────
 
   Future<void> _attachLocationUpdate(String entryId) async {
     try {
@@ -538,7 +506,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     }
   }
 
-  // ─── SHOW PREVIEW ───────────────────────────────────────────
+  // ─── TAMPILKAN PREVIEW ──────────────────────────────────────
 
   Future<String?> _showPreview(String videoPath) async {
     final file = XFile(videoPath);
@@ -569,6 +537,14 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     );
   }
 
+  // ─── HELPERS ────────────────────────────────────────────────
+
+  String _formatDuration(int seconds) {
+    final minutes = seconds ~/ 60;
+    final secs = seconds % 60;
+    return '${minutes.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
+  }
+
   // ─── BUILD ──────────────────────────────────────────────────
 
   @override
@@ -578,19 +554,20 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     return Scaffold(
       backgroundColor: AppTheme.bg,
       appBar: AppBar(
-        title: Text(widget.barcode != null
-            ? 'Video: ${widget.barcode}'
-            : 'Rekam Video'),
+        title: Text(
+          widget.barcode != null ? 'Video: ${widget.barcode}' : 'Rekam Video',
+        ),
         actions: [
           ListenableBuilder(
-            listenable: _wmSettings,
+            listenable: _watermarkSettings,
             builder: (context, _) {
               return IconButton(
                 onPressed: _openWatermarkSettings,
                 icon: Stack(
                   children: [
                     const Icon(Icons.tune, color: Colors.white),
-                    if (_wmSettings.operatorName.isNotEmpty || _wmSettings.hasLogo)
+                    if (_watermarkSettings.operatorName.isNotEmpty ||
+                        _watermarkSettings.hasLogo)
                       const Positioned(
                         right: 0,
                         top: 0,
@@ -610,7 +587,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Icon
+              // Icon utama
               Container(
                 width: 120,
                 height: 120,
@@ -623,21 +600,12 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
                   ),
                 ),
                 child: _isRecording
-                    ? const Icon(
-                        Icons.circle,
-                        color: Colors.red,
-                        size: 52,
-                      )
-                    : const Icon(
-                        Icons.videocam,
-                        color: AppTheme.accentOrange,
-                        size: 52,
-                      ),
+                    ? const Icon(Icons.circle, color: Colors.red, size: 52)
+                    : const Icon(Icons.videocam, color: AppTheme.accentOrange, size: 52),
               ),
 
               const Gap(24),
 
-              // Header
               Text(
                 _isRecording ? 'Merekam...' : 'Rekam Video',
                 style: Theme.of(context).textTheme.titleLarge,
@@ -663,7 +631,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
 
               const Gap(48),
 
-              // Action Buttons
+              // Tombol Rekam
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
@@ -689,6 +657,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
 
               const Gap(14),
 
+              // Tombol Galeri
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
@@ -707,7 +676,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
 
               const Gap(32),
 
-              // Info Box
+              // Info box
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 decoration: BoxDecoration(
@@ -729,12 +698,13 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
                 ),
               ),
 
+              // Progress bar (saat processing)
               if (_isProcessing)
                 Padding(
                   padding: const EdgeInsets.only(top: 16),
                   child: LinearProgressIndicator(
                     backgroundColor: Colors.grey[800],
-                    valueColor: AlwaysStoppedAnimation(AppTheme.accentOrange),
+                    valueColor: const AlwaysStoppedAnimation<Color>(AppTheme.accentOrange),
                   ),
                 ),
             ],
@@ -742,11 +712,5 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         ),
       ),
     );
-  }
-
-  String _formatDuration(int seconds) {
-    final minutes = seconds ~/ 60;
-    final secs = seconds % 60;
-    return '${minutes.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
   }
 }
