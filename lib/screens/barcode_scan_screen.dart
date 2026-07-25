@@ -1,6 +1,6 @@
 // ============================================================
 // lib/screens/barcode_scan_screen.dart
-// Versi refaktor – mempertahankan semua fitur & perbaikan
+// Versi refaktor – tanpa ketergantungan pada camera_diagnostics_log.dart
 // ============================================================
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -12,7 +12,6 @@ import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
 import '../services/permission_service.dart';
 import '../services/pod_location_service.dart';
-import '../services/camera_diagnostics_log.dart';
 import '../theme/app_theme.dart';
 import '../watermark/watermark_settings.dart';
 import 'watermark_settings_sheet.dart';
@@ -292,9 +291,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           if (_isScannerRunning) {
             debugPrint('✅ Scanner started on attempt ${i + 1}');
             if (i > 0) {
-              CameraDiagnosticsLog.instance.log(
-                'scanner_start',
-                'Berhasil pada percobaan ke-${i + 1}/$_maxStartAttempts',
+              debugPrint(
+                '📷 [scanner_start] Berhasil pada percobaan ke-${i + 1}/$_maxStartAttempts',
               );
             }
             return true;
@@ -304,9 +302,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         }
       } catch (e) {
         debugPrint('⚠️ Start attempt ${i + 1} failed: $e');
-        CameraDiagnosticsLog.instance.log(
-          'scanner_start_error',
-          'Percobaan ${i + 1}/$_maxStartAttempts gagal: $e',
+        debugPrint(
+          '📷 [scanner_start_error] Percobaan ${i + 1}/$_maxStartAttempts gagal: $e',
         );
         if (e.toString().toLowerCase().contains('permission')) {
           try {
@@ -319,9 +316,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         }
       }
     }
-    CameraDiagnosticsLog.instance.log(
-      'scanner_start_failed',
-      'Gagal start setelah $_maxStartAttempts percobaan',
+    debugPrint(
+      '📷 [scanner_start_failed] Gagal start setelah $_maxStartAttempts percobaan',
     );
     return false;
   }
@@ -389,19 +385,19 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
 
   Future<void> _recreateScannerController() async {
     if (!mounted) return;
-    CameraDiagnosticsLog.instance.log('scanner_recreate', 'Mulai recreate');
+    debugPrint('📷 [scanner_recreate] Mulai recreate');
 
     try {
       await _scannerController.stop();
     } catch (e) {
       debugPrint('⚠️ Error stop controller: $e');
-      CameraDiagnosticsLog.instance.log('scanner_recreate', 'Stop gagal: $e');
+      debugPrint('📷 [scanner_recreate] Stop gagal: $e');
     }
     try {
       await _scannerController.dispose();
     } catch (e) {
       debugPrint('⚠️ Error dispose controller: $e');
-      CameraDiagnosticsLog.instance.log('scanner_recreate', 'Dispose gagal: $e');
+      debugPrint('📷 [scanner_recreate] Dispose gagal: $e');
     }
 
     await Future.delayed(const Duration(milliseconds: 80));
@@ -416,9 +412,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
 
     debugPrint('♻️ Controller recreated (rebuild #$_scannerRebuildKey)');
     await _resumeScanner();
-    CameraDiagnosticsLog.instance.log(
-      'scanner_recreate',
-      'Selesai, status: $_scannerState, running: $_isScannerRunning',
+    debugPrint(
+      '📷 [scanner_recreate] Selesai, status: $_scannerState, running: $_isScannerRunning',
     );
   }
 
@@ -527,10 +522,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           !_isNavigationLocked &&
           _activeScanNotifier.value == null) {
         debugPrint('⚠️ Watchdog: state mismatch, restarting');
-        CameraDiagnosticsLog.instance.log(
-          'scanner_watchdog',
-          'State mismatch terdeteksi, memicu _restartScanner()',
-        );
+        debugPrint('📷 [scanner_watchdog] State mismatch terdeteksi, memicu _restartScanner()');
         _restartScanner();
       }
     });
@@ -739,9 +731,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     }
 
     debugPrint('❌ Gagal total simpan entry ${entry.id}: $lastError');
-    CameraDiagnosticsLog.instance.log(
-      'db_add_error',
-      'Gagal simpan entry ${entry.id} setelah $_persistMaxAttempts percobaan: $lastError',
+    debugPrint(
+      '📷 [db_add_error] Gagal simpan entry ${entry.id} setelah $_persistMaxAttempts percobaan: $lastError',
     );
 
     if (_scanCountNotifier.value > 0) {
