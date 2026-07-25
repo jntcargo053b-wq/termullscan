@@ -1108,8 +1108,9 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
             child: MobileScanner(
               controller: _scannerController,
               onDetect: _onDetect,
-              errorBuilder: (context, error) {
-                debugPrint('📷 [scanner_widget_error] MobileScanner errorBuilder terpicu: ${error.errorCode} — ${error.errorDetails?.message ?? error.toString()}');
+              // ✅ errorBuilder dengan 3 parameter (context, error, child)
+              errorBuilder: (context, error, child) {
+                debugPrint('📷 [scanner_widget_error] MobileScanner error: ${error.errorCode} — ${error.errorDetails?.message ?? error.toString()}');
                 return Container(
                   color: Colors.black,
                   alignment: Alignment.center,
