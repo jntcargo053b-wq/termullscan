@@ -1,3 +1,8 @@
+// photo_scan_screen.dart
+// Layar utama untuk pengambilan foto dengan watermark dan batch mode.
+// Mendukung pengambilan dari kamera internal, galeri, dan antrean tugas
+// untuk pemrosesan latar belakang.
+
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -9,6 +14,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:saver_gallery/saver_gallery.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
+
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
 import '../services/permission_service.dart';
@@ -24,7 +30,16 @@ import 'watermark_settings_sheet.dart';
 import 'preview_screen.dart';
 import 'in_app_camera_screen.dart';
 
-// ─── WIDGET: Camera Icon ──────────────────────────────────────
+// ─── CONSTANTS ────────────────────────────────────────────────────
+const int _kMaxThumbnails = 20;
+const int _kMaxCachedPaths = 100;
+const int _kGalleryExportTimeoutSeconds = 12;
+const int _kLocationTimeoutSeconds = 10;
+const int _kDbRetryCount = 3;
+const Duration _kDbRetryDelay = Duration(milliseconds: 150);
+
+// ─── WIDGETS ─────────────────────────────────────────────────────
+
 class _CameraIconWidget extends StatelessWidget {
   final bool batchMode;
   final int photoCount;
@@ -38,10 +53,7 @@ class _CameraIconWidget extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppTheme.accentOrange.withOpacity(0.1),
         shape: BoxShape.circle,
-        border: Border.all(
-          color: AppTheme.accentOrange.withOpacity(0.4),
-          width: 2,
-        ),
+        border: Border.all(color: AppTheme.accentOrange.withOpacity(0.4), width: 2),
       ),
       child: batchMode
           ? Stack(
@@ -54,17 +66,10 @@ class _CameraIconWidget extends StatelessWidget {
                     right: 4,
                     child: Container(
                       padding: const EdgeInsets.all(4),
-                      decoration: const BoxDecoration(
-                        color: AppTheme.accentOrange,
-                        shape: BoxShape.circle,
-                      ),
+                      decoration: const BoxDecoration(color: AppTheme.accentOrange, shape: BoxShape.circle),
                       child: Text(
                         '$photoCount',
-                        style: const TextStyle(
-                          color: Colors.black,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
+                        style: const TextStyle(color: Colors.black, fontSize: 12, fontWeight: FontWeight.bold),
                       ),
                     ),
                   ),
@@ -75,16 +80,11 @@ class _CameraIconWidget extends StatelessWidget {
   }
 }
 
-// ─── WIDGET: Header ───────────────────────────────────────────
 class _HeaderWidget extends StatelessWidget {
   final bool batchMode;
   final int photoCount;
   final String? barcode;
-  const _HeaderWidget({
-    required this.batchMode,
-    required this.photoCount,
-    this.barcode,
-  });
+  const _HeaderWidget({required this.batchMode, required this.photoCount, this.barcode});
 
   @override
   Widget build(BuildContext context) {
@@ -107,19 +107,15 @@ class _HeaderWidget extends StatelessWidget {
   }
 }
 
-// ─── WIDGET: Photo Thumbnails ────────────────────────────────
 class _PhotoThumbnailsWidget extends StatelessWidget {
   final List<String> photoPaths;
   const _PhotoThumbnailsWidget({required this.photoPaths});
 
-  static const int _maxThumbnails = 20;
-
   @override
   Widget build(BuildContext context) {
     if (photoPaths.isEmpty) return const SizedBox.shrink();
-
-    final displayPaths = photoPaths.length > _maxThumbnails
-        ? photoPaths.sublist(photoPaths.length - _maxThumbnails)
+    final displayPaths = photoPaths.length > _kMaxThumbnails
+        ? photoPaths.sublist(photoPaths.length - _kMaxThumbnails)
         : photoPaths;
 
     return Column(
@@ -159,35 +155,22 @@ class _PhotoThumbnailsWidget extends StatelessWidget {
   }
 }
 
-// ─── WIDGET: Action Buttons ──────────────────────────────────
 class _ActionButtonsWidget extends StatelessWidget {
   final VoidCallback onTakePhoto;
   final VoidCallback onPickGallery;
   final bool isSaving;
   final bool isCapturing;
-  final bool isProcessing;
+
   const _ActionButtonsWidget({
     required this.onTakePhoto,
     required this.onPickGallery,
     required this.isSaving,
     required this.isCapturing,
-    required this.isProcessing,
   });
 
   @override
   Widget build(BuildContext context) {
-    // ✅ FIX: dulu `isProcessing` (task finalisasi foto SEBELUMNYA yang
-    // masih berjalan di background — watermark move, update DB, ekspor
-    // galeri) ikut menonaktifkan tombol ini. Ini bertentangan dengan
-    // tujuan TaskQueue (maxWorkers: 2) yang justru dibuat supaya user
-    // BISA lanjut memotret sambil foto sebelumnya masih diproses di
-    // latar belakang. Kalau salah satu task finalisasi lambat/macet
-    // (mis. ekspor galeri lewat plugin native yang tidak kunjung
-    // resolve), tombol kamera akan disabled TERUS — persis gejala
-    // "tidak bisa buka kamera lagi setelah simpan foto". Sekarang
-    // tombol ini hanya bergantung pada state pengambilan foto YANG
-    // SEDANG BERJALAN (isSaving/isCapturing), bukan antrean background.
-    final bool disabled = isSaving || isCapturing;
+    final disabled = isSaving || isCapturing;
     return Column(
       children: [
         SizedBox(
@@ -198,8 +181,7 @@ class _ActionButtonsWidget extends StatelessWidget {
                 ? const SizedBox(
                     width: 18,
                     height: 18,
-                    child: CircularProgressIndicator(
-                        color: Colors.black, strokeWidth: 2),
+                    child: CircularProgressIndicator(color: Colors.black, strokeWidth: 2),
                   )
                 : const Icon(Icons.camera_alt, size: 22),
             label: Text(disabled ? 'Memproses...' : 'Ambil Foto'),
@@ -207,8 +189,7 @@ class _ActionButtonsWidget extends StatelessWidget {
               backgroundColor: AppTheme.accentOrange,
               foregroundColor: Colors.black,
               padding: const EdgeInsets.symmetric(vertical: 18),
-              textStyle: const TextStyle(
-                  fontWeight: FontWeight.w700, fontSize: 15),
+              textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
             ),
           ),
         ).animate().fadeIn(delay: 250.ms),
@@ -221,8 +202,7 @@ class _ActionButtonsWidget extends StatelessWidget {
             label: const Text('Pilih dari Galeri'),
             style: OutlinedButton.styleFrom(
               foregroundColor: AppTheme.accentOrange,
-              side: BorderSide(
-                  color: AppTheme.accentOrange.withOpacity(0.6)),
+              side: BorderSide(color: AppTheme.accentOrange.withOpacity(0.6)),
               padding: const EdgeInsets.symmetric(vertical: 16),
               textStyle: const TextStyle(fontWeight: FontWeight.w600),
             ),
@@ -233,14 +213,10 @@ class _ActionButtonsWidget extends StatelessWidget {
   }
 }
 
-// ─── WIDGET: Batch Finish Button ─────────────────────────────
 class _BatchFinishButtonWidget extends StatelessWidget {
   final int photoCount;
   final VoidCallback onFinish;
-  const _BatchFinishButtonWidget({
-    required this.photoCount,
-    required this.onFinish,
-  });
+  const _BatchFinishButtonWidget({required this.photoCount, required this.onFinish});
 
   @override
   Widget build(BuildContext context) {
@@ -258,8 +234,7 @@ class _BatchFinishButtonWidget extends StatelessWidget {
               backgroundColor: AppTheme.success,
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(vertical: 14),
-              textStyle: const TextStyle(
-                  fontWeight: FontWeight.w600, fontSize: 15),
+              textStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
             ),
           ),
         ).animate().fadeIn(delay: 350.ms),
@@ -268,7 +243,6 @@ class _BatchFinishButtonWidget extends StatelessWidget {
   }
 }
 
-// ─── WIDGET: Info Box ─────────────────────────────────────────
 class _InfoBoxWidget extends StatelessWidget {
   final bool batchMode;
   const _InfoBoxWidget({required this.batchMode});
@@ -300,11 +274,13 @@ class _InfoBoxWidget extends StatelessWidget {
   }
 }
 
-// ─── MAIN STATE ──────────────────────────────────────────────
+// ─── MAIN STATE ──────────────────────────────────────────────────
+
 class PhotoScanScreen extends StatefulWidget {
   final String? barcode;
   final bool batchMode;
   final String? entryId;
+
   const PhotoScanScreen({
     super.key,
     this.barcode,
@@ -321,24 +297,21 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   final StorageService _storage = StorageService();
   final WatermarkSettings _wmSettings = WatermarkSettings();
 
-  // ─── TaskQueue ──────────────────────────────────────────────
+  // TaskQueue untuk pemrosesan latar belakang
   final TaskQueue _taskQueue = TaskQueue(maxWorkers: 2);
   int _pendingTasks = 0;
   int _runningTasks = 0;
   int _nextPhotoIndex = 1;
 
-  bool _isSaving = false;
-  bool _isCapturing = false;
-  bool _processingRequest = false;
+  bool _isSaving = false; // indikator tombol disabled
+  bool _isCapturing = false; // sedang ambil foto / pilih galeri
+  bool _processingRequest = false; // cegah double tap
   int _photoCount = 0;
   bool _cameraGranted = false;
   final List<String> _photoPaths = [];
   String _statusText = '';
 
-  // ─── Pending directory ─────────────────────────────────────
   late Directory _pendingDir;
-
-  static const int _maxCachedPaths = 100;
 
   @override
   void initState() {
@@ -357,12 +330,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     }
   }
 
-  Future<void> _initPendingDir() async {
-    final appDir = await getApplicationDocumentsDirectory();
-    _pendingDir = Directory('${appDir.path}/pending');
-    await _pendingDir.create(recursive: true);
-  }
-
   @override
   void dispose() {
     _taskQueue.dispose();
@@ -372,7 +339,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     super.dispose();
   }
 
-  // ─── Permission ─────────────────────────────────────────────
+  // ─── PERMISSIONS ──────────────────────────────────────────────
 
   Future<void> _requestPermissions() async {
     final cameraStatus = await Permission.camera.status;
@@ -394,7 +361,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
     if (Platform.isAndroid) {
       final sdkInt = await _getAndroidSdkVersion();
-      if (sdkInt >= 29) return;
+      if (sdkInt >= 29) return; // Android 10+ tidak perlu izin penyimpanan
     }
     await PermissionService.requestGalleryPermission();
   }
@@ -428,7 +395,15 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     return granted;
   }
 
-  // ─── Settings ───────────────────────────────────────────────
+  // ─── INIT DIR ──────────────────────────────────────────────────
+
+  Future<void> _initPendingDir() async {
+    final appDir = await getApplicationDocumentsDirectory();
+    _pendingDir = Directory('${appDir.path}/pending');
+    await _pendingDir.create(recursive: true);
+  }
+
+  // ─── WATERMARK SETTINGS ──────────────────────────────────────
 
   void _openWatermarkSettings() {
     showModalBottomSheet(
@@ -442,7 +417,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     );
   }
 
-  // ─── File naming ────────────────────────────────────────────
+  // ─── FILE NAMING ──────────────────────────────────────────────
 
   String _resolveFileName(int photoIndex) {
     if (widget.barcode == null || widget.barcode!.isEmpty) {
@@ -453,7 +428,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         : '${widget.barcode}${photoIndex.toString().padLeft(3, '0')}';
   }
 
-  // ─── Pending file helper ─────────────────────────────────────
+  // ─── PENDING FILE HELPER ─────────────────────────────────────
 
   Future<String> _saveToPending(XFile xfile) async {
     final file = File(xfile.path);
@@ -468,35 +443,16 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     return destPath;
   }
 
-  // ─── Core processing ────────────────────────────────────────
+  // ─── CORE PROCESSING ──────────────────────────────────────────
 
   Future<String> _applyWatermark(String imagePath, DateTime timestamp, int photoIndex) async {
     final fileName = _resolveFileName(photoIndex);
-    final outputPath =
-        '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.jpg';
+    final outputPath = '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.jpg';
 
-    // ✅ FIX RACE CONDITION ALAMAT: dulu pakai `.currentState` (snapshot
-    // instan), sehingga watermark foto sering "kepalang dibakar" duluan
-    // sebelum reverse-geocoding (Nominatim/Photon/Android Geocoder)
-    // selesai — hasilnya watermark hanya menampilkan koordinat, padahal
-    // alamat sebenarnya berhasil didapat beberapa saat kemudian (tapi
-    // sudah terlambat karena file sudah jadi). Untuk aplikasi POD,
-    // alamat adalah bagian penting dari bukti pengiriman, jadi di sini
-    // kita tunggu (dengan timeout wajar) sampai alamat siap — tombol
-    // jepret kamera TETAP instan, yang ditunda hanya tahap render
-    // watermark (yang memang sudah menampilkan indikator "memproses").
-    // ✅ FIX: dulu timeout di sini cuma 6 detik, padahal jalur lain yang
-    // menunggu alamat (barcode_scan_screen, video_scan_screen bagian
-    // _attachLocationUpdate) sudah pakai 10 detik. Rantai geocoding
-    // (resolveDetailed: Nominatim multi-zoom + POI lookup + Overpass,
-    // masing-masing dijaga rate-limit 1req/detik) realistiknya sering
-    // butuh lebih dari 6 detik, terutama di area yang datanya kurang
-    // lengkap di zoom tinggi — akibatnya alamat sering belum siap saat
-    // watermark foto dirender, dan watermark jatuh ke koordinat saja.
-    // Disamakan ke 10 detik seperti jalur lain.
+    // Tunggu alamat GPS jika diaktifkan (timeout 10 detik)
     final locState = _wmSettings.gpsWatermarkEnabled
         ? await PodLocationService.instance.awaitAddressReady(
-            timeout: const Duration(seconds: 10),
+            timeout: const Duration(seconds: _kLocationTimeoutSeconds),
           )
         : null;
 
@@ -505,9 +461,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       type: ScanType.image,
       value: fileName,
       timestamp: timestamp,
-      operatorName: _wmSettings.operatorName.isNotEmpty 
-          ? _wmSettings.operatorName 
-          : 'Operator',
+      operatorName: _wmSettings.operatorName.isNotEmpty ? _wmSettings.operatorName : 'Operator',
       companyName: _wmSettings.companyName,
       latitude: locState?.lat,
       longitude: locState?.lon,
@@ -524,16 +478,14 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
     if (result == null) {
       final diagnosis = WatermarkRenderer.lastError;
-      throw Exception(
-        diagnosis != null ? 'Watermark foto gagal: $diagnosis' : 'Watermark foto gagal',
-      );
+      throw Exception(diagnosis != null ? 'Watermark foto gagal: $diagnosis' : 'Watermark foto gagal');
     }
 
+    // Hapus file sementara jika berbeda
     if (result != imagePath) {
-      final file = File(imagePath);
       try {
         if (await FileHelper.isTemporaryFile(imagePath)) {
-          await file.delete();
+          await File(imagePath).delete();
           debugPrint('✅ Cache file deleted: $imagePath');
         }
       } catch (e) {
@@ -544,7 +496,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     return result;
   }
 
-  // ─── Save to Gallery ─────────────────────────────────────────
+  // ─── SAVE TO GALLERY ──────────────────────────────────────────
 
   Future<bool> _saveToGallery(String filePath) async {
     try {
@@ -566,28 +518,21 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       for (int attempt = 0; attempt <= maxRetries; attempt++) {
         try {
           final filename = file.path.split('/').last;
-          // ✅ FIX: dibatasi timeout. Plugin galeri native (saver_gallery)
-          // kadang tidak pernah resolve future-nya di sebagian perangkat
-          // (mis. tertahan di scoped-storage MediaStore). Tanpa timeout,
-          // await ini menggantung selamanya → task TaskQueue tidak
-          // pernah pindah dari status "running" → runningCount macet
-          // di >0 → indikator "Memproses..." (dan sebelumnya, tombol
-          // kamera) macet permanen walau foto sudah tersimpan.
           final result = await SaverGallery.saveFile(
             filePath: filePath,
             fileName: filename,
             androidRelativePath: 'Pictures/TERMULScan',
             skipIfExists: false,
           ).timeout(
-            const Duration(seconds: 12),
-            onTimeout: () => throw TimeoutException(
-              'Ekspor galeri tidak merespons (timeout)',
-            ),
+            const Duration(seconds: _kGalleryExportTimeoutSeconds),
+            onTimeout: () => throw TimeoutException('Ekspor galeri tidak merespons (timeout)'),
           );
+
           if (result.isSuccess) {
             debugPrint('✅ Ekspor gallery berhasil: $filename');
             return true;
           }
+
           debugPrint('⚠️ Percobaan ${attempt + 1} gagal, retry...');
           if (attempt < maxRetries) {
             await Future.delayed(const Duration(milliseconds: 300));
@@ -609,7 +554,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     }
   }
 
-  // ─── Preview helper ─────────────────────────────────────────
+  // ─── PREVIEW HELPER ───────────────────────────────────────────
 
   Future<String?> _showPreview(XFile file, MediaType type) async {
     return Navigator.push<String>(
@@ -625,7 +570,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     );
   }
 
-  // ─── Take photo ─────────────────────────────────────────────
+  // ─── TAKE PHOTO ───────────────────────────────────────────────
 
   Future<void> _takePhoto() async {
     if (_isSaving || _isCapturing || _processingRequest) return;
@@ -651,7 +596,9 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       if (!mounted) return;
       if (xfile != null) {
         pendingPath = await _saveToPending(xfile);
-        try { await File(xfile.path).delete(); } catch (_) {}
+        try {
+          await File(xfile.path).delete();
+        } catch (_) {}
 
         setState(() => _statusText = 'Menambahkan watermark...');
         final previewIndex = _nextPhotoIndex;
@@ -675,7 +622,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                 setState(() {
                   _photoPaths.add(path);
                   _photoCount++;
-                  if (_photoPaths.length > _maxCachedPaths) {
+                  if (_photoPaths.length > _kMaxCachedPaths) {
                     _photoPaths.removeAt(0);
                   }
                 });
@@ -692,26 +639,39 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                   Navigator.pop(context, {'error': error.toString()});
                 }
               }
-              try { File(finalWatermarkedPath).delete(); } catch (_) {}
-              try { File(finalPendingPath).delete(); } catch (_) {}
+              try {
+                File(finalWatermarkedPath).delete();
+              } catch (_) {}
+              try {
+                File(finalPendingPath).delete();
+              } catch (_) {}
             },
           );
+
           if (!widget.batchMode) {
             setState(() => _statusText = 'Menyimpan foto...');
           }
         } else {
-          try { await File(watermarkedPath).delete(); } catch (_) {}
-          try { await File(pendingPath).delete(); } catch (_) {}
+          try {
+            await File(watermarkedPath).delete();
+          } catch (_) {}
+          try {
+            await File(pendingPath).delete();
+          } catch (_) {}
           if (mounted) setState(() => _statusText = 'Dibatalkan');
         }
       }
     } catch (e) {
       _showError('Gagal memproses foto: $e');
       if (watermarkedPath != null) {
-        try { await File(watermarkedPath).delete(); } catch (_) {}
+        try {
+          await File(watermarkedPath).delete();
+        } catch (_) {}
       }
       if (pendingPath != null) {
-        try { await File(pendingPath).delete(); } catch (_) {}
+        try {
+          await File(pendingPath).delete();
+        } catch (_) {}
       }
     } finally {
       _processingRequest = false;
@@ -737,13 +697,13 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     String? watermarkedPath;
 
     try {
-      final xfile = await _picker.pickImage(
-        source: ImageSource.gallery,
-      );
+      final xfile = await _picker.pickImage(source: ImageSource.gallery);
       if (!mounted) return;
       if (xfile != null) {
         pendingPath = await _saveToPending(xfile);
-        try { await File(xfile.path).delete(); } catch (_) {}
+        try {
+          await File(xfile.path).delete();
+        } catch (_) {}
 
         setState(() => _statusText = 'Menambahkan watermark...');
         final previewIndex = _nextPhotoIndex;
@@ -767,7 +727,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                 setState(() {
                   _photoPaths.add(path);
                   _photoCount++;
-                  if (_photoPaths.length > _maxCachedPaths) {
+                  if (_photoPaths.length > _kMaxCachedPaths) {
                     _photoPaths.removeAt(0);
                   }
                 });
@@ -784,26 +744,39 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                   Navigator.pop(context, {'error': error.toString()});
                 }
               }
-              try { File(finalWatermarkedPath).delete(); } catch (_) {}
-              try { File(finalPendingPath).delete(); } catch (_) {}
+              try {
+                File(finalWatermarkedPath).delete();
+              } catch (_) {}
+              try {
+                File(finalPendingPath).delete();
+              } catch (_) {}
             },
           );
+
           if (!widget.batchMode) {
             setState(() => _statusText = 'Menyimpan foto...');
           }
         } else {
-          try { await File(watermarkedPath).delete(); } catch (_) {}
-          try { await File(pendingPath).delete(); } catch (_) {}
+          try {
+            await File(watermarkedPath).delete();
+          } catch (_) {}
+          try {
+            await File(pendingPath).delete();
+          } catch (_) {}
           if (mounted) setState(() => _statusText = 'Dibatalkan');
         }
       }
     } catch (e) {
       _showError('Gagal memproses foto: $e');
       if (watermarkedPath != null) {
-        try { await File(watermarkedPath).delete(); } catch (_) {}
+        try {
+          await File(watermarkedPath).delete();
+        } catch (_) {}
       }
       if (pendingPath != null) {
-        try { await File(pendingPath).delete(); } catch (_) {}
+        try {
+          await File(pendingPath).delete();
+        } catch (_) {}
       }
     } finally {
       _processingRequest = false;
@@ -816,45 +789,35 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     }
   }
 
-  // ─── Core processing logic ──────────────────────────────────
+  // ─── PREPARE WATERMARKED PHOTO ──────────────────────────────
 
   Future<String> _prepareWatermarkedPhoto(String pendingPath, int photoIndex) async {
     final inputFile = File(pendingPath);
-    if (!await inputFile.exists()) {
-      throw Exception('File input tidak ditemukan: $pendingPath');
-    }
+    if (!await inputFile.exists()) throw Exception('File input tidak ditemukan: $pendingPath');
     final inputSize = await inputFile.length();
-    if (inputSize == 0) {
-      throw Exception('File input kosong: $pendingPath');
-    }
+    if (inputSize == 0) throw Exception('File input kosong: $pendingPath');
     debugPrint('📷 Input file OK: $pendingPath (${inputSize ~/ 1024}KB)');
 
     final compressedPath = await ImageCompressor.compressIfNeeded(pendingPath);
     final compressedFile = File(compressedPath);
-    if (!await compressedFile.exists()) {
-      throw Exception('File hasil kompresi tidak ditemukan: $compressedPath');
-    }
+    if (!await compressedFile.exists()) throw Exception('File hasil kompresi tidak ditemukan: $compressedPath');
     final compressedSize = await compressedFile.length();
-    if (compressedSize == 0) {
-      throw Exception('File hasil kompresi kosong: $compressedPath');
-    }
+    if (compressedSize == 0) throw Exception('File hasil kompresi kosong: $compressedPath');
     debugPrint('✅ Kompresi OK: $compressedPath (${compressedSize ~/ 1024}KB)');
 
     final timestamp = DateTime.now();
     final watermarkedPath = await _applyWatermark(compressedPath, timestamp, photoIndex);
 
     final watermarkedFile = File(watermarkedPath);
-    if (!await watermarkedFile.exists()) {
-      throw Exception('File watermark tidak ditemukan: $watermarkedPath');
-    }
+    if (!await watermarkedFile.exists()) throw Exception('File watermark tidak ditemukan: $watermarkedPath');
     final watermarkSize = await watermarkedFile.length();
-    if (watermarkSize == 0) {
-      throw Exception('File watermark kosong: $watermarkedPath');
-    }
+    if (watermarkSize == 0) throw Exception('File watermark kosong: $watermarkedPath');
     debugPrint('✅ Watermark OK (pre-preview): $watermarkedPath (${watermarkSize ~/ 1024}KB)');
 
     return watermarkedPath;
   }
+
+  // ─── FINALIZE PHOTO (dengan retry state) ─────────────────────
 
   Future<String> _finalizePhoto(
     String watermarkedPath,
@@ -865,20 +828,8 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     try {
       String savedPath;
 
+      // Jika langkah savePhoto sudah pernah sukses, pakai hasilnya
       if (state.savedPath != null) {
-        // ✅ FIX RETRY: percobaan sebelumnya sudah berhasil memindah
-        // (rename/move) watermarkedPath -> internal storage. Karena
-        // _storage.savePhoto() MEMINDAHKAN file (bukan copy), file di
-        // watermarkedPath sudah tidak ada lagi setelah sukses — kalau
-        // langkah SETELAHNYA (mis. _storage.update / _saveToGallery)
-        // baru gagal dan TaskQueue me-retry _finalizePhoto() dari
-        // awal, cek exists() di watermarkedPath pasti gagal walau
-        // sebenarnya foto SUDAH tersimpan dengan aman. Ini akar dari
-        // error "File watermark tidak ditemukan" yang dilaporkan user
-        // padahal proses pemindahan filenya sendiri sukses. Solusinya:
-        // ingat hasil savePhoto lintas percobaan lewat `state`, dan
-        // pada retry langsung lanjut dari langkah setelah move, tanpa
-        // mengulang cek/eksekusi move yang sudah tidak relevan lagi.
         savedPath = state.savedPath!;
         debugPrint('↩️ Retry: pakai hasil save sebelumnya: $savedPath');
       } else {
@@ -893,9 +844,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
         final name = _resolveFileName(photoIndex);
         savedPath = await _storage.savePhoto(watermarkedPath, name: name);
-        if (savedPath.isEmpty) {
-          throw Exception('Gagal menyimpan file foto internal');
-        }
+        if (savedPath.isEmpty) throw Exception('Gagal menyimpan file foto internal');
         final savedFile = File(savedPath);
         if (!await savedFile.exists()) {
           throw Exception('File internal tidak ditemukan setelah save: $savedPath');
@@ -904,25 +853,27 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         debugPrint('✅ Internal save OK: $savedPath');
       }
 
+      // Update entry di DB jika ada entryId
       if (widget.entryId != null && !state.dbUpdated) {
-        final barcodeEntry = await _storage.getEntry(widget.entryId!);
+        ScanEntry? barcodeEntry = await _storage.getEntry(widget.entryId!);
+        // Retry beberapa kali jika entry belum tersedia
+        for (int i = 0; i < _kDbRetryCount && barcodeEntry == null; i++) {
+          await Future.delayed(_kDbRetryDelay);
+          barcodeEntry = await _storage.getEntry(widget.entryId!);
+        }
         if (barcodeEntry != null) {
           final allPaths = [..._photoPaths, savedPath];
-          final updated = barcodeEntry.copyWith(
-            imagePath: allPaths.join(','),
-          );
+          final updated = barcodeEntry.copyWith(imagePath: allPaths.join(','));
           await _storage.update(updated);
+          state.dbUpdated = true;
+        } else {
+          debugPrint('⚠️ Entry ${widget.entryId} belum ada di DB setelah retry — akan dicoba lagi jika retry');
         }
-        // ✅ FIX RETRY: tandai sudah dijalankan supaya retry berikutnya
-        // (dipicu langkah lain yang gagal setelah ini) tidak mengulang
-        // update DB — kalau diulang, `savedPath` bisa ke-append dua kali
-        // ke `imagePath` karena `_photoPaths` di state UI baru diperbarui
-        // di `onSuccess`, bukan di sini.
-        state.dbUpdated = true;
       } else if (state.dbUpdated) {
         debugPrint('↩️ Retry: lewati update DB, sudah sukses sebelumnya');
       }
 
+      // Ekspor ke galeri (jika belum)
       if (!state.galleryOk) {
         state.galleryOk = await _saveToGallery(savedPath);
         if (!state.galleryOk) {
@@ -932,12 +883,16 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         debugPrint('↩️ Retry: lewati ekspor gallery, sudah sukses sebelumnya');
       }
 
-      // Cleanup source files SETELAH semua langkah di atas sukses.
+      // Bersihkan file sumber
       if (watermarkedPath != savedPath && await File(watermarkedPath).exists()) {
-        try { await File(watermarkedPath).delete(); } catch (_) {}
+        try {
+          await File(watermarkedPath).delete();
+        } catch (_) {}
       }
       if (pendingPath != savedPath && await File(pendingPath).exists()) {
-        try { await File(pendingPath).delete(); } catch (_) {}
+        try {
+          await File(pendingPath).delete();
+        } catch (_) {}
       }
 
       if (widget.batchMode && mounted) {
@@ -957,17 +912,14 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     }
   }
 
-  // ─── Batch finish ───────────────────────────────────────────
-
+  // ─── BATCH FINISH ─────────────────────────────────────────────
 
   Future<void> _finishBatch() async {
     if (widget.entryId != null && _photoPaths.isNotEmpty) {
       if (!mounted) return;
       final barcodeEntry = await _storage.getEntry(widget.entryId!);
       if (barcodeEntry != null && mounted) {
-        final updated = barcodeEntry.copyWith(
-          imagePath: _photoPaths.join(','),
-        );
+        final updated = barcodeEntry.copyWith(imagePath: _photoPaths.join(','));
         await _storage.update(updated);
       }
     }
@@ -1022,7 +974,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     if (mounted) Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
   }
 
-  // ─── Feedback ──────────────────────────────────────────────
+  // ─── FEEDBACK ──────────────────────────────────────────────────
 
   void _showSuccess() {
     if (!mounted) return;
@@ -1052,11 +1004,11 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     );
   }
 
-  // ─── Build ──────────────────────────────────────────────────
+  // ─── BUILD ─────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
-    final bool isProcessing = _pendingTasks > 0 || _runningTasks > 0;
+    final isProcessing = _pendingTasks > 0 || _runningTasks > 0;
 
     return Scaffold(
       backgroundColor: AppTheme.bg,
@@ -1139,7 +1091,11 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
             children: [
               _CameraIconWidget(batchMode: widget.batchMode, photoCount: _photoCount),
               const Gap(24),
-              _HeaderWidget(batchMode: widget.batchMode, photoCount: _photoCount, barcode: widget.barcode),
+              _HeaderWidget(
+                batchMode: widget.batchMode,
+                photoCount: _photoCount,
+                barcode: widget.barcode,
+              ),
               if (widget.batchMode && _photoPaths.isNotEmpty)
                 _PhotoThumbnailsWidget(photoPaths: _photoPaths),
               const Gap(48),
@@ -1148,7 +1104,6 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                 onPickGallery: _pickFromGallery,
                 isSaving: _isSaving,
                 isCapturing: _isCapturing,
-                isProcessing: isProcessing,
               ),
               if (widget.batchMode)
                 _BatchFinishButtonWidget(photoCount: _photoCount, onFinish: _finishBatch),
@@ -1170,12 +1125,18 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
               if (_pendingTasks > 0)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
-                  child: Text('$_pendingTasks foto dalam antrian...', style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                  child: Text(
+                    '$_pendingTasks foto dalam antrian...',
+                    style: const TextStyle(color: Colors.grey, fontSize: 12),
+                  ),
                 ),
               if (_runningTasks > 0)
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
-                  child: Text('$_runningTasks foto sedang diproses...', style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                  child: Text(
+                    '$_runningTasks foto sedang diproses...',
+                    style: const TextStyle(color: Colors.grey, fontSize: 12),
+                  ),
                 ),
             ],
           ),
@@ -1185,11 +1146,9 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   }
 }
 
-/// Menyimpan hasil pemindahan file (savePhoto) dan status langkah-
-/// langkah fallible berikutnya lintas percobaan TaskQueue, supaya
-/// retry _finalizePhoto() tidak mengulang langkah yang sudah sukses
-/// (file sudah dipindah, DB sudah di-update, atau foto sudah masuk
-/// galeri).
+// ─── RETRY STATE ─────────────────────────────────────────────────
+
+/// Menyimpan hasil langkah-langkah yang sudah sukses agar retry tidak mengulanginya.
 class _FinalizeState {
   String? savedPath;
   bool dbUpdated = false;
