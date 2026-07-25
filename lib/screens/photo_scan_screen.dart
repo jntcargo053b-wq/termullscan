@@ -176,7 +176,18 @@ class _ActionButtonsWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bool disabled = isSaving || isCapturing || isProcessing;
+    // ✅ FIX: dulu `isProcessing` (task finalisasi foto SEBELUMNYA yang
+    // masih berjalan di background — watermark move, update DB, ekspor
+    // galeri) ikut menonaktifkan tombol ini. Ini bertentangan dengan
+    // tujuan TaskQueue (maxWorkers: 2) yang justru dibuat supaya user
+    // BISA lanjut memotret sambil foto sebelumnya masih diproses di
+    // latar belakang. Kalau salah satu task finalisasi lambat/macet
+    // (mis. ekspor galeri lewat plugin native yang tidak kunjung
+    // resolve), tombol kamera akan disabled TERUS — persis gejala
+    // "tidak bisa buka kamera lagi setelah simpan foto". Sekarang
+    // tombol ini hanya bergantung pada state pengambilan foto YANG
+    // SEDANG BERJALAN (isSaving/isCapturing), bukan antrean background.
+    final bool disabled = isSaving || isCapturing;
     return Column(
       children: [
         SizedBox(
@@ -555,11 +566,23 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       for (int attempt = 0; attempt <= maxRetries; attempt++) {
         try {
           final filename = file.path.split('/').last;
+          // ✅ FIX: dibatasi timeout. Plugin galeri native (saver_gallery)
+          // kadang tidak pernah resolve future-nya di sebagian perangkat
+          // (mis. tertahan di scoped-storage MediaStore). Tanpa timeout,
+          // await ini menggantung selamanya → task TaskQueue tidak
+          // pernah pindah dari status "running" → runningCount macet
+          // di >0 → indikator "Memproses..." (dan sebelumnya, tombol
+          // kamera) macet permanen walau foto sudah tersimpan.
           final result = await SaverGallery.saveFile(
             filePath: filePath,
             fileName: filename,
             androidRelativePath: 'Pictures/TERMULScan',
             skipIfExists: false,
+          ).timeout(
+            const Duration(seconds: 12),
+            onTimeout: () => throw TimeoutException(
+              'Ekspor galeri tidak merespons (timeout)',
+            ),
           );
           if (result.isSuccess) {
             debugPrint('✅ Ekspor gallery berhasil: $filename');
