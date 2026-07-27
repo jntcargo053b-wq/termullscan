@@ -714,11 +714,12 @@ class StorageService {
       ].map(_singleLine).join(', ');
       if (area.isNotEmpty) buffer.writeln('Wilayah: $area');
       if (entry.photoPaths.isNotEmpty) {
-        final photoNames = entry.photoPaths.map(basename).toSet().join(', ');
+        final photoNames =
+            entry.photoPaths.map(_basenameAnyOs).toSet().join(', ');
         buffer.writeln('Foto (${entry.photoPaths.length}): $photoNames');
       }
       if (entry.videoPath != null && entry.videoPath!.isNotEmpty) {
-        buffer.writeln('Video: ${basename(entry.videoPath!)}');
+        buffer.writeln('Video: ${_basenameAnyOs(entry.videoPath!)}');
         if (entry.videoDuration != null) {
           buffer.writeln('Durasi: ${_formatDuration(entry.videoDuration!)}');
         }
@@ -730,6 +731,16 @@ class StorageService {
 
   String _singleLine(String value) =>
       value.replaceAll(RegExp(r'[\r\n]+'), ' ').trim();
+
+  /// Basename yang aman lintas-OS: `package:path`'s basename() ikut context
+  /// OS runner (di Linux, `\` dianggap karakter biasa bukan separator), jadi
+  /// path bergaya Windows bisa lolos utuh tanpa terpotong saat build/test
+  /// jalan di Linux CI. Ini selalu split di kedua separator `/` dan `\`.
+  String _basenameAnyOs(String path) {
+    final normalized = path.replaceAll('\\', '/');
+    final segments = normalized.split('/').where((s) => s.isNotEmpty);
+    return segments.isEmpty ? path : segments.last;
+  }
 
   Future<void> _cleanupOldExports(Directory tempDir) async {
     final cutoff = DateTime.now().subtract(const Duration(days: 1));
