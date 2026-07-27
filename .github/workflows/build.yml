@@ -10,6 +10,11 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # GitHub Actions tidak mengizinkan `secrets` dipakai langsung di dalam
+    # `if:` step manapun ("Unrecognized named-value: 'secrets'"). Solusi
+    # resminya: taruh dulu di env level job, baru step if: merujuk ke env.
+    env:
+      HAS_RELEASE_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
 
     steps:
       - name: Checkout repository
@@ -45,7 +50,7 @@ jobs:
       # setelah user coba install, job dihentikan di sini kalau secrets
       # belum lengkap.
       - name: Verify release keystore secrets are configured
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 == '' }}
+        if: ${{ env.HAS_RELEASE_KEYSTORE != 'true' }}
         run: |
           echo "::error::ANDROID_KEYSTORE_BASE64 (dan secrets keystore lainnya) belum diset di repo ini."
           echo "::error::Tanpa ini, build.gradle akan menghasilkan APK release UNSIGNED yang tidak bisa diinstall di HP manapun."
@@ -54,7 +59,7 @@ jobs:
           exit 1
 
       - name: Configure release signing
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        if: ${{ env.HAS_RELEASE_KEYSTORE == 'true' }}
         shell: bash
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
