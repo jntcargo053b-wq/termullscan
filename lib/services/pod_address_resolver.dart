@@ -421,7 +421,11 @@ class PodAddressResolver {
   /// Resolves with full detail: primary POI label + address + suggestions.
   /// Falls back to plain address (via [resolve]) if POI lookups fail —
   /// never throws, never returns an empty addressLine.
-  static Future<ResolvedLocation> resolveDetailed(double lat, double lon) async {
+  static Future<ResolvedLocation> resolveDetailed(
+    double lat,
+    double lon, {
+    void Function(String addressLine)? onAddressResolved,
+  }) async {
     if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
       return ResolvedLocation.dms(_toDMS(lat, lon));
     }
@@ -437,6 +441,9 @@ class PodAddressResolver {
 
     // 1. Alamat jalan (reuse existing battle-tested chain)
     final addressLine = await resolve(lat, lon);
+    onAddressResolved?.call(
+      addressLine.isNotEmpty ? addressLine : _toDMS(lat, lon),
+    );
 
     // 2. Coba dapatkan nama POI dari Nominatim namedetails
     final latS = lat.toStringAsFixed(7);

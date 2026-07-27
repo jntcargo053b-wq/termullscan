@@ -221,6 +221,18 @@ class PodGpsEngine {
   int get sampleCount => _window.length;
   int get samplesNeeded => _config.targetSamples;
 
+  /// Finalisasi sample terbaik yang sudah ada saat deadline service habis.
+  /// Cache OS boleh masuk ke window, tetapi service tetap memutuskan apakah
+  /// hasilnya fresh/live sebelum menjadikannya evidence.
+  bool forceLockIfPossible() {
+    if (_locked) return true;
+    if (_window.isEmpty) return false;
+    _forceLock();
+    _timeoutTimer?.cancel();
+    _timeoutTimer = null;
+    return true;
+  }
+
   double get lockProgress {
     if (_window.isEmpty) return 0.0;
     return (_window.length / _config.targetSamples).clamp(0.0, 1.0);

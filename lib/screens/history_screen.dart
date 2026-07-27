@@ -63,7 +63,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
               return ListTile(
                 title: Text(entry.value),
                 subtitle: Text(entry.locationName ?? ''),
-                trailing: Text(entry.createdAt.toString()),
+                trailing: Text(entry.formattedTimestamp),
               );
             },
           );

@@ -1,5 +1,5 @@
 // lib/models/video_job.dart
-import 'package:sqflite/sqflite.dart';
+import 'dart:convert';
 
 enum JobStatus { pending, processing, paused, completed, failed, cancelled }
 
@@ -39,22 +39,66 @@ class VideoJob {
       'errorMessage': errorMessage,
       'createdAt': createdAt.toIso8601String(),
       'updatedAt': updatedAt?.toIso8601String(),
-      'settings': settings.toString(), // Simpan JSON
+      'settings': jsonEncode(settings),
     };
   }
 
   factory VideoJob.fromMap(Map<String, dynamic> map) {
+    final rawSettings = map['settings'];
+    Map<String, dynamic> parsedSettings = <String, dynamic>{};
+    if (rawSettings is String && rawSettings.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(rawSettings);
+        if (decoded is Map) {
+          parsedSettings = Map<String, dynamic>.from(decoded);
+        }
+      } on FormatException {
+        // Versi lama menyimpan Map.toString(), yang bukan JSON valid.
+        parsedSettings = <String, dynamic>{};
+      }
+    } else if (rawSettings is Map) {
+      parsedSettings = Map<String, dynamic>.from(rawSettings);
+    }
+
     return VideoJob(
-      id: map['id'],
-      inputPath: map['inputPath'],
-      outputPath: map['outputPath'],
-      originalFilename: map['originalFilename'],
-      status: JobStatus.values[map['status']],
+      id: map['id'] as int?,
+      inputPath: map['inputPath'] as String,
+      outputPath: map['outputPath'] as String,
+      originalFilename: map['originalFilename'] as String,
+      status: JobStatus.values[map['status'] as int],
       progress: map['progress']?.toDouble() ?? 0.0,
-      errorMessage: map['errorMessage'] ?? '',
-      createdAt: DateTime.parse(map['createdAt']),
-      updatedAt: map['updatedAt'] != null ? DateTime.parse(map['updatedAt']) : null,
-      settings: Map<String, dynamic>.from(map['settings']), // Parsing JSON
+      errorMessage: map['errorMessage'] as String? ?? '',
+      createdAt: DateTime.parse(map['createdAt'] as String),
+      updatedAt: map['updatedAt'] != null
+          ? DateTime.parse(map['updatedAt'] as String)
+          : null,
+      settings: parsedSettings,
+    );
+  }
+
+  VideoJob copyWith({
+    int? id,
+    String? inputPath,
+    String? outputPath,
+    String? originalFilename,
+    JobStatus? status,
+    double? progress,
+    String? errorMessage,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+    Map<String, dynamic>? settings,
+  }) {
+    return VideoJob(
+      id: id ?? this.id,
+      inputPath: inputPath ?? this.inputPath,
+      outputPath: outputPath ?? this.outputPath,
+      originalFilename: originalFilename ?? this.originalFilename,
+      status: status ?? this.status,
+      progress: progress ?? this.progress,
+      errorMessage: errorMessage ?? this.errorMessage,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      settings: settings ?? this.settings,
     );
   }
 }

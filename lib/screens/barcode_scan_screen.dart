@@ -97,6 +97,17 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   bool _processingScan = false;
   bool _navigationLocked = false;
   bool _resumeScheduled = false;
+  // ✅ FIX: penanda bahwa alur input manual (cek duplikat → dialog
+  // konfirmasi → simpan entry) masih berjalan, MESKIPUN bottom sheet
+  // input-nya sendiri sudah tertutup (Navigator.pop dipanggil duluan
+  // di _ManualInputDialog agar terasa responsif). Tanpa flag ini,
+  // whenComplete() bottom sheet akan resume kamera scanner terlalu
+  // cepat — tepat saat dialog konfirmasi kode manual masih tampil di
+  // atasnya — sehingga _scannerState bisa tabrakan dengan barcode
+  // yang kebaca kamera di jendela waktu itu, dan _resumeScanning()
+  // berikutnya jadi ditolak (_canResume) karena state sudah kepeleset
+  // dari idle/paused/error. Efek yang terlihat: kamera "diam" dan
+  // baru hidup lagi kalau app di-background/foreground.
   bool _manualFlowBusy = false;
   Timer? _processingWatchdog;
   Timer? _scannerWatchdog;
@@ -118,24 +129,19 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   final StorageService _storage = StorageService();
   final WatermarkSettings _wmSettings = WatermarkSettings();
 
-  MobileScannerController _scannerController = _buildScannerController();
-  int _scannerRebuildKey = 0;
-
-  static MobileScannerController _buildScannerController() {
-    return MobileScannerController(
-      detectionSpeed: DetectionSpeed.noDuplicates,
-      returnImage: false,
-      facing: CameraFacing.back,
-      formats: const [
-        BarcodeFormat.code128,
-        BarcodeFormat.code39,
-        BarcodeFormat.ean13,
-        BarcodeFormat.qrCode,
-        BarcodeFormat.upcA,
-        BarcodeFormat.upcE,
-      ],
-    );
-  }
+  final MobileScannerController _scannerController = MobileScannerController(
+    detectionSpeed: DetectionSpeed.noDuplicates,
+    returnImage: false,
+    facing: CameraFacing.back,
+    formats: const [
+      BarcodeFormat.code128,
+      BarcodeFormat.code39,
+      BarcodeFormat.ean13,
+      BarcodeFormat.qrCode,
+      BarcodeFormat.upcA,
+      BarcodeFormat.upcE,
+    ],
+  );
 
   // ─── GETTER ──────────────────────────────────────────────────
   bool get _isScannerRunning => _scannerController.value.isRunning;
@@ -171,9 +177,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       _scannerController.stop();
     } catch (_) {}
     _scannerController.dispose();
-    if (_wmSettings.gpsWatermarkEnabled) {
-      PodLocationService.instance.releaseAfterCapture();
-    }
+    PodLocationService.instance.releaseAfterCapture(owner: this);
     super.dispose();
   }
 
@@ -261,11 +265,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
 
   // ─── SCANNER CONTROL ──────────────────────────────────────
 
-  static const int _maxStartAttempts = 5;
-  static const int _maxStartBackoffMs = 1500;
-
   Future<bool> _startScannerWithRetry() async {
-    for (int i = 0; i < _maxStartAttempts; i++) {
+    for (int i = 0; i < 3; i++) {
       try {
         if (!_isScannerRunning) {
           await _scannerController.start();
@@ -278,9 +279,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           
           if (_isScannerRunning) {
             debugPrint('✅ Scanner started on attempt ${i + 1}');
-            if (i > 0) {
-              debugPrint('📷 [scanner_start] Berhasil pada percobaan ke-${i + 1}/$_maxStartAttempts');
-            }
             return true;
           }
         } else {
@@ -288,19 +286,11 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         }
       } catch (e) {
         debugPrint('⚠️ Start attempt ${i + 1} failed: $e');
-        debugPrint('📷 [scanner_start_error] Percobaan ${i + 1}/$_maxStartAttempts gagal: $e');
-        if (e.toString().toLowerCase().contains('permission')) {
-          try {
-            await Permission.camera.request();
-          } catch (_) {}
-        }
-        if (i < _maxStartAttempts - 1) {
-          final backoff = (300 * (i + 1)).clamp(0, _maxStartBackoffMs);
-          await Future.delayed(Duration(milliseconds: backoff));
+        if (i < 2) {
+          await Future.delayed(Duration(milliseconds: 300 * (i + 1)));
         }
       }
     }
-    debugPrint('📷 [scanner_start_failed] Gagal start setelah $_maxStartAttempts percobaan');
     return false;
   }
 
@@ -362,40 +352,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       debugPrint('⚠️ Error stopping scanner: $e');
       _scannerState = _ScannerState.error;
     }
-  }
-
-  // ─── RECREATE (bukan sekadar restart) ──────────────────────
-  Future<void> _recreateScannerController() async {
-    if (!mounted) return;
-    debugPrint('📷 [scanner_recreate] Mulai recreate controller');
-
-    final old = _scannerController;
-    try {
-      await old.stop();
-    } catch (e) {
-      debugPrint('⚠️ Error stop controller lama sebelum recreate: $e');
-      debugPrint('📷 [scanner_recreate] Stop controller lama gagal: $e');
-    }
-    try {
-      await old.dispose();
-    } catch (e) {
-      debugPrint('⚠️ Error dispose controller lama sebelum recreate: $e');
-      debugPrint('📷 [scanner_recreate] Dispose controller lama gagal: $e');
-    }
-
-    await Future.delayed(const Duration(milliseconds: 80));
-    if (!mounted) return;
-
-    setState(() {
-      _scannerController = _buildScannerController();
-      _scannerRebuildKey++;
-      _scannerState = _ScannerState.idle;
-      _scanning = false;
-    });
-
-    debugPrint('♻️ Scanner controller di-recreate (rebuild #$_scannerRebuildKey)');
-    await _resumeScanning();
-    debugPrint('📷 [scanner_recreate] Recreate selesai (rebuild #$_scannerRebuildKey), status: $_scannerState, running: $_isScannerRunning');
   }
 
   Future<void> _restartScanner() async {
@@ -467,11 +423,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           }
         } catch (e) {
           debugPrint('⚠️ Start attempt ${i + 1} failed: $e');
-          if (e.toString().toLowerCase().contains('permission')) {
-            try {
-              await Permission.camera.request();
-            } catch (_) {}
-          }
           if (i < 2) {
             await Future.delayed(Duration(milliseconds: 300 * (i + 1)));
           }
@@ -532,7 +483,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           !_navigationLocked &&
           _activeScanVN.value == null) {
         debugPrint('⚠️ Scanner watchdog: State mismatch - running: $_scanning, actual: $_isScannerRunning');
-        debugPrint('📷 [scanner_watchdog] State mismatch terdeteksi, memicu _restartScanner()');
         _restartScanner();
       }
     });
@@ -586,6 +536,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
 
   void _toggleTorch() {
     try {
+      // ✅ FIX: Cek torchState untuk mengetahui apakah torch tersedia
+      // MobileScanner versi 5.x menggunakan torchState
       if (_scannerController.value.torchState != null) {
         _scannerController.toggleTorch();
         debugPrint('✅ Torch toggled');
@@ -615,6 +567,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
 
   void _switchCamera() {
     try {
+      // ✅ FIX: Langsung switch, MobileScanner akan throw jika tidak tersedia
       _scannerController.switchCamera();
       debugPrint('✅ Camera switched');
     } catch (e) {
@@ -654,7 +607,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     _activePhotoCountRestorer.value = 0;
     _activeVideoCountRestorer.value = 0;
 
-    unawaited(_stopScannerSafely());
     unawaited(_processDetectedBarcode(code: code, format: barcode.format.name));
   }
 
@@ -667,11 +619,17 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         HapticFeedback.mediumImpact();
 
         if (_wmSettings.gpsWatermarkEnabled) {
-          unawaited(PodLocationService.instance.acquireForCapture());
+          unawaited(
+            PodLocationService.instance.acquireForCapture(owner: this),
+          );
         }
         
         final gpsOn = _wmSettings.gpsWatermarkEnabled;
-        final locState = gpsOn ? PodLocationService.instance.currentState : null;
+        final currentLocation =
+            gpsOn ? PodLocationService.instance.currentState : null;
+        final locState = currentLocation?.isEvidenceReady == true
+            ? currentLocation
+            : null;
         
         final entry = ScanEntry(
           id: _storage.generateId(),
@@ -684,7 +642,9 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           companyName: _wmSettings.companyName,
           latitude: locState?.lat,
           longitude: locState?.lon,
-          locationName: (locState != null && locState.address.isNotEmpty) ? locState.address : null,
+          locationName: locState != null && locState.evidenceAddress.isNotEmpty
+              ? locState.evidenceAddress
+              : null,
           isManual: false,
         );
         await _storage.add(entry);
@@ -715,6 +675,23 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           await _resumeScanning();
         }
       } finally {
+        // ✅ FIX: dulu releaseAfterCapture() dipanggil DI SINI, tepat
+        // setelah try block selesai (yang isinya cuma kerja ringan:
+        // haptic, simpan entry, stop scanner — beres dalam hitungan
+        // milidetik). Ini menghentikan stream GPS jauh sebelum sempat
+        // lock, apalagi sebelum geocode() sempat terpicu (geocode baru
+        // jalan setelah confidence mencapai canCapture). Akibatnya:
+        // acquireForCapture() yang dipanggil di atas jadi sia-sia —
+        // begitu PhotoScanScreen/VideoScanScreen dibuka, GPS+alamat
+        // mulai dari nol lagi via acquireForCapture() miliknya sendiri,
+        // padahal maksud awal manggil acquire di titik scan barcode
+        // justru supaya GPS+alamat sudah "panas" duluan saat user
+        // lanjut ke kamera. Sekarang release TIDAK dipanggil di sini —
+        // GPS dibiarkan tetap jalan (auto-stop sendiri lewat
+        // _acquireDeadline 14 detik kalau tidak kunjung lock, jadi
+        // tetap aman dari sisi baterai). Kalau user tidak lanjut ke
+        // kamera sama sekali, release tetap terjadi lewat dispose()
+        // layar ini.
         _processingWatchdog?.cancel();
         _processingScan = false;
         _scannerState = _ScannerState.paused;
@@ -728,6 +705,13 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     if (_processingScan || _activeScanVN.value != null) return;
     
     _lockNavigation();
+    // ✅ FIX: set busy SEBELUM sheet dibuka. _ManualInputDialog menutup
+    // dirinya sendiri (Navigator.pop) sebelum widget.onSubmitted selesai
+    // di-await, jadi whenComplete() di bawah ini bisa terpicu jauh lebih
+    // awal daripada selesainya alur cek-duplikat → dialog konfirmasi →
+    // simpan entry. Selama _manualFlowBusy masih true, resume kamera
+    // DITUNDA sampai alur itu benar-benar tuntas (lihat finally di
+    // _confirmAndProcessManualCode).
     _manualFlowBusy = true;
     showModalBottomSheet(
       context: context,
@@ -749,6 +733,12 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
 
   Future<void> _confirmAndProcessManualCode(String code) async {
     if (!mounted) return;
+
+    // ✅ FIX: dilacak supaya finally di bawah TIDAK mereset _manualFlowBusy
+    // saat kita justru sedang membuka ulang _showManualInput() (kasus
+    // "Ketik Ulang") — karena _showManualInput() sendiri sudah set
+    // _manualFlowBusy = true untuk sheet berikutnya, dan reset di sini
+    // akan menimpanya balik ke false tepat setelah itu.
     bool reopenedManualInput = false;
 
     bool isDuplicate = false;
@@ -840,6 +830,13 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         _showManualInput();
       }
     } finally {
+      // ✅ FIX: baru sekarang seluruh alur input manual (cek duplikat →
+      // dialog konfirmasi → simpan entry) benar-benar tuntas, jadi baru
+      // di sini _manualFlowBusy boleh direset dan resume kamera scanner
+      // dicoba lagi — BUKAN saat bottom sheet-nya saja yang tertutup.
+      // Dilewati kalau kita baru saja membuka ulang sheet ("Ketik Ulang"),
+      // supaya tidak menimpa _manualFlowBusy yang baru di-set true lagi
+      // oleh _showManualInput().
       if (!reopenedManualInput) {
         _manualFlowBusy = false;
         if (mounted && !_processingScan) {
@@ -855,11 +852,17 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         HapticFeedback.mediumImpact();
 
         if (_wmSettings.gpsWatermarkEnabled) {
-          unawaited(PodLocationService.instance.acquireForCapture());
+          unawaited(
+            PodLocationService.instance.acquireForCapture(owner: this),
+          );
         }
         
         final gpsOn = _wmSettings.gpsWatermarkEnabled;
-        final locState = gpsOn ? PodLocationService.instance.currentState : null;
+        final currentLocation =
+            gpsOn ? PodLocationService.instance.currentState : null;
+        final locState = currentLocation?.isEvidenceReady == true
+            ? currentLocation
+            : null;
         
         final entry = ScanEntry(
           id: _storage.generateId(),
@@ -872,7 +875,9 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           companyName: _wmSettings.companyName,
           latitude: locState?.lat,
           longitude: locState?.lon,
-          locationName: (locState != null && locState.address.isNotEmpty) ? locState.address : null,
+          locationName: locState != null && locState.evidenceAddress.isNotEmpty
+              ? locState.evidenceAddress
+              : null,
           isManual: true,
         );
         await _storage.add(entry);
@@ -906,6 +911,10 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           await _resumeScanning();
         }
       } finally {
+        // ✅ FIX: sama seperti _processDetectedBarcode — releaseAfterCapture()
+        // dihapus dari sini supaya GPS+geocode tetap "panas" sampai
+        // user membuka PhotoScanScreen/VideoScanScreen, bukan restart
+        // dari nol. Lihat komentar lengkap di _processDetectedBarcode.
         _processingWatchdog?.cancel();
         _processingScan = false;
         _scannerState = _ScannerState.paused;
@@ -917,18 +926,18 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
 
   Future<void> _attachLocationUpdate(String entryId) async {
     try {
-      final locState = await PodLocationService.instance.awaitAddressReady(
-        timeout: const Duration(seconds: 10),
+      final locState = await PodLocationService.instance.awaitEvidenceReady(
+        timeout: const Duration(seconds: 15),
       );
-      if (!locState.hasPosition) return;
-      final stored = await _storage.getEntry(entryId);
-      if (stored == null) return;
-      final updated = stored.copyWith(
-        latitude: locState.lat,
-        longitude: locState.lon,
-        locationName: locState.address.isNotEmpty ? locState.address : null,
+      if (locState == null) return;
+      await _storage.updateLocation(
+        entryId,
+        latitude: locState.lat!,
+        longitude: locState.lon!,
+        locationName: locState.evidenceAddress.isNotEmpty
+            ? locState.evidenceAddress
+            : null,
       );
-      await _storage.update(updated);
     } catch (e) {
       debugPrint('❌ Error _attachLocationUpdate: $e');
     }
@@ -941,7 +950,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     if (active == null || active.entryId == null) return;
 
     final barcode = active.barcode;
-    final entryId = active.entryId!;
+    final entryId = active.entryId!; // ✅ Non-null assertion
 
     _lockNavigation();
     _scannerState = _ScannerState.navigating;
@@ -977,10 +986,11 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     } catch (e) {
       debugPrint('❌ Error navigasi ke foto scan: $e');
     } finally {
-      if (mounted) {
-        await _recreateScannerController();
-      }
       _unlockNavigation();
+      if (mounted) {
+        _scannerState = _ScannerState.paused;
+        await _resumeScanning();
+      }
     }
   }
 
@@ -989,7 +999,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     if (active == null || active.entryId == null) return;
 
     final barcode = active.barcode;
-    final entryId = active.entryId!;
+    final entryId = active.entryId!; // ✅ Non-null assertion
 
     _lockNavigation();
     _scannerState = _ScannerState.navigating;
@@ -1024,10 +1034,11 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     } catch (e) {
       debugPrint('❌ Error navigasi ke video scan: $e');
     } finally {
-      if (mounted) {
-        await _recreateScannerController();
-      }
       _unlockNavigation();
+      if (mounted) {
+        _scannerState = _ScannerState.paused;
+        await _resumeScanning();
+      }
     }
   }
 
@@ -1104,43 +1115,9 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       body: Stack(
         children: [
           RepaintBoundary(
-            key: ValueKey(_scannerRebuildKey),
             child: MobileScanner(
               controller: _scannerController,
               onDetect: _onDetect,
-              // ✅ errorBuilder dengan 3 parameter (context, error, child)
-              errorBuilder: (context, error, child) {
-                debugPrint('📷 [scanner_widget_error] MobileScanner error: ${error.errorCode} — ${error.errorDetails?.message ?? error.toString()}');
-                return Container(
-                  color: Colors.black,
-                  alignment: Alignment.center,
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.videocam_off, color: Colors.white54, size: 48),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'Kamera scan gagal dibuka',
-                        style: TextStyle(color: Colors.white, fontSize: 16),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        error.errorDetails?.message ?? error.errorCode.name,
-                        style: const TextStyle(color: Colors.white38, fontSize: 12),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 20),
-                      ElevatedButton.icon(
-                        onPressed: () => _recreateScannerController(),
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('Buka Ulang Kamera'),
-                      ),
-                    ],
-                  ),
-                );
-              },
             ),
           ),
           ValueListenableBuilder<_ActiveScan?>(

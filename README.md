@@ -14,9 +14,20 @@ Aplikasi Flutter profesional untuk kebutuhan gudang dan ekspedisi.
 
 ```bash
 flutter pub get
+flutter analyze
+flutter test
 flutter build apk --release
 # APK: build/app/outputs/flutter-apk/app-release.apk
 ```
+
+Untuk APK production, salin `android/key.properties.example` menjadi
+`android/key.properties`, isi kredensial keystore release, lalu tempatkan file
+keystore di folder `android/`. Tanpa konfigurasi tersebut build release tidak
+akan memakai debug key dan dapat dihasilkan sebagai APK unsigned.
+
+Pada GitHub Actions, konfigurasi signing dibaca dari secrets
+`ANDROID_KEYSTORE_BASE64`, `ANDROID_STORE_PASSWORD`, `ANDROID_KEY_ALIAS`, dan
+`ANDROID_KEY_PASSWORD`.
 
 ## Dependencies
 - `mobile_scanner` — kamera barcode/QR

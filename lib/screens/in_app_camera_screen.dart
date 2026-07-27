@@ -2,6 +2,39 @@
 // ============================================================
 // KAMERA IN-APP DENGAN PRATINJAU WATERMARK LIVE
 // ============================================================
+// Overlay watermark digambar via DUA CustomPainter terpisah:
+//   - WatermarkStaticPainter  → WatermarkLayout.paintStaticOnly()
+//   - WatermarkDynamicPainter → WatermarkLayout.paintDynamicOnly()
+// Keduanya mendelegasikan ke WatermarkLayout, method yang SUDAH ADA
+// dan juga dipakai untuk overlay video. TIDAK ADA PictureRecorder /
+// toImage / encode-decode PNG di jalur live preview ini — canvas
+// digambar langsung oleh Flutter tiap repaint.
+//
+// OPTIMASI PERFORMA (vs versi sebelumnya):
+//  1. Overlay PNG (renderOverlayPng → Image.memory) DIGANTI CustomPainter
+//     yang menggambar langsung ke Canvas Flutter — tidak ada raster ke
+//     bitmap + encode/decode PNG tiap detik.
+//  2. Elemen statis di-cache SEKALI, bukan tiap frame/detik:
+//       - Logo (ui.Image) di-decode sekali di initState, dipakai ulang
+//         selama layar terbuka, di-dispose saat dispose().
+//       - WatermarkLayout instance dibuat sekali (bukan per-tick).
+//  3. Overlay dipecah jadi 2 layer, masing-masing RepaintBoundary sendiri:
+//       - Static (logo, background bar, brand, kode verifikasi, meta
+//         barcode/operator) — HANYA repaint kalau field terkait berubah.
+//       - Dynamic (jam, tanggal, koordinat, alamat) — repaint tiap tick
+//         clock/GPS, TAPI tidak memicu repaint layer static di atasnya.
+//     Root State TIDAK pakai setState() untuk ini, jadi CameraPreview
+//     & chrome UI di sekitarnya tidak ikut rebuild sama sekali.
+//  4. shouldRepaint() masing-masing painter membandingkan HANYA field
+//     yang relevan untuk layer itu; kalau tidak ada yang berubah,
+//     Flutter melewati repaint layer tersebut sepenuhnya.
+//
+// Proses watermark FINAL (dibakar ke file hasil foto) tetap 100% lewat
+// WatermarkRenderer.render() yang sudah ada di _applyWatermark
+// (photo_scan_screen.dart) — TIDAK berubah sama sekali.
+// ============================================================
+
+
 import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -35,12 +68,12 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
   Future<void>? _initFuture;
   String? _errorText;
 
-  // ─── Cache elemen statis ────────────────────────────
+  // ─── Cache elemen statis (dibuat/dimuat SEKALI) ────────────
   late final WatermarkLayout _layout;
   late final bool _overlaySupported;
-  ui.Image? _logoImage;
+  ui.Image? _logoImage; // di-decode sekali, dipakai ulang tiap repaint
 
-  // ─── Data live ──────────────────────────────────────
+  // ─── Data live (bagian yang MEMANG berubah tiap detik/GPS update) ──
   late final ValueNotifier<WatermarkData> _liveData;
   Timer? _clockTimer;
   StreamSubscription<PodLocationState>? _gpsSub;
@@ -55,6 +88,11 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
+    // Style seperti Polaroid punya canvas LEBIH BESAR dari frame foto
+    // (border/strip di sekelilingnya) sehingga tidak bisa dipakai sebagai
+    // overlay transparan langsung di atas live preview — sama seperti
+    // batasan overlay video. Untuk kasus ini kita tampilkan badge info,
+    // watermark tetap diterapkan penuh setelah foto diambil.
     _layout = WatermarkFactory.create(_wmSettings.style);
     _overlaySupported = _layout.supportsVideoOverlay;
 
@@ -75,17 +113,34 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
     }
   }
 
-  // ─── PILIH RESOLUSI ────────────────────────────────
+  // ─── PILIH RESOLUTION PRESET SECARA ADAPTIF ────────────────
+  // ✅ FIX: dulu fixed `ResolutionPreset.veryHigh` (preset tertinggi,
+  // bisa 4K+ tergantung sensor). Ini dua kali sia-sia:
+  //  1. Preview live di layar jadi berat → FPS drop, terutama di
+  //     device low-end/entry-level yang banyak dipakai di lapangan.
+  //  2. Foto hasil jepretan tetap di-downscale lagi ke maxDimension
+  //     1920px oleh ImageCompressor — jadi resolusi sensor penuh di
+  //     atas itu cuma menambah beban decode/encode tanpa menambah
+  //     kualitas akhir yang benar-benar dipakai.
+  //
+  // Sekarang default `ResolutionPreset.high` (umumnya ~1080p, pas
+  // dengan target 1920px itu), TAPI turun ke `ResolutionPreset.medium`
+  // di device yang oleh Android sendiri ditandai low-RAM
+  // (`ActivityManager.isLowRamDevice()`, diekspos device_info_plus
+  // sebagai `isLowRamDevice`) — ini flag resmi dari OS, bukan tebakan,
+  // jadi lebih bisa diandalkan daripada menebak dari model/brand.
+  // iOS tidak punya konsep low-RAM device yang setara & perangkatnya
+  // jauh lebih seragam, jadi selalu pakai `high`.
   Future<ResolutionPreset> _pickResolutionPreset() async {
     if (!Platform.isAndroid) return ResolutionPreset.high;
     try {
       final info = await DeviceInfoPlugin().androidInfo;
       if (info.isLowRamDevice) {
-        debugPrint('📉 Low-RAM device → ResolutionPreset.medium');
+        debugPrint('📉 Low-RAM device terdeteksi → preview kamera pakai ResolutionPreset.medium');
         return ResolutionPreset.medium;
       }
     } catch (e) {
-      debugPrint('⚠️ Gagal deteksi isLowRamDevice: $e');
+      debugPrint('⚠️ Gagal deteksi isLowRamDevice, fallback ke ResolutionPreset.high: $e');
     }
     return ResolutionPreset.high;
   }
@@ -94,7 +149,7 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
     try {
       final cameras = await availableCameras();
       if (cameras.isEmpty) {
-        setState(() => _errorText = 'Kamera tidak ditemukan');
+        setState(() => _errorText = 'Kamera tidak ditemukan di perangkat ini');
         return;
       }
       final backCamera = cameras.firstWhere(
@@ -113,7 +168,6 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
         return;
       }
       setState(() => _controller = controller);
-      debugPrint('✅ Kamera in-app berhasil dibuka');
     } catch (e) {
       debugPrint('❌ Gagal inisialisasi kamera in-app: $e');
       if (mounted) {
@@ -122,7 +176,8 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
     }
   }
 
-  // ─── Cache logo ──────────────────────────────────────
+  // ─── Cache logo (SEKALI, bukan tiap tick) ──────────────────
+
   Future<void> _loadLogoIfNeeded() async {
     if (!_wmSettings.hasLogo) return;
     final path = _wmSettings.logoPath;
@@ -131,6 +186,9 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
       final file = File(path);
       if (!await file.exists()) return;
       final bytes = await file.readAsBytes();
+      // targetWidth kecil cukup untuk pratinjau di layar — resolusi
+      // final tetap ditentukan sendiri oleh WatermarkRenderer.render()
+      // saat proses watermark permanen setelah foto diambil.
       final codec = await ui.instantiateImageCodec(bytes, targetWidth: 200);
       final frame = await codec.getNextFrame();
       codec.dispose();
@@ -139,13 +197,19 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
         return;
       }
       _logoImage = frame.image;
+      // Trigger satu repaint supaya logo langsung muncul setelah selesai
+      // di-decode, tanpa menunggu tick clock berikutnya.
       _liveData.value = _buildLiveData();
     } catch (e) {
-      debugPrint('⚠️ Gagal cache logo: $e');
+      debugPrint('⚠️ Gagal cache logo untuk pratinjau live: $e');
     }
   }
 
-  // ─── Build WatermarkData ────────────────────────────
+  // ─── Bangun WatermarkData "murah" — hanya bagian yang berubah ──
+  // Konstruksi ini identik dengan yang dibuat WatermarkRenderer secara
+  // internal (lihat render()/renderOverlayPng()) — bukan logika baru,
+  // hanya dipindah ke sini supaya tidak perlu membungkusnya lewat
+  // ScanEntry + renderOverlayPng untuk sekadar pratinjau di layar.
   WatermarkData _buildLiveData() {
     final locState = _wmSettings.gpsWatermarkEnabled
         ? PodLocationService.instance.currentState
@@ -168,73 +232,45 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
     );
   }
 
-  // ─── CAPTURE ────────────────────────────────────────
-  Future<void> _capture() async {
-    // ✅ Cek ketat: controller harus ada, terinisialisasi, dan tidak sedang sibuk
-    final controller = _controller;
-    if (controller == null) {
-      _showError('Kamera belum siap');
-      return;
-    }
-    if (!controller.value.isInitialized) {
-      _showError('Kamera belum diinisialisasi');
-      return;
-    }
-    if (_isCapturing) {
-      debugPrint('⏳ Masih mengambil foto sebelumnya');
-      return;
-    }
+  // ─── Capture ─────────────────────────────────────────────────
 
+  Future<void> _capture() async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized || _isCapturing) {
+      return;
+    }
+    if (_wmSettings.gpsWatermarkEnabled &&
+        PodLocationService.instance.currentState.mockDetected) {
+      unawaited(PodLocationService.instance.acquireForCapture());
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'GPS palsu terdeteksi. Nonaktifkan aplikasi lokasi palsu lalu coba lagi.',
+          ),
+          backgroundColor: AppTheme.error,
+        ),
+      );
+      return;
+    }
     setState(() => _isCapturing = true);
     try {
       HapticFeedback.mediumImpact();
-
-      // ✅ Pastikan kamera dalam keadaan idle sebelum takePicture
-      if (controller.value.isRecordingVideo) {
-        debugPrint('⚠️ Kamera sedang merekam, tidak bisa ambil foto');
-        return;
-      }
-
       final xfile = await controller.takePicture();
-      if (!mounted) {
-        return;
-      }
-
-      // ✅ Berhasil, kembali dengan file
-      Navigator.pop(context, xfile);
-    } catch (e, stack) {
-      debugPrint('❌ Gagal mengambil foto: $e\n$stack');
-      if (mounted) {
-        _showError('Gagal mengambil foto: ${_formatErrorMessage(e)}');
-        setState(() => _isCapturing = false);
-      }
-    } finally {
+      if (mounted) Navigator.pop(context, xfile);
+    } catch (e) {
+      debugPrint('❌ Gagal mengambil foto: $e');
       if (mounted) {
         setState(() => _isCapturing = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Gagal mengambil foto: $e'),
+            backgroundColor: AppTheme.error,
+          ),
+        );
       }
     }
   }
 
-  String _formatErrorMessage(dynamic e) {
-    final msg = e.toString();
-    if (msg.contains('channel-error') || msg.contains('Unable to establish connection')) {
-      return 'Kamera tidak merespons, coba buka ulang kamera';
-    }
-    return msg;
-  }
-
-  void _showError(String msg) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor: AppTheme.error,
-        duration: const Duration(seconds: 3),
-      ),
-    );
-  }
-
-  // ─── FLASH ──────────────────────────────────────────
   Future<void> _toggleFlash() async {
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) return;
@@ -247,7 +283,8 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
     }
   }
 
-  // ─── LIFECYCLE ──────────────────────────────────────
+  // ─── Lifecycle ───────────────────────────────────────────────
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final controller = _controller;
@@ -275,7 +312,8 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
     super.dispose();
   }
 
-  // ─── UI ─────────────────────────────────────────────
+  // ─── UI ──────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -312,22 +350,12 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
               ),
               const SizedBox(height: 20),
               ElevatedButton(
-                onPressed: () {
-                  setState(() {
-                    _errorText = null;
-                    _initFuture = _initCamera();
-                  });
-                },
+                onPressed: () => Navigator.pop(context),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppTheme.accentOrange,
                   foregroundColor: Colors.black,
                 ),
-                child: const Text('Coba Ulang'),
-              ),
-              const SizedBox(height: 8),
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Kembali', style: TextStyle(color: Colors.white54)),
+                child: const Text('Kembali'),
               ),
             ],
           ),
@@ -387,6 +415,14 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
     );
   }
 
+  // ─── Overlay: RepaintBoundary + ValueListenableBuilder SEMPIT ──
+  // Dua layer terpisah, masing-masing RepaintBoundary sendiri:
+  //  - Static: logo, background bar, brand, kode verifikasi, meta.
+  //    Hanya repaint kalau setting/logo/barcode/operator berubah.
+  //  - Dynamic: jam, tanggal, koordinat, alamat. Repaint tiap tick
+  //    clock/GPS — TAPI tidak memicu repaint layer static.
+  // CameraPreview & seluruh chrome UI di sekitarnya TIDAK ikut
+  // rebuild, karena tidak ada setState() di root State untuk itu.
   Widget _buildLiveOverlay() {
     return Positioned.fill(
       child: IgnorePointer(

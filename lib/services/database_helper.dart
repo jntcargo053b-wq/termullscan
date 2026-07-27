@@ -147,6 +147,51 @@ class DatabaseHelper {
     }, useTransaction: true);
   }
 
+  /// Mengganti seluruh isi database dalam satu transaksi.
+  ///
+  /// Jika salah satu insert gagal, penghapusan dan insert sebelumnya ikut
+  /// di-rollback sehingga restore tidak meninggalkan database kosong/parsial.
+  Future<void> replaceAll(List<ScanEntry> entries) async {
+    await _runWithProtection((db) async {
+      await db.delete('scan_entries');
+      for (final entry in entries) {
+        await db.insert(
+          'scan_entries',
+          entry.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+    }, useTransaction: true);
+  }
+
+  /// Menambahkan path foto secara atomik agar worker batch tidak saling
+  /// menimpa daftar foto ketika selesai hampir bersamaan.
+  Future<ScanEntry?> appendPhotoPath(String entryId, String photoPath) async {
+    return _runWithProtection((db) async {
+      final rows = await db.query(
+        'scan_entries',
+        where: 'id = ?',
+        whereArgs: [entryId],
+        limit: 1,
+      );
+      if (rows.isEmpty) return null;
+
+      final entry = ScanEntry.fromMap(rows.first);
+      final paths = List<String>.from(entry.photoPaths);
+      if (!paths.contains(photoPath)) {
+        paths.add(photoPath);
+      }
+      final updated = entry.copyWith(imagePath: paths.join(','));
+      await db.update(
+        'scan_entries',
+        updated.toMap(),
+        where: 'id = ?',
+        whereArgs: [entryId],
+      );
+      return updated;
+    }, useTransaction: true);
+  }
+
   Future<List<ScanEntry>> getAll() async {
     return _runWithProtection((db) async {
       final result = await db.query('scan_entries', orderBy: 'timestamp DESC');
@@ -164,7 +209,7 @@ class DatabaseHelper {
   }
 
   Future<List<ScanEntry>> getEntries({
-    int limit = 20,
+    int? limit = 20,
     int offset = 0,
     String? searchQuery,
     String? period,
@@ -173,55 +218,30 @@ class DatabaseHelper {
   }) async {
     return _runWithProtection((db) async {
       String sql = 'SELECT * FROM scan_entries';
-      final List<String> where = [];
-      final List<dynamic> args = [];
-
-      if (searchQuery != null && searchQuery.isNotEmpty) {
-        where.add('(value LIKE ? OR photoPaths LIKE ? OR videoPath LIKE ? OR note LIKE ? OR locationName LIKE ?)');
-        args.add('%$searchQuery%');
-        args.add('%$searchQuery%');
-        args.add('%$searchQuery%');
-        args.add('%$searchQuery%');
-        args.add('%$searchQuery%');
-      }
-
-      if (period != null && period != 'Semua') {
-        final now = DateTime.now();
-        DateTime start;
-        switch (period) {
-          case 'Hari ini':
-            start = DateTime(now.year, now.month, now.day);
-            break;
-          case 'Minggu ini':
-            start = now.subtract(Duration(days: now.weekday - 1));
-            start = DateTime(start.year, start.month, start.day);
-            break;
-          case 'Bulan ini':
-            start = DateTime(now.year, now.month, 1);
-            break;
-          default:
-            start = DateTime(0);
-        }
-        where.add('timestamp >= ?');
-        args.add(start.millisecondsSinceEpoch);
-      }
+      final filters = _buildFilters(searchQuery: searchQuery, period: period);
+      final where = filters.where;
+      final args = filters.args;
 
       if (where.isNotEmpty) {
         sql += ' WHERE ' + where.join(' AND ');
       }
 
+      final direction = sortDir.toUpperCase() == 'ASC' ? 'ASC' : 'DESC';
       String orderBy;
       switch (sortField) {
         case 'value':
-          orderBy = 'value $sortDir';
+          orderBy = 'value COLLATE NOCASE $direction, timestamp DESC, id ASC';
           break;
         case 'timestamp':
         default:
-          orderBy = 'timestamp $sortDir';
+          orderBy = 'timestamp $direction, id $direction';
       }
-      sql += ' ORDER BY $orderBy LIMIT ? OFFSET ?';
-      args.add(limit);
-      args.add(offset);
+      sql += ' ORDER BY $orderBy';
+      if (limit != null) {
+        sql += ' LIMIT ? OFFSET ?';
+        args.add(limit);
+        args.add(offset);
+      }
 
       final maps = await db.rawQuery(sql, args);
       return maps.map((map) => ScanEntry.fromMap(map)).toList();
@@ -234,38 +254,9 @@ class DatabaseHelper {
   }) async {
     return _runWithProtection((db) async {
       String sql = 'SELECT COUNT(*) as count FROM scan_entries';
-      final List<String> where = [];
-      final List<dynamic> args = [];
-
-      if (searchQuery != null && searchQuery.isNotEmpty) {
-        where.add('(value LIKE ? OR photoPaths LIKE ? OR videoPath LIKE ? OR note LIKE ? OR locationName LIKE ?)');
-        args.add('%$searchQuery%');
-        args.add('%$searchQuery%');
-        args.add('%$searchQuery%');
-        args.add('%$searchQuery%');
-        args.add('%$searchQuery%');
-      }
-
-      if (period != null && period != 'Semua') {
-        final now = DateTime.now();
-        DateTime start;
-        switch (period) {
-          case 'Hari ini':
-            start = DateTime(now.year, now.month, now.day);
-            break;
-          case 'Minggu ini':
-            start = now.subtract(Duration(days: now.weekday - 1));
-            start = DateTime(start.year, start.month, start.day);
-            break;
-          case 'Bulan ini':
-            start = DateTime(now.year, now.month, 1);
-            break;
-          default:
-            start = DateTime(0);
-        }
-        where.add('timestamp >= ?');
-        args.add(start.millisecondsSinceEpoch);
-      }
+      final filters = _buildFilters(searchQuery: searchQuery, period: period);
+      final where = filters.where;
+      final args = filters.args;
 
       if (where.isNotEmpty) {
         sql += ' WHERE ' + where.join(' AND ');
@@ -274,6 +265,67 @@ class DatabaseHelper {
       final result = await db.rawQuery(sql, args);
       return result.first['count'] as int;
     });
+  }
+
+  ({List<String> where, List<Object?> args}) _buildFilters({
+    String? searchQuery,
+    String? period,
+    DateTime? now,
+  }) {
+    final where = <String>[];
+    final args = <Object?>[];
+    final query = searchQuery?.trim();
+
+    if (query != null && query.isNotEmpty) {
+      const columns = <String>[
+        'value',
+        'imagePath',
+        'photoPaths',
+        'videoPath',
+        'note',
+        'locationName',
+        'address',
+        'city',
+        'province',
+        'country',
+        'postalCode',
+        'operatorName',
+        'companyName',
+      ];
+      where.add(
+        '(${columns.map((column) => "instr(lower(COALESCE($column, '')), lower(?)) > 0").join(' OR ')})',
+      );
+      args.addAll(List<Object?>.filled(columns.length, query));
+    }
+
+    if (period != null && period != 'Semua') {
+      final current = now ?? DateTime.now();
+      late final DateTime start;
+      late final DateTime end;
+      switch (period) {
+        case 'Hari ini':
+          start = DateTime(current.year, current.month, current.day);
+          end = start.add(const Duration(days: 1));
+          break;
+        case 'Minggu ini':
+          final monday = current.subtract(Duration(days: current.weekday - 1));
+          start = DateTime(monday.year, monday.month, monday.day);
+          end = start.add(const Duration(days: 7));
+          break;
+        case 'Bulan ini':
+          start = DateTime(current.year, current.month, 1);
+          end = DateTime(current.year, current.month + 1, 1);
+          break;
+        default:
+          return (where: where, args: args);
+      }
+      where.add('timestamp >= ? AND timestamp < ?');
+      args
+        ..add(start.millisecondsSinceEpoch)
+        ..add(end.millisecondsSinceEpoch);
+    }
+
+    return (where: where, args: args);
   }
 
   Future<void> delete(String id) async {
@@ -292,6 +344,31 @@ class DatabaseHelper {
     await _runWithProtection((db) async {
       await db.update('scan_entries', entry.toMap(),
           where: 'id = ?', whereArgs: [entry.id]);
+    });
+  }
+
+  Future<void> updateLocation(
+    String id, {
+    required double latitude,
+    required double longitude,
+    String? locationName,
+  }) async {
+    await _runWithProtection((db) async {
+      await db.update(
+        'scan_entries',
+        {
+          'latitude': latitude,
+          'longitude': longitude,
+          'locationName': locationName,
+          'address': null,
+          'city': null,
+          'province': null,
+          'country': null,
+          'postalCode': null,
+        },
+        where: 'id = ?',
+        whereArgs: [id],
+      );
     });
   }
 

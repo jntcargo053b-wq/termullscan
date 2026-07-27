@@ -6,9 +6,10 @@ import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:uuid/uuid.dart';
-import 'package:archive/archive.dart';
+import 'package:archive/archive_io.dart';
 import 'package:saver_gallery/saver_gallery.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:device_info_plus/device_info_plus.dart';
 import '../models/scan_entry.dart';
 import 'database_helper.dart';
 
@@ -27,13 +28,25 @@ class StorageService {
   Future<void> add(ScanEntry entry) async => _db.insert(entry);
   Future<void> insert(ScanEntry entry) async => _db.insert(entry);
   Future<void> update(ScanEntry entry) async => _db.update(entry);
+  Future<void> updateLocation(
+    String id, {
+    required double latitude,
+    required double longitude,
+    String? locationName,
+  }) async =>
+      _db.updateLocation(
+        id,
+        latitude: latitude,
+        longitude: longitude,
+        locationName: locationName,
+      );
   Future<void> delete(String id) async => _db.delete(id);
   Future<void> deleteAll() async => _db.deleteAll();
 
   Future<List<ScanEntry>> loadAll() async => _db.getAll();
 
   Future<List<ScanEntry>> getEntries({
-    int limit = 20,
+    int? limit = 20,
     int offset = 0,
     String? searchQuery,
     String? period,
@@ -49,6 +62,20 @@ class StorageService {
         sortDir: sortDir,
       );
 
+  Future<List<ScanEntry>> getEntriesForExport({
+    String? searchQuery,
+    String? period,
+    String sortField = 'timestamp',
+    String sortDir = 'DESC',
+  }) =>
+      _db.getEntries(
+        limit: null,
+        searchQuery: searchQuery,
+        period: period,
+        sortField: sortField,
+        sortDir: sortDir,
+      );
+
   Future<int> getCount({String? searchQuery, String? period}) async =>
       _db.getCount(searchQuery: searchQuery, period: period);
 
@@ -56,6 +83,9 @@ class StorageService {
 
   Future<void> migrateFromJson(List<ScanEntry> entries) async =>
       _db.migrateFromJson(entries);
+
+  Future<ScanEntry?> appendPhotoPath(String entryId, String photoPath) =>
+      _db.appendPhotoPath(entryId, photoPath);
 
   // ─── File storage ──────────────────────────────────────────
 
@@ -119,6 +149,20 @@ class StorageService {
 
   // ─── Save to Gallery (PUBLIC) ──────────────────────────────
 
+  Future<bool> _hasGalleryWritePermission() async {
+    if (Platform.isAndroid) {
+      final info = await DeviceInfoPlugin().androidInfo;
+      // MediaStore tidak memerlukan permission tulis pada Android 10+ ketika
+      // skipIfExists=false. Android lama masih membutuhkan storage permission.
+      if (info.version.sdkInt >= 29) return true;
+      return (await Permission.storage.request()).isGranted;
+    }
+    if (Platform.isIOS) {
+      return (await Permission.photosAddOnly.request()).isGranted;
+    }
+    return false;
+  }
+
   Future<bool> saveVideoToGallery(String filePath, {String? fileName}) async {
     try {
       final file = File(filePath);
@@ -133,13 +177,7 @@ class StorageService {
         return false;
       }
 
-      bool hasPermission = await Permission.storage.isGranted ||
-                           await Permission.manageExternalStorage.isGranted;
-      if (!hasPermission) {
-        hasPermission = await Permission.storage.request().isGranted ||
-                        await Permission.manageExternalStorage.request().isGranted;
-      }
-      if (!hasPermission) {
+      if (!await _hasGalleryWritePermission()) {
         debugPrint('❌ Storage permission denied');
         return false;
       }
@@ -169,13 +207,7 @@ class StorageService {
       final file = File(filePath);
       if (!await file.exists()) return false;
 
-      bool hasPermission = await Permission.storage.isGranted ||
-                           await Permission.manageExternalStorage.isGranted;
-      if (!hasPermission) {
-        hasPermission = await Permission.storage.request().isGranted ||
-                        await Permission.manageExternalStorage.request().isGranted;
-      }
-      if (!hasPermission) return false;
+      if (!await _hasGalleryWritePermission()) return false;
 
       final saved = await SaverGallery.saveFile(
         filePath: filePath,
@@ -194,7 +226,9 @@ class StorageService {
   // ─── Sanitasi & Verifikasi ────────────────────────────────
 
   String _sanitizeFilename(String name) {
-    return name.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
+    // Koma juga tidak boleh dipakai karena imagePath menyimpan beberapa path
+    // dalam format CSV sederhana.
+    return name.replaceAll(RegExp(r'[<>:"/\\|?*,]'), '_');
   }
 
   Future<void> _verifyFile(String path) async {
@@ -336,42 +370,13 @@ class StorageService {
   }
 
   Future<void> cleanupOldFiles({int days = 90}) async {
-    try {
-      final appDir = await getApplicationDocumentsDirectory();
-      await _cleanupDir(Directory(join(appDir.path, 'photos')), days: days);
-      await _cleanupDir(Directory(join(appDir.path, 'videos')), days: days);
-    } catch (e) {
-      debugPrint('⚠️ Error cleaning up old files: $e');
-    }
-  }
-
-  Future<void> _cleanupDir(Directory dir, {required int days}) async {
-    if (!await dir.exists()) return;
-    final now = DateTime.now();
-    final cutoff = now.subtract(Duration(days: days));
-    int deletedCount = 0;
-    await for (final entity in dir.list()) {
-      if (entity is File) {
-        final stat = await entity.stat();
-        if (stat.modified.isBefore(cutoff)) {
-          await entity.delete();
-          deletedCount++;
-        }
-      }
-    }
-    if (deletedCount > 0) {
-      debugPrint('🧹 Cleaned up $deletedCount old files from ${dir.path} (>$days days)');
-    }
+    await cleanupOrphanFiles(days: days);
   }
 
   Future<void> cleanupOldFilesInBackground({int days = 90}) async {
-    final appDir = await getApplicationDocumentsDirectory();
-    final args = _CleanupArgs(
-      photosDir: join(appDir.path, 'photos'),
-      videosDir: join(appDir.path, 'videos'),
-      days: days,
-    );
-    await compute(_cleanupInIsolate, args);
+    // Nama lama dipertahankan untuk kompatibilitas pemanggil, tetapi
+    // implementasinya tetap aman: hanya file orphan yang boleh dihapus.
+    await cleanupOrphanFiles(days: days);
   }
 
   // ─── Backup & Restore ──────────────────────────────────────
@@ -379,19 +384,110 @@ class StorageService {
   Future<String> backup() async {
     try {
       final entries = await _db.getAll();
-      final json = entries.map((e) => e.toJson()).toList();
-      final archive = Archive();
-      final jsonString = jsonEncode(json);
-      final jsonBytes = utf8.encode(jsonString);
-      archive.addFile(ArchiveFile('data.json', jsonBytes.length, jsonBytes));
+      final backupEntries = <Map<String, dynamic>>[];
+      final archivedPaths = <String, String>{};
+      final mediaFiles = <String, File>{};
+      int mediaIndex = 0;
 
-      final zipEncoder = ZipEncoder();
-      final zipData = zipEncoder.encode(archive);
-      if (zipData == null) throw Exception('Gagal membuat zip');
+      Future<String?> archiveMedia(
+        String sourcePath,
+        String folder, {
+        String? relativePath,
+      }) async {
+        final existing = archivedPaths[sourcePath];
+        if (existing != null) return existing;
+
+        final file = File(sourcePath);
+        if (!await file.exists() || await file.length() == 0) return null;
+
+        final safeBase = _sanitizeFilename(basenameWithoutExtension(sourcePath));
+        final ext = extension(sourcePath);
+        final relative = relativePath ??
+            '$folder/${mediaIndex++}_${safeBase.isEmpty ? 'media' : safeBase}$ext';
+        mediaFiles[relative] = file;
+        archivedPaths[sourcePath] = relative;
+        return relative;
+      }
+
+      for (final entry in entries) {
+        final map = Map<String, dynamic>.from(entry.toJson());
+
+        final photoPaths = <String>[];
+        for (final path in entry.photoPaths) {
+          final relative = await archiveMedia(path, 'photos');
+          if (relative != null) photoPaths.add(relative);
+        }
+        map['imagePath'] = photoPaths.isEmpty ? null : photoPaths.join(',');
+
+        final videoPath = entry.videoPath;
+        if (videoPath != null && videoPath.isNotEmpty) {
+          final relativeVideo = await archiveMedia(videoPath, 'videos');
+          map['videoPath'] = relativeVideo;
+
+          final thumbnail = entry.videoThumbnail;
+          if (relativeVideo != null &&
+              thumbnail != null &&
+              await File(thumbnail).exists()) {
+            final relativeThumbnail =
+                '${withoutExtension(relativeVideo)}_thumb.jpg';
+            await archiveMedia(
+              thumbnail,
+              'videos',
+              relativePath: relativeThumbnail,
+            );
+          }
+        } else {
+          map['videoPath'] = null;
+        }
+        backupEntries.add(map);
+      }
+
+      final payload = <String, dynamic>{
+        'version': 2,
+        'createdAt': DateTime.now().toIso8601String(),
+        'entries': backupEntries,
+      };
+      final jsonString = jsonEncode(payload);
+      final jsonBytes = utf8.encode(jsonString);
 
       final tempDir = await getTemporaryDirectory();
       final zipPath = join(tempDir.path, 'backup_${DateTime.now().millisecondsSinceEpoch}.zip');
-      await File(zipPath).writeAsBytes(zipData);
+      final zipFile = File(zipPath);
+      final encoder = ZipFileEncoder();
+      var encoderOpen = false;
+      try {
+        encoder.create(zipPath);
+        encoderOpen = true;
+        encoder.addArchiveFile(
+          ArchiveFile('data.json', jsonBytes.length, jsonBytes),
+        );
+        for (final media in mediaFiles.entries) {
+          // JPG/MP4 sudah terkompresi. STORE menghindari encode ulang dan
+          // ZipFileEncoder membaca file sebagai stream, jadi video besar
+          // tidak perlu dimuat seluruhnya ke RAM.
+          await encoder.addFile(
+            media.value,
+            'media/${media.key}',
+            ZipFileEncoder.STORE,
+          );
+        }
+        await encoder.close();
+        encoderOpen = false;
+      } catch (_) {
+        if (encoderOpen) {
+          try {
+            await encoder.close();
+          } catch (_) {}
+        }
+        if (await zipFile.exists()) {
+          await zipFile.delete();
+        }
+        rethrow;
+      }
+
+      if (!await zipFile.exists() || await zipFile.length() == 0) {
+        throw Exception('Gagal membuat zip');
+      }
       return zipPath;
     } catch (e) {
       debugPrint('⚠️ Backup error: $e');
@@ -400,61 +496,257 @@ class StorageService {
   }
 
   Future<bool> restore(String zipPath) async {
+    Directory? stagingDir;
+    InputFileStream? zipStream;
+    final copiedFiles = <File>[];
     try {
-      final bytes = await File(zipPath).readAsBytes();
-      final zipDecoder = ZipDecoder();
-      final archive = zipDecoder.decodeBytes(bytes);
-      final dataFile = archive.files.firstWhere((f) => f.name == 'data.json');
-      final jsonString = utf8.decode(dataFile.content);
-      final list = jsonDecode(jsonString) as List;
-      final entries = list.map((e) => ScanEntry.fromJson(e as Map<String, dynamic>)).toList();
-
-      await _db.deleteAll();
-      for (final entry in entries) {
-        await _db.insert(entry);
+      final zipFile = File(zipPath);
+      if (!await zipFile.exists() || await zipFile.length() == 0) {
+        throw FileSystemException('File backup tidak ditemukan atau kosong');
       }
+
+      zipStream = InputFileStream(zipPath);
+      final zipDecoder = ZipDecoder();
+      final archive = zipDecoder.decodeBuffer(zipStream);
+      final dataFile = archive.files.firstWhere((f) => f.name == 'data.json');
+      final dataBytes = List<int>.from(dataFile.content as List);
+      dataFile.clear();
+      final decoded = jsonDecode(utf8.decode(dataBytes));
+      final isVersioned = decoded is Map<String, dynamic>;
+      final rawEntries = isVersioned ? decoded['entries'] : decoded;
+      if (rawEntries is! List) {
+        throw const FormatException('Format backup tidak valid');
+      }
+
+      final appDir = await getApplicationDocumentsDirectory();
+      final tempDir = await getTemporaryDirectory();
+      final restoreTag = DateTime.now().millisecondsSinceEpoch.toString();
+      final createdStagingDir =
+          Directory(join(tempDir.path, 'termulscan_restore_$restoreTag'));
+      stagingDir = createdStagingDir;
+      await createdStagingDir.create(recursive: true);
+
+      final archiveFiles = <String, ArchiveFile>{
+        for (final file in archive.files)
+          file.name.replaceAll('\\', '/'): file,
+      };
+      final resolvedMedia = <String, String>{};
+
+      Future<String> stageMedia(String relativePath) async {
+        final normalizedRelative =
+            relativePath.replaceAll('\\', '/').replaceFirst(RegExp(r'^/+'), '');
+        final parts = normalizedRelative.split('/');
+        if (parts.length != 2 ||
+            !const {'photos', 'videos'}.contains(parts.first) ||
+            parts.contains('..')) {
+          throw FormatException('Path media backup tidak aman: $relativePath');
+        }
+
+        final cached = resolvedMedia[normalizedRelative];
+        if (cached != null) return cached;
+
+        final archiveFile = archiveFiles['media/$normalizedRelative'];
+        if (archiveFile == null || !archiveFile.isFile) {
+          throw FormatException('Media backup tidak ditemukan: $relativePath');
+        }
+
+        final finalName = 'restore_${restoreTag}_${parts.last}';
+        final finalPath = join(appDir.path, parts.first, finalName);
+        final stagedPath = join(createdStagingDir.path, parts.first, finalName);
+        if (!isWithin(createdStagingDir.path, stagedPath)) {
+          throw FormatException('Target restore berada di luar staging');
+        }
+
+        final stagedFile = File(stagedPath);
+        await stagedFile.parent.create(recursive: true);
+        final output = OutputFileStream(stagedPath);
+        try {
+          // Buang cache FileContent agar decompress() menyalurkan isi ZIP
+          // langsung ke file staging melalui buffer kecil.
+          archiveFile.clear();
+          archiveFile.decompress(output);
+        } finally {
+          await output.close();
+          archiveFile.clear();
+        }
+        if (!await stagedFile.exists() ||
+            await stagedFile.length() != archiveFile.size) {
+          throw FormatException('Media backup rusak: $relativePath');
+        }
+        resolvedMedia[normalizedRelative] = finalPath;
+        return finalPath;
+      }
+
+      final entryMaps = <Map<String, dynamic>>[];
+      for (final raw in rawEntries) {
+        final map = Map<String, dynamic>.from(raw as Map);
+        if (isVersioned) {
+          final imagePath = map['imagePath'] as String?;
+          if (imagePath != null && imagePath.isNotEmpty) {
+            final restoredPhotos = <String>[];
+            for (final relative in imagePath.split(',').where((p) => p.isNotEmpty)) {
+              restoredPhotos.add(await stageMedia(relative));
+            }
+            map['imagePath'] =
+                restoredPhotos.isEmpty ? null : restoredPhotos.join(',');
+          }
+
+          final relativeVideo = map['videoPath'] as String?;
+          if (relativeVideo != null && relativeVideo.isNotEmpty) {
+            map['videoPath'] = await stageMedia(relativeVideo);
+            final relativeThumbnail =
+                '${withoutExtension(relativeVideo)}_thumb.jpg';
+            if (archiveFiles.containsKey('media/$relativeThumbnail')) {
+              await stageMedia(relativeThumbnail);
+            }
+          }
+        }
+        entryMaps.add(map);
+      }
+
+      // Semua metadata divalidasi sebelum data lama disentuh.
+      final entries = entryMaps.map(ScanEntry.fromJson).toList();
+
+      // Pindahkan media yang sudah lengkap dari staging. Nama file diberi
+      // restoreTag sehingga tidak menimpa media aktif yang sudah ada.
+      await for (final entity in createdStagingDir.list(recursive: true)) {
+        if (entity is! File) continue;
+        final restoredRelativePath =
+            relative(entity.path, from: createdStagingDir.path);
+        final destination = File(join(appDir.path, restoredRelativePath));
+        await destination.parent.create(recursive: true);
+        await entity.copy(destination.path);
+        copiedFiles.add(destination);
+      }
+
+      await _db.replaceAll(entries);
       return true;
     } catch (e) {
+      // Database lama tetap utuh jika validasi/copy/transaction gagal.
+      for (final file in copiedFiles) {
+        try {
+          if (await file.exists()) await file.delete();
+        } catch (_) {}
+      }
       debugPrint('⚠️ Restore error: $e');
       return false;
+    } finally {
+      try {
+        await zipStream?.close();
+      } catch (_) {}
+      try {
+        final directory = stagingDir;
+        if (directory != null && await directory.exists()) {
+          await directory.delete(recursive: true);
+        }
+      } catch (_) {}
     }
   }
 
   Future<void> shareBackup(String zipPath) async {
-    await Share.shareXFiles([XFile(zipPath)], text: 'Backup TermulScan');
+    final file = File(zipPath);
+    if (!await file.exists() || await file.length() == 0) {
+      throw FileSystemException('File backup tidak ditemukan atau kosong', zipPath);
+    }
+    await Share.shareXFiles([XFile(file.path)], text: 'Backup TermulScan');
   }
 
   // ─── Export & Share TXT ──────────────────────────────────
 
   Future<String> exportTxt(List<ScanEntry> entries) async {
+    if (entries.isEmpty) {
+      throw ArgumentError('Tidak ada data untuk diekspor');
+    }
     final tempDir = await getTemporaryDirectory();
-    final path = join(tempDir.path, 'export_${DateTime.now().millisecondsSinceEpoch}.txt');
+    await _cleanupOldExports(tempDir);
+    final path = join(
+      tempDir.path,
+      'termulscan_export_${DateTime.now().millisecondsSinceEpoch}.txt',
+    );
+    final file = File(path);
+    await file.writeAsString(
+      '\uFEFF${buildTxtExport(entries)}',
+      encoding: utf8,
+      flush: true,
+    );
+    if (!await file.exists() || await file.length() == 0) {
+      throw FileSystemException('File export gagal dibuat');
+    }
+    return path;
+  }
+
+  String buildTxtExport(
+    List<ScanEntry> entries, {
+    DateTime? generatedAt,
+  }) {
     final buffer = StringBuffer();
-    buffer.writeln('TERMULScan - Data Export');
-    buffer.writeln('Generated: ${DateTime.now().toIso8601String()}');
-    buffer.writeln('Total entries: ${entries.length}');
-    buffer.writeln('---');
+    buffer.writeln('TERMULScan - Ekspor Data');
+    buffer.writeln('Dibuat: ${(generatedAt ?? DateTime.now()).toIso8601String()}');
+    buffer.writeln('Jumlah data: ${entries.length}');
+    buffer.writeln('=' * 48);
     for (final entry in entries) {
       buffer.writeln('ID: ${entry.id}');
-      buffer.writeln('Type: ${entry.type.name}');
-      buffer.writeln('Value: ${entry.value}');
-      buffer.writeln('Time: ${entry.formattedTimestamp}'); // 🔥 FIX
-      if (entry.locationName != null) buffer.writeln('Location: ${entry.locationName}');
-      // 🔥 FIX: photoPaths sekarang getter
-      if (entry.photoPaths.isNotEmpty) {
-        buffer.writeln('Photos: ${entry.photoPaths.join(', ')}');
+      buffer.writeln('Jenis: ${entry.type.name.toUpperCase()}');
+      buffer.writeln('Kode: ${_singleLine(entry.value)}');
+      buffer.writeln('Waktu: ${entry.formattedTimestamp}');
+      if (entry.operatorName.isNotEmpty) {
+        buffer.writeln('Operator: ${_singleLine(entry.operatorName)}');
       }
-      // 🔥 FIX: hasVideo diganti dengan videoPath != null
+      if (entry.companyName != null && entry.companyName!.isNotEmpty) {
+        buffer.writeln('Perusahaan: ${_singleLine(entry.companyName!)}');
+      }
+      buffer.writeln('Input manual: ${entry.isManual ? 'Ya' : 'Tidak'}');
+      if (entry.hasLocation) {
+        buffer.writeln('Lokasi: ${_singleLine(entry.displayLocation)}');
+      }
+      if (entry.latitude != null && entry.longitude != null) {
+        buffer.writeln('Koordinat: ${entry.latitude}, ${entry.longitude}');
+      }
+      if (entry.address != null && entry.address!.isNotEmpty) {
+        buffer.writeln('Alamat: ${_singleLine(entry.address!)}');
+      }
+      final area = <String>[
+        if (entry.city != null && entry.city!.isNotEmpty) entry.city!,
+        if (entry.province != null && entry.province!.isNotEmpty) entry.province!,
+        if (entry.country != null && entry.country!.isNotEmpty) entry.country!,
+        if (entry.postalCode != null && entry.postalCode!.isNotEmpty)
+          entry.postalCode!,
+      ].map(_singleLine).join(', ');
+      if (area.isNotEmpty) buffer.writeln('Wilayah: $area');
+      if (entry.photoPaths.isNotEmpty) {
+        final photoNames = entry.photoPaths.map(basename).toSet().join(', ');
+        buffer.writeln('Foto (${entry.photoPaths.length}): $photoNames');
+      }
       if (entry.videoPath != null && entry.videoPath!.isNotEmpty) {
-        buffer.writeln('Video: ${entry.videoPath}');
+        buffer.writeln('Video: ${basename(entry.videoPath!)}');
         if (entry.videoDuration != null) {
-          buffer.writeln('Duration: ${_formatDuration(entry.videoDuration!)}');
+          buffer.writeln('Durasi: ${_formatDuration(entry.videoDuration!)}');
         }
       }
-      buffer.writeln('---');
+      buffer.writeln('-' * 48);
     }
-    await File(path).writeAsString(buffer.toString());
-    return path;
+    return buffer.toString();
+  }
+
+  String _singleLine(String value) =>
+      value.replaceAll(RegExp(r'[\r\n]+'), ' ').trim();
+
+  Future<void> _cleanupOldExports(Directory tempDir) async {
+    final cutoff = DateTime.now().subtract(const Duration(days: 1));
+    try {
+      await for (final entity in tempDir.list(followLinks: false)) {
+        final name = basename(entity.path);
+        final isExport = name.startsWith('termulscan_export_') ||
+            name.startsWith('export_');
+        if (entity is! File || !isExport || !name.endsWith('.txt')) {
+          continue;
+        }
+        final modified = await entity.lastModified();
+        if (modified.isBefore(cutoff)) await entity.delete();
+      }
+    } catch (e) {
+      debugPrint('Tidak dapat membersihkan export lama: $e');
+    }
   }
 
   String _formatDuration(int seconds) {
@@ -467,46 +759,20 @@ class StorageService {
     return '${minutes.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
   }
 
-  Future<void> shareTxt(String path) async {
-    await Share.shareXFiles([XFile(path)], text: 'Export scan log');
+  Future<ShareResult> shareTxt(String path) async {
+    final file = File(path);
+    if (!await file.exists() || await file.length() == 0) {
+      throw FileSystemException('File export tidak ditemukan atau kosong', path);
+    }
+    return Share.shareXFiles(
+      [XFile(file.path)],
+      text: 'Export scan log TermulScan',
+    );
   }
 
   // ─── Close database ──────────────────────────────────────
 
   Future<void> close() async {
     await _db.close();
-  }
-}
-
-// ─── Isolate cleanup helper ──────────────────────────────────
-
-class _CleanupArgs {
-  final String photosDir;
-  final String videosDir;
-  final int days;
-  _CleanupArgs({required this.photosDir, required this.videosDir, required this.days});
-}
-
-Future<void> _cleanupInIsolate(_CleanupArgs args) async {
-  await _cleanupDir(Directory(args.photosDir), args.days);
-  await _cleanupDir(Directory(args.videosDir), args.days);
-}
-
-Future<void> _cleanupDir(Directory dir, int days) async {
-  if (!await dir.exists()) return;
-  final now = DateTime.now();
-  final cutoff = now.subtract(Duration(days: days));
-  int deletedCount = 0;
-  await for (final entity in dir.list()) {
-    if (entity is File) {
-      final stat = await entity.stat();
-      if (stat.modified.isBefore(cutoff)) {
-        await entity.delete();
-        deletedCount++;
-      }
-    }
-  }
-  if (deletedCount > 0) {
-    debugPrint('🧹 Isolate deleted $deletedCount old files from ${dir.path}');
   }
 }

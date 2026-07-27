@@ -31,7 +31,7 @@ void main() {
       VideoProcessingService.init();
 
       // ─── 0. Inisialisasi layanan lokasi ──
-      unawaited(PodLocationService.instance.init());
+      await PodLocationService.instance.init();
 
       // ─── 1. Muat watermark settings ──────────────────────────
       final watermarkSettings = WatermarkSettings();
@@ -42,7 +42,9 @@ void main() {
       await _migrateJsonIfExists(storage);
 
       // ─── 3. Cleanup file lama di background ──────────────────
-      unawaited(storage.cleanupOldFilesInBackground(days: 45));
+      // Hapus hanya media orphan; bukti yang masih direferensikan database
+      // tidak boleh hilang hanya karena umur filenya melewati cutoff.
+      unawaited(storage.cleanupOrphanFiles(days: 45));
 
       // ─── 4. Konfigurasi orientasi dan system UI ─────────────
       await SystemChrome.setPreferredOrientations([

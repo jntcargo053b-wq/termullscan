@@ -1,10 +1,10 @@
 // lib/providers/history_provider.dart
 import 'package:flutter/foundation.dart';
 import '../models/scan_entry.dart';
-import '../services/database_service.dart';
+import '../services/database_helper.dart';
 
 class HistoryProvider extends ChangeNotifier {
-  final DatabaseService _db = DatabaseService();
+  final DatabaseHelper _db = DatabaseHelper();
   List<ScanEntry> _entries = [];
   bool _hasMore = true;
   bool _isLoading = false;

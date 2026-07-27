@@ -231,6 +231,8 @@ class ScanEntry {
     int? videoDuration,
     bool? isManual,
     bool? isSynced,
+    bool clearLocation = false,
+    bool clearAddress = false,
   }) {
     return ScanEntry(
       id: id ?? this.id,
@@ -241,14 +243,17 @@ class ScanEntry {
       timestamp: timestamp ?? this.timestamp,
       operatorName: operatorName ?? this.operatorName,
       companyName: companyName ?? this.companyName,
-      latitude: latitude ?? this.latitude,
-      longitude: longitude ?? this.longitude,
-      locationName: locationName ?? this.locationName,
-      address: address ?? this.address,
-      city: city ?? this.city,
-      province: province ?? this.province,
-      country: country ?? this.country,
-      postalCode: postalCode ?? this.postalCode,
+      latitude: clearLocation ? null : latitude ?? this.latitude,
+      longitude: clearLocation ? null : longitude ?? this.longitude,
+      locationName: clearLocation || clearAddress
+          ? null
+          : locationName ?? this.locationName,
+      address: clearLocation || clearAddress ? null : address ?? this.address,
+      city: clearLocation || clearAddress ? null : city ?? this.city,
+      province: clearLocation || clearAddress ? null : province ?? this.province,
+      country: clearLocation || clearAddress ? null : country ?? this.country,
+      postalCode:
+          clearLocation || clearAddress ? null : postalCode ?? this.postalCode,
       videoDuration: videoDuration ?? this.videoDuration,
       isManual: isManual ?? this.isManual,
       isSynced: isSynced ?? this.isSynced,

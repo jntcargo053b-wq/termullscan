@@ -32,8 +32,13 @@ class _PreviewScreenState extends State<PreviewScreen> {
   VideoPlayerController? _videoController;
   bool _isVideoInitialized = false;
   bool _isVideoLoading = true;
+  bool _isVideoPlaying = false;
+  bool _fileReady = false;
+  bool _isActionRunning = false;
   String? _videoError;
+  String? _fileError;
   int _fileSizeBytes = 0;
+  int _videoLoadGeneration = 0;
 
   @override
   void initState() {
@@ -47,59 +52,133 @@ class _PreviewScreenState extends State<PreviewScreen> {
   }
 
   Future<void> _loadFileSize() async {
-    final file = File(widget.file.path);
-    final exists = await file.exists();
-    final size = exists ? await file.length() : 0;
-    if (!mounted) return;
-    setState(() => _fileSizeBytes = size);
+    try {
+      final file = File(widget.file.path);
+      if (!await file.exists()) {
+        throw FileSystemException('File tidak ditemukan');
+      }
+      final size = await file.length();
+      if (size <= 0) throw FileSystemException('File kosong');
+      if (!mounted) return;
+      setState(() {
+        _fileSizeBytes = size;
+        _fileReady = true;
+        _fileError = null;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _fileReady = false;
+        _fileError = 'File tidak ditemukan atau kosong';
+      });
+    }
   }
 
   Future<void> _initVideo() async {
     if (!mounted) return;
+    final generation = ++_videoLoadGeneration;
+    final previousController = _videoController;
+    _videoController = null;
+    if (previousController != null) {
+      previousController.removeListener(_onVideoStateChanged);
+      await previousController.dispose();
+    }
+    if (!mounted || generation != _videoLoadGeneration) return;
     setState(() {
       _isVideoLoading = true;
+      _isVideoInitialized = false;
+      _isVideoPlaying = false;
       _videoError = null;
     });
 
+    VideoPlayerController? controller;
     try {
       final file = File(widget.file.path);
-      if (!await file.exists()) {
-        throw Exception('File video tidak ditemukan');
+      if (!await file.exists() || await file.length() <= 0) {
+        throw FileSystemException('File video tidak ditemukan atau kosong');
       }
 
-      _videoController = VideoPlayerController.file(file);
-      await _videoController!.initialize();
+      controller = VideoPlayerController.file(file);
+      await controller.initialize();
 
-      if (!mounted) return;
+      if (!mounted || generation != _videoLoadGeneration) {
+        await controller.dispose();
+        return;
+      }
 
+      _videoController = controller;
+      controller.addListener(_onVideoStateChanged);
       setState(() {
         _isVideoInitialized = true;
         _isVideoLoading = false;
+        _fileReady = true;
       });
 
-      _videoController!.play();
+      await controller.play();
     } catch (e) {
       debugPrint('❌ Gagal init video preview: $e');
-      if (!mounted) return;
+      if (controller != null) {
+        controller.removeListener(_onVideoStateChanged);
+        if (identical(_videoController, controller)) _videoController = null;
+        await controller.dispose();
+      }
+      if (!mounted || generation != _videoLoadGeneration) return;
       setState(() {
-        _videoError = 'Gagal memuat video: $e';
+        _isVideoInitialized = false;
+        _isVideoPlaying = false;
+        _videoError = 'Video tidak valid atau tidak dapat diputar';
         _isVideoLoading = false;
       });
     }
   }
 
+  void _onVideoStateChanged() {
+    final isPlaying = _videoController?.value.isPlaying ?? false;
+    if (mounted && isPlaying != _isVideoPlaying) {
+      setState(() => _isVideoPlaying = isPlaying);
+    }
+  }
+
   @override
   void dispose() {
+    _videoLoadGeneration++;
+    _videoController?.removeListener(_onVideoStateChanged);
     _videoController?.dispose();
     super.dispose();
   }
 
   void _togglePlayPause() {
     if (_videoController == null || !_isVideoInitialized) return;
-    setState(() {
-      _videoController!.value.isPlaying
-          ? _videoController!.pause()
-          : _videoController!.play();
+    _videoController!.value.isPlaying
+        ? _videoController!.pause()
+        : _videoController!.play();
+  }
+
+  bool get _canSave =>
+      !_isActionRunning &&
+      _fileReady &&
+      (widget.mediaType == MediaType.photo || _isVideoInitialized);
+
+  void _save() {
+    if (!_canSave) return;
+    setState(() => _isActionRunning = true);
+    widget.onSave();
+  }
+
+  void _retake() {
+    if (_isActionRunning) return;
+    setState(() => _isActionRunning = true);
+    widget.onRetake();
+  }
+
+  void _markPhotoInvalid() {
+    if (_fileError == 'Foto tidak valid atau tidak dapat ditampilkan') return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      setState(() {
+        _fileReady = false;
+        _fileError = 'Foto tidak valid atau tidak dapat ditampilkan';
+      });
     });
   }
 
@@ -122,16 +201,16 @@ class _PreviewScreenState extends State<PreviewScreen> {
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.close, color: Colors.white),
-          onPressed: widget.onRetake,
+          onPressed: _isActionRunning ? null : _retake,
           tooltip: 'Retake / Batal',
         ),
         actions: [
           TextButton(
-            onPressed: widget.onSave,
-            child: const Text(
+            onPressed: _canSave ? _save : null,
+            child: Text(
               'Simpan',
               style: TextStyle(
-                color: AppTheme.accentOrange,
+                color: _canSave ? AppTheme.accentOrange : Colors.grey,
                 fontWeight: FontWeight.bold,
                 fontSize: 16,
               ),
@@ -188,13 +267,21 @@ class _PreviewScreenState extends State<PreviewScreen> {
                                 fontSize: 12,
                               ),
                             ),
+                          if (_fileError != null)
+                            Text(
+                              _fileError!,
+                              style: const TextStyle(
+                                color: AppTheme.error,
+                                fontSize: 12,
+                              ),
+                            ),
                         ],
                       ),
                       if (widget.mediaType == MediaType.video &&
                           _isVideoInitialized)
                         IconButton(
                           icon: Icon(
-                            _videoController!.value.isPlaying
+                            _isVideoPlaying
                                 ? Icons.pause
                                 : Icons.play_arrow,
                             color: Colors.white,
@@ -209,7 +296,7 @@ class _PreviewScreenState extends State<PreviewScreen> {
                     children: [
                       Expanded(
                         child: OutlinedButton.icon(
-                          onPressed: widget.onRetake,
+                          onPressed: _isActionRunning ? null : _retake,
                           icon: const Icon(Icons.refresh, color: AppTheme.error),
                           label: const Text(
                             'Retake',
@@ -225,7 +312,7 @@ class _PreviewScreenState extends State<PreviewScreen> {
                       const Gap(16),
                       Expanded(
                         child: ElevatedButton.icon(
-                          onPressed: widget.onSave,
+                          onPressed: _canSave ? _save : null,
                           icon: const Icon(Icons.save, color: Colors.black),
                           label: const Text(
                             'Simpan',
@@ -257,11 +344,14 @@ class _PreviewScreenState extends State<PreviewScreen> {
       return Image.file(
         file,
         fit: BoxFit.contain,
-        errorBuilder: (_, __, ___) => const Icon(
-          Icons.broken_image,
-          color: Colors.grey,
-          size: 64,
-        ),
+        errorBuilder: (_, __, ___) {
+          _markPhotoInvalid();
+          return const Icon(
+            Icons.broken_image,
+            color: Colors.grey,
+            size: 64,
+          );
+        },
       );
     } else {
       // Video
@@ -309,8 +399,9 @@ class _PreviewScreenState extends State<PreviewScreen> {
       }
 
       if (_isVideoInitialized) {
+        final aspectRatio = _videoController!.value.aspectRatio;
         return AspectRatio(
-          aspectRatio: _videoController!.value.aspectRatio,
+          aspectRatio: aspectRatio > 0 ? aspectRatio : 16 / 9,
           child: VideoPlayer(_videoController!),
         );
       }
