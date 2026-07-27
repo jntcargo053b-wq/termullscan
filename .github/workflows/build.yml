@@ -14,7 +14,7 @@ jobs:
     # `if:` step manapun ("Unrecognized named-value: 'secrets'"). Solusi
     # resminya: taruh dulu di env level job, baru step if: merujuk ke env.
     env:
-      HAS_RELEASE_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+      HAS_RELEASE_KEYSTORE: ${{ secrets.KEYSTORE_BASE64 != '' }}
 
     steps:
       - name: Checkout repository
@@ -52,20 +52,20 @@ jobs:
       - name: Verify release keystore secrets are configured
         if: ${{ env.HAS_RELEASE_KEYSTORE != 'true' }}
         run: |
-          echo "::error::ANDROID_KEYSTORE_BASE64 (dan secrets keystore lainnya) belum diset di repo ini."
+          echo "::error::KEYSTORE_BASE64 (dan secrets keystore lainnya) belum diset di repo ini."
           echo "::error::Tanpa ini, build.gradle akan menghasilkan APK release UNSIGNED yang tidak bisa diinstall di HP manapun."
           echo "::error::Set 4 secrets berikut di Settings > Secrets and variables > Actions:"
-          echo "::error::  ANDROID_KEYSTORE_BASE64, ANDROID_STORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD"
+          echo "::error::  KEYSTORE_BASE64, ANDROID_STORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD"
           exit 1
 
       - name: Configure release signing
         if: ${{ env.HAS_RELEASE_KEYSTORE == 'true' }}
         shell: bash
         env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/termulscan-release.jks
           {
