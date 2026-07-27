@@ -4,6 +4,14 @@ plugins {
     id "dev.flutter.flutter-gradle-plugin"
 }
 
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file("key.properties")
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+def releaseSigningConfigured = ["storeFile", "storePassword", "keyAlias", "keyPassword"]
+        .every { key -> keystoreProperties[key] != null && !keystoreProperties[key].toString().isBlank() }
+
 android {
     namespace "com.termulscan.whscanner"
     compileSdk = 36
@@ -16,9 +24,22 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        release {
+            if (releaseSigningConfigured) {
+                storeFile = rootProject.file(keystoreProperties["storeFile"])
+                storePassword = keystoreProperties["storePassword"]
+                keyAlias = keystoreProperties["keyAlias"]
+                keyPassword = keystoreProperties["keyPassword"]
+            }
+        }
+    }
+
     buildTypes {
         release {
-            signingConfig = signingConfigs.debug
+            // Tanpa key.properties Gradle menghasilkan release unsigned,
+            // bukan APK production yang diam-diam memakai debug key.
+            signingConfig = releaseSigningConfigured ? signingConfigs.release : null
             minifyEnabled = true
             shrinkResources = true
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'

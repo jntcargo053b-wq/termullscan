@@ -1,0 +1,6 @@
+# Salin menjadi android/key.properties dan isi dengan kredensial release.
+# Jangan commit key.properties atau file keystore.
+storeFile=termulscan-release.jks
+storePassword=CHANGE_ME
+keyAlias=termulscan
+keyPassword=CHANGE_ME
