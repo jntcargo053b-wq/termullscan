@@ -97,17 +97,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   bool _processingScan = false;
   bool _navigationLocked = false;
   bool _resumeScheduled = false;
-  // ✅ FIX: penanda bahwa alur input manual (cek duplikat → dialog
-  // konfirmasi → simpan entry) masih berjalan, MESKIPUN bottom sheet
-  // input-nya sendiri sudah tertutup (Navigator.pop dipanggil duluan
-  // di _ManualInputDialog agar terasa responsif). Tanpa flag ini,
-  // whenComplete() bottom sheet akan resume kamera scanner terlalu
-  // cepat — tepat saat dialog konfirmasi kode manual masih tampil di
-  // atasnya — sehingga _scannerState bisa tabrakan dengan barcode
-  // yang kebaca kamera di jendela waktu itu, dan _resumeScanning()
-  // berikutnya jadi ditolak (_canResume) karena state sudah kepeleset
-  // dari idle/paused/error. Efek yang terlihat: kamera "diam" dan
-  // baru hidup lagi kalau app di-background/foreground.
   bool _manualFlowBusy = false;
   Timer? _processingWatchdog;
   Timer? _scannerWatchdog;
@@ -295,6 +284,11 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   }
 
   Future<void> _resumeScanning() async {
+    // ✅ FIX: Jangan resume jika ada active scan
+    if (_activeScanVN.value != null) {
+      debugPrint('⚠️ Resume skipped: active scan exists');
+      return;
+    }
     if (!mounted) return;
     if (_resumeScheduled || _processingScan) return;
     if (!_canResume) {
@@ -536,8 +530,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
 
   void _toggleTorch() {
     try {
-      // ✅ FIX: Cek torchState untuk mengetahui apakah torch tersedia
-      // MobileScanner versi 5.x menggunakan torchState
       if (_scannerController.value.torchState != null) {
         _scannerController.toggleTorch();
         debugPrint('✅ Torch toggled');
@@ -567,7 +559,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
 
   void _switchCamera() {
     try {
-      // ✅ FIX: Langsung switch, MobileScanner akan throw jika tidak tersedia
       _scannerController.switchCamera();
       debugPrint('✅ Camera switched');
     } catch (e) {
@@ -675,23 +666,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           await _resumeScanning();
         }
       } finally {
-        // ✅ FIX: dulu releaseAfterCapture() dipanggil DI SINI, tepat
-        // setelah try block selesai (yang isinya cuma kerja ringan:
-        // haptic, simpan entry, stop scanner — beres dalam hitungan
-        // milidetik). Ini menghentikan stream GPS jauh sebelum sempat
-        // lock, apalagi sebelum geocode() sempat terpicu (geocode baru
-        // jalan setelah confidence mencapai canCapture). Akibatnya:
-        // acquireForCapture() yang dipanggil di atas jadi sia-sia —
-        // begitu PhotoScanScreen/VideoScanScreen dibuka, GPS+alamat
-        // mulai dari nol lagi via acquireForCapture() miliknya sendiri,
-        // padahal maksud awal manggil acquire di titik scan barcode
-        // justru supaya GPS+alamat sudah "panas" duluan saat user
-        // lanjut ke kamera. Sekarang release TIDAK dipanggil di sini —
-        // GPS dibiarkan tetap jalan (auto-stop sendiri lewat
-        // _acquireDeadline 14 detik kalau tidak kunjung lock, jadi
-        // tetap aman dari sisi baterai). Kalau user tidak lanjut ke
-        // kamera sama sekali, release tetap terjadi lewat dispose()
-        // layar ini.
         _processingWatchdog?.cancel();
         _processingScan = false;
         _scannerState = _ScannerState.paused;
@@ -705,13 +679,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     if (_processingScan || _activeScanVN.value != null) return;
     
     _lockNavigation();
-    // ✅ FIX: set busy SEBELUM sheet dibuka. _ManualInputDialog menutup
-    // dirinya sendiri (Navigator.pop) sebelum widget.onSubmitted selesai
-    // di-await, jadi whenComplete() di bawah ini bisa terpicu jauh lebih
-    // awal daripada selesainya alur cek-duplikat → dialog konfirmasi →
-    // simpan entry. Selama _manualFlowBusy masih true, resume kamera
-    // DITUNDA sampai alur itu benar-benar tuntas (lihat finally di
-    // _confirmAndProcessManualCode).
     _manualFlowBusy = true;
     showModalBottomSheet(
       context: context,
@@ -725,7 +692,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       ),
     ).whenComplete(() {
       _unlockNavigation();
-      if (!_manualFlowBusy && !_processingScan && mounted) {
+      // ✅ Hanya resume jika tidak ada active scan
+      if (!_manualFlowBusy && !_processingScan && _activeScanVN.value == null && mounted) {
         _resumeScanning();
       }
     });
@@ -734,11 +702,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   Future<void> _confirmAndProcessManualCode(String code) async {
     if (!mounted) return;
 
-    // ✅ FIX: dilacak supaya finally di bawah TIDAK mereset _manualFlowBusy
-    // saat kita justru sedang membuka ulang _showManualInput() (kasus
-    // "Ketik Ulang") — karena _showManualInput() sendiri sudah set
-    // _manualFlowBusy = true untuk sheet berikutnya, dan reset di sini
-    // akan menimpanya balik ke false tepat setelah itu.
     bool reopenedManualInput = false;
 
     bool isDuplicate = false;
@@ -830,16 +793,10 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         _showManualInput();
       }
     } finally {
-      // ✅ FIX: baru sekarang seluruh alur input manual (cek duplikat →
-      // dialog konfirmasi → simpan entry) benar-benar tuntas, jadi baru
-      // di sini _manualFlowBusy boleh direset dan resume kamera scanner
-      // dicoba lagi — BUKAN saat bottom sheet-nya saja yang tertutup.
-      // Dilewati kalau kita baru saja membuka ulang sheet ("Ketik Ulang"),
-      // supaya tidak menimpa _manualFlowBusy yang baru di-set true lagi
-      // oleh _showManualInput().
       if (!reopenedManualInput) {
         _manualFlowBusy = false;
-        if (mounted && !_processingScan) {
+        // ✅ Hanya resume jika tidak ada active scan
+        if (mounted && !_processingScan && _activeScanVN.value == null) {
           await _resumeScanning();
         }
       }
@@ -911,10 +868,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           await _resumeScanning();
         }
       } finally {
-        // ✅ FIX: sama seperti _processDetectedBarcode — releaseAfterCapture()
-        // dihapus dari sini supaya GPS+geocode tetap "panas" sampai
-        // user membuka PhotoScanScreen/VideoScanScreen, bukan restart
-        // dari nol. Lihat komentar lengkap di _processDetectedBarcode.
         _processingWatchdog?.cancel();
         _processingScan = false;
         _scannerState = _ScannerState.paused;
@@ -950,7 +903,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     if (active == null || active.entryId == null) return;
 
     final barcode = active.barcode;
-    final entryId = active.entryId!; // ✅ Non-null assertion
+    final entryId = active.entryId!;
 
     _lockNavigation();
     _scannerState = _ScannerState.navigating;
@@ -999,7 +952,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     if (active == null || active.entryId == null) return;
 
     final barcode = active.barcode;
-    final entryId = active.entryId!; // ✅ Non-null assertion
+    final entryId = active.entryId!;
 
     _lockNavigation();
     _scannerState = _ScannerState.navigating;
