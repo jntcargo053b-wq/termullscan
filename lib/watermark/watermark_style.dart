@@ -3,5 +3,6 @@ enum WatermarkStyle {
   professional,
   polaroid,
   stamp,
-  timestamp, // ✅ TAMBAHKAN
+  timestamp,
+  fullInfo, // ✅ TAMBAHKAN — dipakai di watermark_color.dart::fullInfo
 }
