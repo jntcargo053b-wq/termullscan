@@ -1,4 +1,5 @@
 // lib/watermark/video_watermark_renderer.dart
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
@@ -6,6 +7,7 @@ import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import '../models/scan_entry.dart';
 import 'watermark_settings.dart';
+import 'watermark_style.dart';
 
 // ─── VIDEO INFO ──────────────────────────────────────────────────
 class VideoInfo {
@@ -19,7 +21,7 @@ class VideoInfo {
     this.duration,
   });
 
-  double get baseSize => math.min(width, height);
+  double get baseSize => math.min(width.toDouble(), height.toDouble());
   double get aspectRatio => width / height;
   bool get isLandscape => width > height;
   bool get isPortrait => height > width;
@@ -290,14 +292,27 @@ class VideoWatermarkRenderer {
     }
 
     // ─── EKSEKUSI ───────────────────────────────────────────────
-    final session = await FFmpegKit.execute(command, (log) {
-      if (onProgress != null) {
-        final progress = _parseProgress(log.getMessage());
-        if (progress != null) {
-          onProgress(progress);
+    // Catatan: di ffmpeg_kit_flutter_new, FFmpegKit.execute(command) cuma
+    // menerima 1 argumen (command) dan return-nya session yang SUDAH
+    // selesai. Untuk tetap dapat progress callback per-baris log, kita
+    // pakai executeAsync + Completer supaya tetap menunggu sampai
+    // eksekusi benar-benar selesai sebelum baca return code.
+    final completer = Completer<void>();
+    final session = await FFmpegKit.executeAsync(
+      command,
+      (completedSession) async {
+        completer.complete();
+      },
+      (log) {
+        if (onProgress != null) {
+          final progress = _parseProgress(log.getMessage());
+          if (progress != null) {
+            onProgress(progress);
+          }
         }
-      }
-    });
+      },
+    );
+    await completer.future;
 
     final returnCode = await session.getReturnCode();
 
@@ -358,7 +373,7 @@ class VideoWatermarkRenderer {
     final operator = settings.operatorName.isNotEmpty ? settings.operatorName : 'Operator';
     final company = settings.companyName;
     final timestamp = entry.timestamp.toIso8601String().substring(0, 19).replaceAll('T', ' ');
-    final barcode = entry.value ?? 'No Barcode';
+    final barcode = entry.value.isNotEmpty ? entry.value : 'No Barcode';
     final location = entry.locationName ?? '';
 
     switch (settings.style) {
