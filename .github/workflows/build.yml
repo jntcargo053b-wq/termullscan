@@ -31,6 +31,45 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
+      - name: Analyze source
+        run: flutter analyze --no-fatal-warnings --no-fatal-infos
+
+      - name: Run tests
+        run: flutter test
+
+      # ⚠️ Tanpa 4 secrets ini, build.gradle sengaja membuat APK release
+      # TANPA tanda tangan (unsigned) — bukan fallback ke debug key.
+      # Unsigned APK akan sukses di-build & ter-upload sebagai artifact,
+      # tapi GAGAL diinstall di HP manapun ("App not installed as package
+      # appears to be invalid"). Supaya masalah ini ketahuan di CI, bukan
+      # setelah user coba install, job dihentikan di sini kalau secrets
+      # belum lengkap.
+      - name: Verify release keystore secrets are configured
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 == '' }}
+        run: |
+          echo "::error::ANDROID_KEYSTORE_BASE64 (dan secrets keystore lainnya) belum diset di repo ini."
+          echo "::error::Tanpa ini, build.gradle akan menghasilkan APK release UNSIGNED yang tidak bisa diinstall di HP manapun."
+          echo "::error::Set 4 secrets berikut di Settings > Secrets and variables > Actions:"
+          echo "::error::  ANDROID_KEYSTORE_BASE64, ANDROID_STORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD"
+          exit 1
+
+      - name: Configure release signing
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/termulscan-release.jks
+          {
+            echo "storeFile=termulscan-release.jks"
+            echo "storePassword=$ANDROID_STORE_PASSWORD"
+            echo "keyAlias=$ANDROID_KEY_ALIAS"
+            echo "keyPassword=$ANDROID_KEY_PASSWORD"
+          } > android/key.properties
+
       # ✅ Build APK tanpa --no-shrink agar sesuai dengan build.gradle
       # (shrinkResources di gradle akan mengatur ukuran final)
       - name: Build APK (release)
@@ -40,5 +79,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: termulscan-release-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: build/app/outputs/flutter-apk/app-release*.apk
           retention-days: 30
