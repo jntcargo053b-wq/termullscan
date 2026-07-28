@@ -67,6 +67,13 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
   CameraController? _controller;
   Future<void>? _initFuture;
   String? _errorText;
+  // ✅ FIX: melacak disposal controller lama supaya init berikutnya
+  // selalu menunggu native side benar-benar selesai dispose dulu —
+  // tanpa ini bisa race: controller baru initialize() sementara
+  // controller lama masih dispose() di native, hasilnya isInitialized
+  // true di Dart tapi channel native-nya sudah putus (CameraException
+  // channel-error saat takePicture).
+  Future<void>? _disposeFuture;
 
   // ─── Cache elemen statis (dibuat/dimuat SEKALI) ────────────
   late final WatermarkLayout _layout;
@@ -147,6 +154,13 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
 
   Future<void> _initCamera() async {
     try {
+      // ✅ FIX: tunggu disposal controller lama (kalau ada) selesai dulu,
+      // supaya tidak initialize() controller baru sementara native side
+      // masih membereskan controller lama.
+      if (_disposeFuture != null) {
+        await _disposeFuture;
+        _disposeFuture = null;
+      }
       final cameras = await availableCameras();
       if (cameras.isEmpty) {
         setState(() => _errorText = 'Kamera tidak ditemukan di perangkat ini');
@@ -287,17 +301,26 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    final controller = _controller;
-    if (controller == null || !controller.value.isInitialized) return;
-
-    if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
-      _controller = null;
-      controller.dispose();
+    // ✅ FIX: `inactive` sering terpicu oleh hal sesaat (notifikasi masuk,
+    // dialog sistem, quick-settings) TANPA app benar-benar di-background.
+    // Dulu di-treat sama seperti `paused` → kamera langsung di-dispose,
+    // lalu begitu app balik `resumed` dengan cepat, controller baru mulai
+    // initialize() sementara dispose() controller lama masih berjalan di
+    // native → race yang bikin capture gagal (channel-error). Sekarang
+    // hanya `paused` (app benar-benar ke background) yang men-dispose.
+    if (state == AppLifecycleState.paused) {
+      final controller = _controller;
+      if (controller != null && controller.value.isInitialized) {
+        _controller = null;
+        _disposeFuture = controller.dispose();
+      }
     } else if (state == AppLifecycleState.resumed) {
-      setState(() {
-        _errorText = null;
-        _initFuture = _initCamera();
-      });
+      if (_controller == null) {
+        setState(() {
+          _errorText = null;
+          _initFuture = _initCamera();
+        });
+      }
     }
   }
 

@@ -96,7 +96,7 @@ class _HeaderWidget extends StatelessWidget {
         const Gap(8),
         Text(
           batchMode
-              ? '$photoCount foto diambil untuk ${barcode ?? 'tanpa barcode'}'
+              ? '$photoCount foto siap disimpan untuk ${barcode ?? 'tanpa barcode'}'
               : 'Foto otomatis disertai timestamp & watermark',
           style: Theme.of(context).textTheme.bodyMedium,
           textAlign: TextAlign.center,
@@ -224,10 +224,12 @@ class _ActionButtonsWidget extends StatelessWidget {
 // ─── WIDGET: Batch Finish Button ─────────────────────────────
 class _BatchFinishButtonWidget extends StatelessWidget {
   final int photoCount;
+  final bool isSaving;
   final VoidCallback onFinish;
   const _BatchFinishButtonWidget({
     required this.photoCount,
     required this.onFinish,
+    this.isSaving = false,
   });
 
   @override
@@ -239,9 +241,15 @@ class _BatchFinishButtonWidget extends StatelessWidget {
         SizedBox(
           width: double.infinity,
           child: ElevatedButton.icon(
-            onPressed: onFinish,
-            icon: const Icon(Icons.done_all, size: 20),
-            label: Text('Selesai Batch (${photoCount} foto)'),
+            onPressed: isSaving ? null : onFinish,
+            icon: isSaving
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  )
+                : const Icon(Icons.save, size: 20),
+            label: Text(isSaving ? 'Menyimpan...' : 'Simpan Semua ($photoCount foto)'),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppTheme.success,
               foregroundColor: Colors.white,
@@ -277,7 +285,7 @@ class _InfoBoxWidget extends StatelessWidget {
           Expanded(
             child: Text(
               batchMode
-                  ? 'Ambil banyak foto untuk satu barcode. Tekan "Selesai Batch" jika sudah.'
+                  ? 'Ambil banyak foto untuk satu barcode, lalu tekan "Simpan Semua" — semua foto disimpan sekaligus.'
                   : 'Setiap foto otomatis dicatat: waktu & watermark',
               style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
             ),
@@ -321,6 +329,10 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   int _photoCount = 0;
   bool _cameraGranted = false;
   final List<String> _photoPaths = [];
+  // ✅ Foto batch yang sudah dikonfirmasi (preview → "Simpan foto ini")
+  // tapi belum di-finalize ke storage/DB — menunggu tombol "Simpan" utama.
+  final List<_PendingCapture> _pendingCaptures = [];
+  bool _isFinishingBatch = false;
   String _statusText = '';
 
   // ─── Pending directory ─────────────────────────────────────
@@ -355,6 +367,13 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   void dispose() {
     _taskQueue.dispose();
     PodLocationService.instance.releaseAfterCapture(owner: this);
+    // ✅ FIX: kalau layar ditutup selagi masih ada foto yang sudah
+    // dikonfirmasi tapi belum di-"Simpan", jangan tinggalkan file
+    // watermark/pending-nya menggantung selamanya di storage.
+    for (final cap in _pendingCaptures) {
+      try { File(cap.watermarkedPath).delete(); } catch (_) {}
+      try { File(cap.pendingPath).delete(); } catch (_) {}
+    }
     super.dispose();
   }
 
@@ -602,7 +621,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   // ─── Take photo ─────────────────────────────────────────────
 
   Future<void> _takePhoto() async {
-    if (_isSaving || _isCapturing || _processingRequest) return;
+    if (_isSaving || _isCapturing || _processingRequest || _isFinishingBatch) return;
     if (!await _ensureCameraPermission()) return;
 
     _processingRequest = true;
@@ -637,40 +656,57 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
           final photoIndex = _nextPhotoIndex++;
           final finalWatermarkedPath = watermarkedPath;
           final finalPendingPath = pendingPath;
-          final finalizeState = _FinalizeState();
 
-          _taskQueue.add(
-            label: 'Foto $photoIndex',
-            priority: TaskPriority.high,
-            maxRetries: 3,
-            work: () => _finalizePhoto(finalWatermarkedPath, finalPendingPath, photoIndex, finalizeState),
-            onSuccess: (path) {
-              if (mounted) {
-                setState(() {
-                  _photoPaths.add(path);
-                  _photoCount++;
-                  if (_photoPaths.length > _maxCachedPaths) {
-                    _photoPaths.removeAt(0);
-                  }
-                });
-                if (!widget.batchMode) {
+          if (widget.batchMode) {
+            // ✅ Batch: jangan finalize sekarang. Cukup simpan sebagai
+            // "sudah dikonfirmasi", finalize semuanya sekaligus nanti
+            // saat tombol "Simpan" utama ditekan.
+            if (mounted) {
+              setState(() {
+                _pendingCaptures.add(_PendingCapture(
+                  watermarkedPath: finalWatermarkedPath,
+                  pendingPath: finalPendingPath,
+                  photoIndex: photoIndex,
+                ));
+                _photoPaths.add(finalWatermarkedPath);
+                _photoCount++;
+                if (_photoPaths.length > _maxCachedPaths) {
+                  _photoPaths.removeAt(0);
+                }
+                _statusText = '$_photoCount foto siap disimpan';
+              });
+            }
+            // watermarkedPath & pendingPath SENGAJA tidak dihapus di sini —
+            // masih dibutuhkan nanti saat _saveAllPending() finalize.
+          } else {
+            final finalizeState = _FinalizeState();
+            _taskQueue.add(
+              label: 'Foto $photoIndex',
+              priority: TaskPriority.high,
+              maxRetries: 3,
+              work: () => _finalizePhoto(finalWatermarkedPath, finalPendingPath, photoIndex, finalizeState),
+              onSuccess: (path) {
+                if (mounted) {
+                  setState(() {
+                    _photoPaths.add(path);
+                    _photoCount++;
+                    if (_photoPaths.length > _maxCachedPaths) {
+                      _photoPaths.removeAt(0);
+                    }
+                  });
                   _showSuccess();
                   Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
                 }
-              }
-            },
-            onError: (error) {
-              if (mounted) {
-                _showError('Gagal memproses foto: $error');
-                if (!widget.batchMode) {
+              },
+              onError: (error) {
+                if (mounted) {
+                  _showError('Gagal memproses foto: $error');
                   Navigator.pop(context, {'error': error.toString()});
                 }
-              }
-              try { File(finalWatermarkedPath).delete(); } catch (_) {}
-              try { File(finalPendingPath).delete(); } catch (_) {}
-            },
-          );
-          if (!widget.batchMode) {
+                try { File(finalWatermarkedPath).delete(); } catch (_) {}
+                try { File(finalPendingPath).delete(); } catch (_) {}
+              },
+            );
             setState(() => _statusText = 'Menyimpan foto...');
           }
         } else {
@@ -699,7 +735,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
   }
 
   Future<void> _pickFromGallery() async {
-    if (_isSaving || _isCapturing || _processingRequest) return;
+    if (_isSaving || _isCapturing || _processingRequest || _isFinishingBatch) return;
 
     _processingRequest = true;
     setState(() {
@@ -729,40 +765,52 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
           final photoIndex = _nextPhotoIndex++;
           final finalWatermarkedPath = watermarkedPath;
           final finalPendingPath = pendingPath;
-          final finalizeState = _FinalizeState();
 
-          _taskQueue.add(
-            label: 'Foto dari Galeri $photoIndex',
-            priority: TaskPriority.high,
-            maxRetries: 3,
-            work: () => _finalizePhoto(finalWatermarkedPath, finalPendingPath, photoIndex, finalizeState),
-            onSuccess: (path) {
-              if (mounted) {
-                setState(() {
-                  _photoPaths.add(path);
-                  _photoCount++;
-                  if (_photoPaths.length > _maxCachedPaths) {
-                    _photoPaths.removeAt(0);
-                  }
-                });
-                if (!widget.batchMode) {
+          if (widget.batchMode) {
+            if (mounted) {
+              setState(() {
+                _pendingCaptures.add(_PendingCapture(
+                  watermarkedPath: finalWatermarkedPath,
+                  pendingPath: finalPendingPath,
+                  photoIndex: photoIndex,
+                ));
+                _photoPaths.add(finalWatermarkedPath);
+                _photoCount++;
+                if (_photoPaths.length > _maxCachedPaths) {
+                  _photoPaths.removeAt(0);
+                }
+                _statusText = '$_photoCount foto siap disimpan';
+              });
+            }
+          } else {
+            final finalizeState = _FinalizeState();
+            _taskQueue.add(
+              label: 'Foto dari Galeri $photoIndex',
+              priority: TaskPriority.high,
+              maxRetries: 3,
+              work: () => _finalizePhoto(finalWatermarkedPath, finalPendingPath, photoIndex, finalizeState),
+              onSuccess: (path) {
+                if (mounted) {
+                  setState(() {
+                    _photoPaths.add(path);
+                    _photoCount++;
+                    if (_photoPaths.length > _maxCachedPaths) {
+                      _photoPaths.removeAt(0);
+                    }
+                  });
                   _showSuccess();
                   Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
                 }
-              }
-            },
-            onError: (error) {
-              if (mounted) {
-                _showError('Gagal memproses foto: $error');
-                if (!widget.batchMode) {
+              },
+              onError: (error) {
+                if (mounted) {
+                  _showError('Gagal memproses foto: $error');
                   Navigator.pop(context, {'error': error.toString()});
                 }
-              }
-              try { File(finalWatermarkedPath).delete(); } catch (_) {}
-              try { File(finalPendingPath).delete(); } catch (_) {}
-            },
-          );
-          if (!widget.batchMode) {
+                try { File(finalWatermarkedPath).delete(); } catch (_) {}
+                try { File(finalPendingPath).delete(); } catch (_) {}
+              },
+            );
             setState(() => _statusText = 'Menyimpan foto...');
           }
         } else {
@@ -834,8 +882,21 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     String watermarkedPath,
     String pendingPath,
     int photoIndex,
-    _FinalizeState state,
-  ) async {
+    _FinalizeState state, {
+    // ✅ FIX URUTAN FOTO: dulu dengan `maxWorkers: 2`, urutan append ke
+    // `imagePath` di DB mengikuti siapa yang SELESAI diproses duluan,
+    // bukan urutan foto diambil — kalau foto #2 kebetulan selesai lebih
+    // cepat dari foto #1 (mis. #1 kena retry watermark), urutan foto di
+    // laporan POD bisa terbalik dari urutan pengambilan aslinya.
+    // `waitForTurn` (kalau diisi) ditunggu SEBELUM append DB, dan
+    // `onTurnDone` dipanggil TEPAT SETELAH append DB ini selesai (baik
+    // sukses maupun gagal) — bukan menunggu langkah setelahnya (ekspor
+    // galeri) yang bisa lebih lama. Hasilnya: append tetap berjalan satu
+    // per satu sesuai photoIndex, tapi tahap lain (compress, watermark,
+    // ekspor galeri) tetap paralel seperti biasa.
+    Future<void> Function()? waitForTurn,
+    void Function()? onTurnDone,
+  }) async {
     try {
       String savedPath;
 
@@ -879,24 +940,42 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       }
 
       if (widget.entryId != null && !state.dbUpdated) {
-        // Append dilakukan di dalam transaksi database. Dengan dua worker,
-        // read-modify-write dari state UI dapat membuat update terakhir
-        // menimpa path yang baru saja disimpan worker lain.
-        final updated =
-            await _storage.appendPhotoPath(widget.entryId!, savedPath);
-        if (updated == null) {
-          throw StateError(
-            'Entry ${widget.entryId} tidak ditemukan saat menyimpan foto',
-          );
+        // Tunggu giliran (foto dengan photoIndex lebih kecil harus
+        // append duluan) sebelum kita append.
+        if (waitForTurn != null) await waitForTurn();
+        try {
+          // Append dilakukan di dalam transaksi database. Dengan dua worker,
+          // read-modify-write dari state UI dapat membuat update terakhir
+          // menimpa path yang baru saja disimpan worker lain — gate di atas
+          // memastikan "terakhir" itu selalu foto dengan index terbesar,
+          // bukan sekadar siapa yang tercepat.
+          final updated =
+              await _storage.appendPhotoPath(widget.entryId!, savedPath);
+          if (updated == null) {
+            throw StateError(
+              'Entry ${widget.entryId} tidak ditemukan saat menyimpan foto',
+            );
+          }
+          // ✅ FIX RETRY: tandai sudah dijalankan supaya retry berikutnya
+          // (dipicu langkah lain yang gagal setelah ini) tidak mengulang
+          // update DB — kalau diulang, `savedPath` bisa ke-append dua kali
+          // ke `imagePath` karena `_photoPaths` di state UI baru diperbarui
+          // di `onSuccess`, bukan di sini.
+          state.dbUpdated = true;
+        } finally {
+          // Lepas giliran SEGERA setelah append ini selesai (berhasil
+          // ataupun gagal) — supaya foto berikutnya tidak ikut menunggu
+          // ekspor galeri foto ini yang bisa lebih lama, dan supaya foto
+          // berikutnya tidak nyangkut selamanya kalau append ini gagal.
+          onTurnDone?.call();
         }
-        // ✅ FIX RETRY: tandai sudah dijalankan supaya retry berikutnya
-        // (dipicu langkah lain yang gagal setelah ini) tidak mengulang
-        // update DB — kalau diulang, `savedPath` bisa ke-append dua kali
-        // ke `imagePath` karena `_photoPaths` di state UI baru diperbarui
-        // di `onSuccess`, bukan di sini.
-        state.dbUpdated = true;
       } else if (state.dbUpdated) {
         debugPrint('↩️ Retry: lewati update DB, sudah sukses sebelumnya');
+      } else {
+        // entryId null (foto berdiri sendiri) — tidak ada append yang
+        // perlu diurutkan, tapi tetap lepas giliran supaya foto
+        // berikutnya (jika dipanggil dengan gate) tidak menunggu percuma.
+        onTurnDone?.call();
       }
 
       if (!state.galleryOk) {
@@ -933,58 +1012,94 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     }
   }
 
-  // ─── Batch finish ───────────────────────────────────────────
-
-
+  // ─── Batch finish: simpan SEMUA foto pending sekaligus ───────
+  // ✅ Ini yang dipanggil tombol "Simpan" utama: baru di titik inilah
+  // semua foto yang sudah dikonfirmasi di preview benar-benar di-
+  // finalize (dipindah ke storage internal, di-append ke DB, dan
+  // diekspor ke galeri) — satu kali proses untuk semua foto, lalu
+  // langsung kembali ke menu utama begitu selesai (tanpa dialog ringkasan).
   Future<void> _finishBatch() async {
-    if (_photoPaths.isNotEmpty) {
-      await _showBatchSummaryAndPop();
-    } else {
+    if (_pendingCaptures.isEmpty) {
       if (mounted) Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
+      return;
     }
-  }
 
-  Future<void> _showBatchSummaryAndPop() async {
-    if (!mounted) return;
-    await showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        title: Text('✅ Selesai Batch (${widget.barcode ?? ''})'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Total foto: $_photoCount'),
-            const Gap(8),
-            Wrap(
-              spacing: 4,
-              runSpacing: 4,
-              children: _photoPaths.take(10).map((path) {
-                return ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: Image.file(
-                    File(path),
-                    width: 40,
-                    height: 40,
-                    fit: BoxFit.cover,
-                    cacheWidth: 100,
-                    cacheHeight: 100,
-                  ),
-                );
-              }).toList(),
-            ),
-          ],
+    // ✅ FIX URUTAN: urutkan dulu berdasarkan photoIndex (urutan foto
+    // diambil), lalu setiap foto menunggu giliran foto sebelumnya selesai
+    // append DB dulu sebelum boleh append sendiri — supaya proses tetap
+    // paralel (compress/watermark/gallery), tapi urutan foto di DB selalu
+    // sesuai urutan pengambilan, bukan siapa yang selesai duluan.
+    final captures = List<_PendingCapture>.of(_pendingCaptures)
+      ..sort((a, b) => a.photoIndex.compareTo(b.photoIndex));
+    setState(() {
+      _isFinishingBatch = true;
+      _statusText = 'Menyimpan ${captures.length} foto...';
+    });
+
+    final savedByIndex = <int, String>{};
+    final errors = <Object>[];
+    var completedCount = 0;
+    final completer = Completer<void>();
+
+    Completer<void>? previousGate;
+    for (final cap in captures) {
+      final myGate = Completer<void>();
+      final waitFor = previousGate;
+      _taskQueue.add(
+        label: 'Simpan foto batch ${cap.photoIndex}',
+        priority: TaskPriority.high,
+        maxRetries: 3,
+        work: () => _finalizePhoto(
+          cap.watermarkedPath,
+          cap.pendingPath,
+          cap.photoIndex,
+          _FinalizeState(),
+          waitForTurn: waitFor == null ? null : () => waitFor.future,
+          onTurnDone: () {
+            if (!myGate.isCompleted) myGate.complete();
+          },
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-    if (mounted) Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
+        onSuccess: (path) {
+          savedByIndex[cap.photoIndex] = path;
+          completedCount++;
+          // Jaring pengaman: kalau onTurnDone entah kenapa tidak sempat
+          // terpanggil, tetap lepas giliran di sini supaya foto
+          // berikutnya tidak nyangkut selamanya.
+          if (!myGate.isCompleted) myGate.complete();
+          if (mounted) setState(() => _statusText = 'Menyimpan foto... ($completedCount/${captures.length})');
+          if (completedCount == captures.length && !completer.isCompleted) {
+            completer.complete();
+          }
+        },
+        onError: (error) {
+          errors.add(error);
+          completedCount++;
+          if (!myGate.isCompleted) myGate.complete();
+          if (completedCount == captures.length && !completer.isCompleted) {
+            completer.complete();
+          }
+        },
+      );
+      previousGate = myGate;
+    }
+
+    await completer.future;
+    _pendingCaptures.clear();
+
+    if (!mounted) return;
+
+    if (errors.isNotEmpty) {
+      _showError('${errors.length} dari ${captures.length} foto gagal disimpan. ${savedByIndex.length} foto berhasil.');
+    }
+
+    // Urutkan hasil balik sesuai photoIndex juga (bukan urutan selesai).
+    final orderedSavedPaths = captures
+        .where((c) => savedByIndex.containsKey(c.photoIndex))
+        .map((c) => savedByIndex[c.photoIndex]!)
+        .toList();
+
+    // ✅ Langsung kembali ke menu utama — tidak ada dialog ringkasan lagi.
+    Navigator.pop(context, {'count': orderedSavedPaths.length, 'paths': orderedSavedPaths});
   }
 
   // ─── Feedback ──────────────────────────────────────────────
@@ -1032,12 +1147,15 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () {
-            if (widget.batchMode && _photoCount > 0) {
+            if (widget.batchMode && _pendingCaptures.isNotEmpty) {
               showDialog(
                 context: context,
                 builder: (_) => AlertDialog(
-                  title: const Text('Keluar Batch?'),
-                  content: Text('${_photoCount} foto sudah diambil. Yakin keluar?'),
+                  title: const Text('Foto Belum Disimpan'),
+                  content: Text(
+                    '${_pendingCaptures.length} foto sudah diambil tapi belum disimpan. '
+                    'Simpan sekarang, atau buang dan keluar?',
+                  ),
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.pop(context),
@@ -1045,10 +1163,24 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
                     ),
                     TextButton(
                       onPressed: () {
-                        Navigator.pop(context);
-                        if (mounted) Navigator.pop(context, {'count': _photoCount, 'paths': _photoPaths});
+                        Navigator.pop(context); // tutup dialog
+                        // ✅ Buang foto pending (belum tersimpan) & keluar
+                        // tanpa menyimpan apa pun.
+                        for (final cap in _pendingCaptures) {
+                          try { File(cap.watermarkedPath).delete(); } catch (_) {}
+                          try { File(cap.pendingPath).delete(); } catch (_) {}
+                        }
+                        _pendingCaptures.clear();
+                        if (mounted) Navigator.pop(context, {'count': 0, 'paths': const <String>[]});
                       },
-                      child: const Text('Keluar'),
+                      child: const Text('Buang'),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        Navigator.pop(context); // tutup dialog
+                        _finishBatch(); // simpan semua lalu keluar
+                      },
+                      child: const Text('Simpan'),
                     ),
                   ],
                 ),
@@ -1059,11 +1191,11 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
           },
         ),
         actions: [
-          if (widget.batchMode && _photoCount > 0)
+          if (widget.batchMode && _pendingCaptures.isNotEmpty)
             IconButton(
               icon: const Icon(Icons.done_all, color: Colors.green),
-              onPressed: _finishBatch,
-              tooltip: 'Selesai Batch',
+              onPressed: _isFinishingBatch ? null : _finishBatch,
+              tooltip: 'Simpan Semua',
             ),
           if (_pendingTasks > 0)
             IconButton(
@@ -1111,15 +1243,19 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
               _ActionButtonsWidget(
                 onTakePhoto: _takePhoto,
                 onPickGallery: _pickFromGallery,
-                isSaving: _isSaving,
+                isSaving: _isSaving || _isFinishingBatch,
                 isCapturing: _isCapturing,
                 isProcessing: isProcessing,
               ),
               if (widget.batchMode)
-                _BatchFinishButtonWidget(photoCount: _photoCount, onFinish: _finishBatch),
+                _BatchFinishButtonWidget(
+                  photoCount: _pendingCaptures.length,
+                  isSaving: _isFinishingBatch,
+                  onFinish: _finishBatch,
+                ),
               const Gap(32),
               _InfoBoxWidget(batchMode: widget.batchMode),
-              if (_isSaving || isProcessing)
+              if (_isSaving || isProcessing || _isFinishingBatch)
                 Padding(
                   padding: const EdgeInsets.only(top: 16),
                   child: LinearProgressIndicator(
@@ -1159,4 +1295,19 @@ class _FinalizeState {
   String? savedPath;
   bool dbUpdated = false;
   bool galleryOk = false;
+}
+
+/// ✅ Foto batch yang sudah dikonfirmasi user di layar preview (watermark
+/// sudah dirender) TAPI belum di-finalize (belum dipindah ke storage
+/// internal, belum di-append ke DB, belum diekspor ke galeri). Baru
+/// diproses semuanya sekaligus saat user menekan tombol "Simpan".
+class _PendingCapture {
+  final String watermarkedPath;
+  final String pendingPath;
+  final int photoIndex;
+  const _PendingCapture({
+    required this.watermarkedPath,
+    required this.pendingPath,
+    required this.photoIndex,
+  });
 }
