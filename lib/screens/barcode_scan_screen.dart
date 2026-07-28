@@ -101,7 +101,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   Timer? _processingWatchdog;
   Timer? _scannerWatchdog;
   _ScannerState _scannerState = _ScannerState.idle;
-  String? _scannerErrorMessage; // ✅ FIX: menampilkan error kamera
+  String? _scannerErrorMessage;
 
   // ─── MUTEX UNTUK PROCESSING ─────────────────────────────────
   Completer<void>? _processingCompleter;
@@ -120,13 +120,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   final WatermarkSettings _wmSettings = WatermarkSettings();
 
   // ✅ FIX: bukan `final` lagi — controller ini perlu bisa diganti total
-  // (bukan cuma stop()/start() ulang) setelah kamera fisik sempat dipakai
-  // sesi lain (PhotoScanScreen/VideoScanScreen), karena instance lama bisa
-  // jadi rusak permanen dan start() berikutnya gagal terus.
   MobileScannerController _scannerController = _buildScannerController();
-  // ✅ FIX: key baru tiap kali controller diganti, supaya widget
-  // MobileScanner (dan platform view kamera di baliknya) benar-benar
-  // di-mount ulang dari nol, bukan cuma reassign controller ke view lama.
   Key _scannerKey = UniqueKey();
 
   static MobileScannerController _buildScannerController() {
@@ -170,8 +164,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     _scannerWatchdog?.cancel();
     _activeScanVN.dispose();
     _scanCountVN.dispose();
-
-    // ✅ FIX: Reset restoration values to prevent stale data
     _scanCountRestorer.dispose();
     _activeBarcodeRestorer.dispose();
     _activeEntryIdRestorer.dispose();
@@ -226,7 +218,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       }
       if (mounted) {
         await _resumeScanning();
-        // ✅ FIX: trigger rebuild if error occurs
         if (_scannerState == _ScannerState.error && mounted) {
           setState(() {});
         }
@@ -282,16 +273,9 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   // ─── SCANNER CONTROL ──────────────────────────────────────
 
   Future<bool> _startScannerWithRetry() async {
-    // ✅ FIX: 3 → 5 percobaan dengan backoff adaptif (makin lama makin
-    // panjang, sampai 1.5 detik), supaya kamera yang baru saja dilepas
-    // sesi lain (foto/video) sempat benar-benar bebas sebelum kita coba
-    // start() lagi.
     for (int i = 0; i < 5; i++) {
       try {
         if (!_isScannerRunning) {
-          // Fallback: kalau start() gagal karena permission berubah
-          // (misalnya user cabut izin lewat pengaturan sistem lalu
-          // kembali), minta ulang izinnya di sini juga.
           final cameraStatus = await Permission.camera.status;
           if (!cameraStatus.isGranted) {
             final result = await Permission.camera.request();
@@ -324,13 +308,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     return false;
   }
 
-  /// ✅ FIX: dipanggil setelah kembali dari PhotoScanScreen/VideoScanScreen.
-  /// Kamera fisik sempat "direbut" sesi lain (CameraController in-app untuk
-  /// foto, kamera native OS untuk video) — instance MobileScannerController
-  /// lama bisa jadi rusak permanen dan start() berikutnya gagal terus meski
-  /// sudah di-retry. Solusinya: buang controller lama, buat instance baru,
-  /// dan ganti key widget MobileScanner supaya platform view kamera
-  /// di-mount ulang dari nol, bukan cuma reassign controller ke view lama.
   Future<void> _recreateScannerController() async {
     final oldController = _scannerController;
     try {
@@ -352,7 +329,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   }
 
   Future<void> _resumeScanning() async {
-    // ✅ FIX: Jangan resume jika ada active scan
     if (_activeScanVN.value != null) {
       debugPrint('⚠️ Resume skipped: active scan exists');
       return;
@@ -372,7 +348,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
 
     _resumeScheduled = true;
     bool started = false;
-    String? errorMsg;
 
     try {
       started = await _startScannerWithRetry();
@@ -404,7 +379,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     } else {
       _scanning = false;
       debugPrint('⚠️ Scanner failed to resume, state: $_scannerState');
-      setState(() {}); // trigger rebuild to show error UI
+      setState(() {});
     }
   }
 
@@ -611,26 +586,14 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
 
   void _toggleTorch() {
     try {
-      if (_scannerController.value.torchState != null) {
-        _scannerController.toggleTorch();
-        debugPrint('✅ Torch toggled');
-      } else {
-        debugPrint('⚠️ Device does not support torch');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Device tidak mendukung lampu sentuh'),
-              duration: Duration(seconds: 1),
-            ),
-          );
-        }
-      }
+      _scannerController.toggleTorch();
+      debugPrint('✅ Torch toggled');
     } catch (e) {
-      debugPrint('⚠️ Error toggling torch: $e');
+      debugPrint('⚠️ Device does not support torch: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Gagal mengaktifkan lampu sentuh'),
+            content: Text('Device tidak mendukung lampu sentuh'),
             duration: Duration(seconds: 1),
           ),
         );
@@ -775,7 +738,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       ),
     ).whenComplete(() {
       _unlockNavigation();
-      // ✅ Hanya resume jika tidak ada active scan
       if (!_manualFlowBusy && !_processingScan && _activeScanVN.value == null && mounted) {
         _resumeScanning();
       }
@@ -878,7 +840,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     } finally {
       if (!reopenedManualInput) {
         _manualFlowBusy = false;
-        // ✅ Hanya resume jika tidak ada active scan
         if (mounted && !_processingScan && _activeScanVN.value == null) {
           await _resumeScanning();
         }
@@ -1001,9 +962,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           builder: (_) => PhotoScanScreen(
             barcode: barcode,
             entryId: entryId,
-            // ✅ Ambil beberapa foto dulu (masing-masing dikonfirmasi di
-            // preview), baru disimpan semuanya sekaligus dengan satu kali
-            // tekan tombol "Simpan Semua" — bukan simpan per-foto lagi.
             batchMode: true,
           ),
         ),
@@ -1030,8 +988,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       _unlockNavigation();
       if (mounted) {
         _scannerState = _ScannerState.paused;
-        // ✅ FIX: recreate, bukan sekadar resume — kamera fisik sempat
-        // dipakai CameraController in-app di PhotoScanScreen.
         await _recreateScannerController();
       }
     }
@@ -1080,8 +1036,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       _unlockNavigation();
       if (mounted) {
         _scannerState = _ScannerState.paused;
-        // ✅ FIX: recreate, bukan sekadar resume — kamera fisik sempat
-        // dipakai kamera native OS (image_picker) di VideoScanScreen.
         await _recreateScannerController();
       }
     }
@@ -1161,16 +1115,10 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         children: [
           RepaintBoundary(
             child: MobileScanner(
-              // ✅ FIX: key berubah tiap _recreateScannerController() →
-              // memaksa platform view kamera di-mount ulang dari nol.
               key: _scannerKey,
               controller: _scannerController,
               onDetect: _onDetect,
-              // ✅ FIX: dulu tanpa errorBuilder, package mobile_scanner
-              // cuma nampilin layar hitam + ikon "!" statis tanpa cara
-              // recover selain force-close app. Sekarang ada tombol
-              // untuk recreate controller langsung dari sini.
-              errorBuilder: (context, error) {
+              errorBuilder: (context, error, child) {
                 debugPrint('❌ MobileScanner errorBuilder: ${error.errorCode} ${error.errorDetails}');
                 return Container(
                   color: Colors.black,
@@ -1205,16 +1153,15 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
               },
             ),
           ),
-          // ✅ FIX: Error UI jika kamera gagal menyala
           if (_scannerState == _ScannerState.error && _scannerErrorMessage != null)
             Center(
               child: Container(
                 margin: const EdgeInsets.all(24),
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.85),
+                  color: Colors.black.withValues(alpha: 0.85),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppTheme.error.withOpacity(0.4)),
+                  border: Border.all(color: AppTheme.error.withValues(alpha: 0.4)),
                 ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -1270,7 +1217,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
                               decoration: BoxDecoration(
                                 color: const Color(0xAA000000),
                                 borderRadius: BorderRadius.circular(20),
-                                border: Border.all(color: AppTheme.accent.withOpacity(0.4)),
+                                border: Border.all(color: AppTheme.accent.withValues(alpha: 0.4)),
                               ),
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
@@ -1309,9 +1256,9 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
                         margin: const EdgeInsets.symmetric(horizontal: 20),
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                         decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.75),
+                          color: Colors.black.withValues(alpha: 0.75),
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: AppTheme.accent.withOpacity(0.4)),
+                          border: Border.all(color: AppTheme.accent.withValues(alpha: 0.4)),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
@@ -1372,7 +1319,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
                         ),
                       ),
                     ),
-                  // ─── TOMBOL CLOSE ─────────────────────────────
                   if (active != null)
                     Positioned(
                       top: 12,
@@ -1446,9 +1392,9 @@ class _ManualInputDialog extends StatefulWidget {
   final Future<void> Function(String code) onSubmitted;
 
   const _ManualInputDialog({
+    Key? key,
     required this.onSubmitted,
-    super.key,
-  });
+  }) : super(key: key);
 
   @override
   State<_ManualInputDialog> createState() => _ManualInputDialogState();
@@ -1661,7 +1607,7 @@ class _ScanFramePainter extends CustomPainter {
       ..fillType = PathFillType.evenOdd;
     canvas.drawPath(
       overlayPath,
-      Paint()..color = Colors.black.withOpacity(0.35),
+      Paint()..color = Colors.black.withValues(alpha: 0.35),
     );
 
     const bracketLen = 28.0;
