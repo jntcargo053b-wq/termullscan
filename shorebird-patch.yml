@@ -1,0 +1,78 @@
+name: Shorebird Patch (OTA - tanpa install ulang)
+
+# Pakai workflow ini untuk SEMUA perubahan kode Dart biasa (bugfix, logic,
+# UI, dsb) SETELAH rilis pertama (shorebird-release.yml) sudah terpasang
+# di HP user.
+#
+# Patch ini akan otomatis terdownload & terpasang sendiri oleh app yang
+# sudah berjalan di HP user (dicek tiap startup lewat UpdateService),
+# TANPA user perlu download/install ulang APK — cukup tutup & buka lagi
+# aplikasinya setelah patch selesai terunduh.
+#
+# ⚠️ JANGAN pakai ini kalau perubahan menyentuh:
+#   - folder android/ (native code, Gradle, manifest)
+#   - dependency/plugin baru di pubspec.yaml
+#   - asset baru/berubah (gambar, font, dll)
+# Untuk perubahan itu, pakai "Shorebird Release (Full APK)" sebagai gantinya.
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: >
+          Versi rilis yang mau di-patch, contoh: 1.0.0+1.
+          Isi "latest" untuk otomatis pakai rilis terakhir.
+        required: true
+        default: 'latest'
+
+env:
+  SHOREBIRD_TOKEN: ${{ secrets.SHOREBIRD_TOKEN }}
+
+jobs:
+  patch:
+    defaults:
+      run:
+        shell: bash
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📚 Git Checkout
+        uses: actions/checkout@v4
+
+      - name: 🐦 Setup Shorebird
+        uses: shorebirdtech/setup-shorebird@v1
+        with:
+          cache: true
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # Signing tetap wajib disiapkan di runner ini supaya
+      # `shorebird patch android` bisa build & verifikasi artefaknya.
+      - name: Configure release signing
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/termulscan-release.jks
+          {
+            echo "storeFile=termulscan-release.jks"
+            echo "storePassword=$ANDROID_STORE_PASSWORD"
+            echo "keyAlias=$ANDROID_KEY_ALIAS"
+            echo "keyPassword=$ANDROID_KEY_PASSWORD"
+          } > android/key.properties
+
+      - name: 🚀 Shorebird Patch (Android)
+        id: shorebird-patch
+        uses: shorebirdtech/shorebird-patch@v1
+        with:
+          platform: android
+          release-version: ${{ github.event.inputs.release_version }}
+
+      - name: 📝 Nomor patch yang baru dipublish
+        run: echo "Patch number -> ${{ steps.shorebird-patch.outputs.patch-number }}"

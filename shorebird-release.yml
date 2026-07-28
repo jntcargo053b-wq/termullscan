@@ -1,0 +1,74 @@
+name: Shorebird Release (Full APK)
+
+# Jalankan workflow ini kalau:
+# - Ini rilis PERTAMA kali pakai Shorebird, ATAU
+# - Ada perubahan NATIVE (folder android/, plugin baru di pubspec.yaml,
+#   permission baru, asset baru/berubah) — karena hal-hal ini TIDAK BISA
+#   di-patch, wajib rilis APK baru + user install ulang sekali ini saja.
+#
+# Setelah rilis ini terpasang di HP user, perubahan Dart-only berikutnya
+# cukup pakai workflow "Shorebird Patch (OTA)" — user TIDAK perlu install
+# ulang APK lagi.
+on:
+  workflow_dispatch:
+
+env:
+  SHOREBIRD_TOKEN: ${{ secrets.SHOREBIRD_TOKEN }}
+
+jobs:
+  release:
+    defaults:
+      run:
+        shell: bash
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📚 Git Checkout
+        uses: actions/checkout@v4
+
+      - name: 🐦 Setup Shorebird
+        uses: shorebirdtech/setup-shorebird@v1
+        with:
+          cache: true
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # Sama seperti build.yml: keystore rilis wajib ada, kalau tidak
+      # APK yang dihasilkan unsigned dan tidak bisa diinstall.
+      - name: Configure release signing
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/termulscan-release.jks
+          {
+            echo "storeFile=termulscan-release.jks"
+            echo "storePassword=$ANDROID_STORE_PASSWORD"
+            echo "keyAlias=$ANDROID_KEY_ALIAS"
+            echo "keyPassword=$ANDROID_KEY_PASSWORD"
+          } > android/key.properties
+
+      - name: 🚀 Shorebird Release (Android)
+        id: shorebird-release
+        uses: shorebirdtech/shorebird-release@v1
+        with:
+          platform: android
+
+      - name: 📝 Versi rilis yang baru dibuat
+        run: echo "Release version -> ${{ steps.shorebird-release.outputs.release-version }}"
+
+      # APK hasil rilis ini yang harus dibagikan manual (WA/Drive/dll) ke
+      # user untuk instalasi PERTAMA kalinya dengan Shorebird aktif.
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: termulscan-shorebird-release-apk
+          path: build/app/outputs/flutter-apk/app-release*.apk
+          retention-days: 30

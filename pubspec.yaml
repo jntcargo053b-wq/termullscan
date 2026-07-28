@@ -54,6 +54,13 @@ dependencies:
   flutter_foreground_task: ^9.2.2
   flutter_local_notifications: ^17.2.2
 
+  # ─── OTA UPDATE (SHOREBIRD CODE PUSH) ────────────────────
+  # Paket ini OPSIONAL secara runtime: kalau APK di-build pakai `flutter
+  # build` biasa (bukan `shorebird build`/`shorebird release`), updater akan
+  # otomatis melaporkan "tidak tersedia" — tidak crash, tidak ada efek apa pun.
+  # Baru aktif kalau APK dirilis lewat CLI `shorebird`.
+  shorebird_code_push: ^2.0.4
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
