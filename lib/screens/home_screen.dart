@@ -124,7 +124,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
               ).animate().fadeIn(delay: 100.ms),
               const Gap(8),
-              // ─── STORAGE INDICATOR ────────────────────────
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
@@ -153,12 +152,11 @@ class _HomeScreenState extends State<HomeScreen> {
                       title: 'Scan Foto',
                       subtitle: 'Scan barcode → kamera foto langsung terbuka',
                       onTap: () async {
+                        // 🔴 FIX: hapus parameter mode (tidak dibutuhkan)
                         final result = await Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) => const BarcodeScanScreen(
-                              mode: ScanCaptureMode.photo,
-                            ),
+                            builder: (_) => const BarcodeScanScreen(),
                           ),
                         );
                         if (result != null) await _loadData();
@@ -170,12 +168,11 @@ class _HomeScreenState extends State<HomeScreen> {
                       title: 'Scan Video',
                       subtitle: 'Scan barcode → kamera video langsung terbuka',
                       onTap: () async {
+                        // 🔴 FIX: hapus parameter mode
                         final result = await Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) => const BarcodeScanScreen(
-                              mode: ScanCaptureMode.video,
-                            ),
+                            builder: (_) => const BarcodeScanScreen(),
                           ),
                         );
                         if (result != null) await _loadData();
@@ -187,7 +184,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       title: 'Ambil Foto',
                       subtitle: 'Foto langsung dengan watermark',
                       onTap: () async {
-                        // 🔥 FIXED: PhotoScanScreen butuh parameter
                         final result = await Navigator.push(
                           context,
                           MaterialPageRoute(
@@ -217,7 +213,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       },
                     ),
                     const Gap(24),
-                    // ─── BACKUP & RESTORE BUTTONS ─────────────
                     Row(
                       children: [
                         Expanded(
