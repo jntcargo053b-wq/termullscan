@@ -617,10 +617,36 @@ class PodLocationService {
   void _scheduleStale() {
     _staleTimer?.cancel();
     _staleTimer = Timer(_staleAfter, () {
-      if (currentState.mode == PodGpsMode.locked) {
-        _emit(currentState.copyWith(mode: PodGpsMode.stale));
-        if (kDebugMode) debugPrint('PodLocationService: lock stale after $_staleAfter');
+      if (currentState.mode != PodGpsMode.locked) return;
+
+      // 🟡 FIX BATCH GPS WAIT: dulu lock langsung digugurkan ke `stale`
+      // begitu `_staleAfter` (30s) lewat, TANPA peduli apakah sesi
+      // capture (batch foto/video untuk satu barcode) masih berjalan.
+      // Akibatnya kalau jeda antar-foto dalam satu batch >30s (wajar di
+      // lapangan: jalan ke barang berikutnya, atur posisi, dst), evidence
+      // gugur → foto berikutnya masuk `_startAcquire()` dari nol lagi
+      // (lock GPS ulang + geocode ulang) → `awaitEvidenceReady()` di
+      // `_applyWatermark` nunggu penuh sampai 15 detik lagi, TIAP foto.
+      //
+      // Selama masih ada owner aktif (PhotoScanScreen/VideoScanScreen
+      // belum dispose — artinya batch untuk barcode ini belum selesai),
+      // evidence yang sudah didapat (lock + alamat) TETAP dipertahankan
+      // dan dipakai ulang langsung, tanpa re-acquire/re-geocode. Begitu
+      // owner terakhir release (`releaseAfterCapture`), stale timer akan
+      // dijadwalkan ulang dari titik itu seperti biasa — jadi evidence
+      // tetap segar untuk barcode berikutnya.
+      if (_captureOwners.isNotEmpty) {
+        if (kDebugMode) {
+          debugPrint(
+            'PodLocationService: stale ditahan — ${_captureOwners.length} '
+            'owner capture masih aktif, evidence dipakai ulang',
+          );
+        }
+        return;
       }
+
+      _emit(currentState.copyWith(mode: PodGpsMode.stale));
+      if (kDebugMode) debugPrint('PodLocationService: lock stale after $_staleAfter');
     });
   }
 
