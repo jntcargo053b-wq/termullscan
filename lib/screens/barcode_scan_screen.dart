@@ -637,13 +637,120 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
 
   /// Simpan barcode ke DB lalu LANGSUNG buka kamera (foto/video sesuai mode) —
   /// tanpa kartu nomor hasil scan dan tanpa tombol yang harus di-tap manual.
+  ///
+  /// 🟡 FIX DUPLIKAT VIA KAMERA: sebelum ini, jalur kamera (`_onDetect` →
+  /// `_handleBarcodeDetected`) tidak pernah cek duplikat sama sekali —
+  /// beda dengan input manual (`_confirmAndProcessManualCode`) yang sudah
+  /// cek lebih dulu. Akibatnya barcode yang sama bisa kescan berkali-kali
+  /// (mis. sisa stiker resi lama ketempel di kardus lain, atau operator
+  /// scan barang yang sama dua kali tanpa sadar) dan menghasilkan entry
+  /// ganda tanpa peringatan apa pun. Sekarang barcode dicek dulu — kalau
+  /// duplikat, tampilkan dialog konfirmasi (persis pola dialog manual)
+  /// SEBELUM entry dibuat & kamera dibuka; kalau tidak duplikat, jalan
+  /// seperti biasa tanpa jeda/dialog sama sekali.
   Future<void> _handleBarcodeDetected({
     required String code,
     required String format,
   }) async {
+    final shouldProceed = await _confirmIfDuplicateBarcode(code);
+    if (!shouldProceed) {
+      _cancelDetectedScan();
+      return;
+    }
+
     final entryId = await _processDetectedBarcode(code: code, format: format);
     if (entryId != null && mounted) {
       await _autoNavigateToCapture(barcode: code, entryId: entryId);
+    }
+  }
+
+  /// Return `true` kalau boleh lanjut (tidak duplikat, atau user pilih
+  /// "Tetap Lanjut"). Selama dialog ini terbuka, kamera TIDAK dihentikan
+  /// (sama seperti alur manual) — deteksi lanjutan sudah otomatis
+  /// terabaikan karena `_scanning == false`/`_processingScan == true`.
+  Future<bool> _confirmIfDuplicateBarcode(String code) async {
+    final isDuplicate = await _isDuplicateBarcodeToday(code);
+    if (!isDuplicate) return true;
+    if (!mounted) return false;
+
+    // Watchdog processing (20s) ditahan dulu selama user mikir di dialog —
+    // supaya tidak ke-reset paksa di tengah keputusan.
+    _processingWatchdog?.cancel();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppTheme.surface,
+        title: const Text(
+          '⚠️ Barcode Sudah Pernah Discan',
+          style: TextStyle(color: Colors.white, fontSize: 16),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.only(bottom: 10),
+              child: Text(
+                'Kode ini sudah tercatat hari ini. Pastikan ini bukan barang '
+                'yang sama (mis. sisa stiker resi lama) sebelum lanjut.',
+                style: TextStyle(color: AppTheme.error, fontSize: 12.5),
+              ),
+            ),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF2A2A2A),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppTheme.error),
+              ),
+              child: Text(
+                code,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Batalkan', style: TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Tetap Lanjut', style: TextStyle(color: AppTheme.error)),
+          ),
+        ],
+      ),
+    );
+
+    return confirmed == true;
+  }
+
+  /// Batalkan scan yang sedang diproses (user pilih "Batalkan" di dialog
+  /// duplikat) — bersihkan state `_ActiveScan`/restoration lalu buka
+  /// gerbang scanning lagi. Kamera sendiri tidak pernah dihentikan
+  /// selama dialog tadi, jadi cukup resume, tanpa perlu restart kamera.
+  void _cancelDetectedScan() {
+    _processingWatchdog?.cancel();
+    _processingScan = false;
+    _scannerState = _ScannerState.paused;
+    _activeScanVN.value = null;
+    _activeBarcodeRestorer.value = '';
+    _activeEntryIdRestorer.value = '';
+    _activePhotoCountRestorer.value = 0;
+    _activeVideoCountRestorer.value = 0;
+    if (mounted) {
+      setState(() {});
+      unawaited(_resumeScanning());
     }
   }
 
@@ -746,23 +853,28 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     });
   }
 
-  Future<void> _confirmAndProcessManualCode(String code) async {
-    if (!mounted) return;
-
-    bool reopenedManualInput = false;
-
-    bool isDuplicate = false;
+  /// Cek apakah kode ini sudah pernah tercatat hari ini. Dipakai bareng
+  /// oleh alur input manual dan alur kamera supaya definisi "duplikat"
+  /// konsisten di kedua tempat.
+  Future<bool> _isDuplicateBarcodeToday(String code) async {
     try {
       final existing = await _storage.getEntries(
         searchQuery: code,
         period: 'Hari ini',
         limit: 5,
       );
-      isDuplicate = existing.any((e) => e.value == code);
+      return existing.any((e) => e.value == code);
     } catch (e) {
-      debugPrint('⚠️ Gagal cek duplikat kode manual: $e');
-      isDuplicate = false;
+      debugPrint('⚠️ Gagal cek duplikat kode "$code": $e');
+      return false;
     }
+  }
+
+  Future<void> _confirmAndProcessManualCode(String code) async {
+    if (!mounted) return;
+
+    bool reopenedManualInput = false;
+    final isDuplicate = await _isDuplicateBarcodeToday(code);
 
     if (!mounted) return;
     try {
