@@ -152,7 +152,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       title: 'Scan Foto',
                       subtitle: 'Scan barcode → kamera foto langsung terbuka',
                       onTap: () async {
-                        // 🔴 FIX: hapus parameter mode (tidak dibutuhkan)
                         final result = await Navigator.push(
                           context,
                           MaterialPageRoute(
@@ -168,7 +167,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       title: 'Scan Video',
                       subtitle: 'Scan barcode → kamera video langsung terbuka',
                       onTap: () async {
-                        // 🔴 FIX: hapus parameter mode
                         final result = await Navigator.push(
                           context,
                           MaterialPageRoute(
@@ -313,7 +311,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           fontSize: 13,
                         ),
                       ),
-                    ],
+                    ),
                   ),
                 ),
                 Icon(Icons.chevron_right, color: AppTheme.textSecondary),
@@ -324,4 +322,4 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
-}
+                }
