@@ -1,23 +1,15 @@
 // lib/screens/barcode_scan_screen.dart
 // ============================================================================
-// VERSI FINAL (SETELAH REVIEW) – PERBAIKAN SEMUA POIN YANG DISARANKAN
-// ============================================================================
-//
-// Perbaikan dari versi sebelumnya:
-//  1. _resumeScheduled di-reset setelah start berhasil (agar resume berikutnya bisa jalan)
-//  2. _processingScan diganti dengan _processingCount (counter, lebih robust)
-//  3. _CancelToken memiliki whenCancelled untuk mendukung Future.any()
-//  4. Wrapper tidak menampilkan error; exception dibiarkan keluar, caller menangani sendiri
-//  5. Manual flow tetap bersih tanpa polling
-//
+// VERSI FINAL – SIAP PAKAI (tanpa error analyzer)
 // ============================================================================
 
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 // ============================================================================
-// TOKEN PEMBATALAN (DENGAN whenCancelled)
+// TOKEN PEMBATALAN
 // ============================================================================
 
 class _CancelToken {
@@ -50,20 +42,16 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   );
 
   // ─── STATE VARIABLES ──────────────────────────────────────────
-  // Lock processing
   bool _isProcessingLocked = false;
   Completer<void>? _processingCompleter;
   _CancelToken? _cancelToken;
 
-  // Resume scanning (race condition guard)
   bool _resumeScheduled = false;
 
-  // Manual flow & navigation
   bool _manualFlowBusy = false;
-  int _processingCount = 0; // 🔴 counter, bukan boolean
+  int _processingCount = 0;
   bool _isNavigating = false;
 
-  // Barcode terakhir (untuk UI feedback)
   final ValueNotifier<BarcodeCapture?> _activeScanVN = ValueNotifier(null);
 
   // ─── LIFECYCLE ────────────────────────────────────────────────
@@ -101,20 +89,14 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     }
   }
 
-  void _stopScanner() {
-    _scannerController.stop();
-  }
-
-  // ─── RESUME SCANNING (RACE CONDITION FIX + RESET FLAG) ──────
+  // ─── RESUME SCANNING (RACE CONDITION FIX) ────────────────────
 
   Future<void> _resumeScanning() async {
-    // 🔴 Guard sinkron – cegah TOCTOU
     if (_resumeScheduled) {
       debugPrint('⚠️ Resume already scheduled, skipping');
       return;
     }
 
-    // 🔴 Flag HARUS di-set SEBELUM await pertama
     _resumeScheduled = true;
 
     final cameraStatus = await Permission.camera.status;
@@ -124,32 +106,22 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       return;
     }
 
-    bool started = false;
     try {
       await _scannerController.start();
-      started = true;
       debugPrint('✅ Scanner resumed');
     } catch (e) {
       debugPrint('❌ Resume start error: $e');
       Future.delayed(const Duration(seconds: 1), _startScannerWithRetry);
     } finally {
-      // 🔴 RESET FLAG jika berhasil atau gagal
-      // Jika berhasil, kita reset agar resume berikutnya bisa dipanggil.
-      // Jika gagal, kita reset agar percobaan ulang bisa dilakukan.
       _resumeScheduled = false;
     }
   }
 
-  // ─── PROCESSING LOCK (HYBRID: CANCEL TOKEN + TIMEOUT) ──────
+  // ─── PROCESSING LOCK ──────────────────────────────────────────
 
-  /// Jalankan [action] dengan lock eksklusif.
-  /// Timeout 30 detik → kirim sinyal batal ke action (cooperative).
-  /// Jika lock masih terkunci setelah 60 detik, force unlock (last resort).
-  /// Exception yang terjadi di dalam action akan dilempar ke caller.
   Future<void> _executeWithProcessingLock(
     Future<void> Function(_CancelToken token) action,
   ) async {
-    // ── 1. Jika lock sedang aktif, tunggu dengan batas waktu ──
     if (_isProcessingLocked) {
       debugPrint('⏳ Menunggu lock...');
       final waitingOn = _processingCompleter;
@@ -157,7 +129,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         try {
           await waitingOn.future.timeout(const Duration(seconds: 60));
         } on TimeoutException catch (_) {
-          // Last resort: force unlock kalau benar-benar deadlock
           debugPrint('🚨 Force unlock setelah 60s (deadlock terdeteksi)');
           _cancelToken?.cancel();
           _isProcessingLocked = false;
@@ -166,14 +137,12 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         }
       }
 
-      // Kalau masih terkunci (re-acquired oleh caller lain), skip aksi ini
       if (_isProcessingLocked) {
         debugPrint('⚠️ Lock diambil alih, aksi dibatalkan');
         return;
       }
     }
 
-    // ── 2. Ambil lock untuk aksi ini ──
     final token = _CancelToken();
     _cancelToken = token;
     _isProcessingLocked = true;
@@ -182,19 +151,16 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     debugPrint('🔒 Lock acquired');
 
     try {
-      // Jalankan action dengan timeout 30 detik
       await action(token).timeout(
         const Duration(seconds: 30),
         onTimeout: () {
           debugPrint('⏰ Timeout 30s, kirim sinyal batal...');
-          token.cancel(); // ⛔ Beri sinyal ke action
-          // Beri waktu 200ms agar action sempat cleanup (jika ada)
+          token.cancel();
           return Future.delayed(const Duration(milliseconds: 200));
         },
       );
       debugPrint('✅ Processing selesai');
     } finally {
-      // ── 3. Lepas lock dengan aman ──
       _isProcessingLocked = false;
       _processingCompleter?.complete();
       _processingCompleter = null;
@@ -203,7 +169,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     }
   }
 
-  // ─── PROSES BARCODE (DIPANGGIL SAAT DETEKSI) ────────────────
+  // ─── PROSES BARCODE ──────────────────────────────────────────
 
   void _processBarcode(String code) {
     if (_isNavigating || _manualFlowBusy) {
@@ -212,9 +178,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     }
 
     _executeWithProcessingLock((token) async {
-      _processingCount++; // 🔴 naikkan counter
+      _processingCount++;
       try {
-        // 🔴 Step 1: Validasi lokal (cepat)
         final valid = await _validateBarcodeLocally(code);
         if (token.isCompleted) return;
 
@@ -223,7 +188,6 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           return;
         }
 
-        // 🔴 Step 2: Cek duplikat
         final existing = await _checkExistingEntry(code);
         if (token.isCompleted) return;
 
@@ -232,29 +196,22 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           return;
         }
 
-        // 🔴 Step 3: Simpan ke Firebase / Storage (LAMBAT)
-        // Kita bisa memanfaatkan whenCancelled untuk menghentikan lebih cepat
-        // Contoh: await Future.any([_saveEntryToFirebase(code), token.whenCancelled]);
-        // Tapi karena save tidak bisa dibatalkan, kita tetap await biasa,
-        // lalu cek token setelah selesai.
         final entry = await _saveEntryToFirebase(code);
         if (token.isCompleted) {
           debugPrint('⛔ Hasil Firebase diabaikan (cancelled)');
           return;
         }
 
-        // 🔴 Step 4: Update UI
         await _updateUIAfterSave(entry);
       } finally {
-        _processingCount--; // 🔴 turunkan counter
+        _processingCount--;
       }
     }).catchError((e) {
-      // Tangani error dari processing
       _showError('Gagal memproses barcode: $e');
     });
   }
 
-  // ─── MANUAL INPUT FLOW ────────────────────────────────────────
+  // ─── MANUAL INPUT ─────────────────────────────────────────────
 
   void _showManualInput() {
     if (_manualFlowBusy) return;
@@ -323,7 +280,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     }
   }
 
-  // ─── UI BUILD ──────────────────────────────────────────────────
+  // ─── UI ───────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -432,7 +389,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   }
 
   // ==========================================================================
-  // 🔴 PLACEHOLDER METHODS – GANTI DENGAN IMPLEMENTASI NYATA
+  // PLACEHOLDER – GANTI DENGAN IMPLEMENTASI NYATA
   // ==========================================================================
 
   Future<bool> _validateBarcodeLocally(String code) async {
