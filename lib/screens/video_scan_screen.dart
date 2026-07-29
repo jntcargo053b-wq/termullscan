@@ -531,23 +531,60 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
   }
 
   // ─── ATTACH LOCATION UPDATE ────────────────────────────────
-
+  //
+  // 🟡 FIX FIRE-AND-FORGET: sebelumnya cuma dicoba SEKALI — kalau
+  // `awaitEvidenceReady` timeout atau `updateLocation` error, entry ini
+  // punya latitude/longitude kosong SELAMANYA tanpa retry maupun
+  // pemberitahuan (dipanggil lewat `unawaited(...)`, error cuma nyangkut
+  // di debugPrint). Sekarang dicoba ulang sampai 3x dengan jeda, dan
+  // kalau tetap gagal, operator diberi tahu lewat SnackBar.
   Future<void> _attachLocationUpdate(String entryId) async {
-    try {
-      final locState = await PodLocationService.instance.awaitEvidenceReady(
-        timeout: const Duration(seconds: 15),
+    const maxAttempts = 3;
+    const retryDelays = [Duration(seconds: 3), Duration(seconds: 6)];
+
+    for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        final locState = await PodLocationService.instance.awaitEvidenceReady(
+          timeout: const Duration(seconds: 15),
+        );
+        if (locState != null) {
+          await _storage.updateLocation(
+            entryId,
+            latitude: locState.lat!,
+            longitude: locState.lon!,
+            locationName: locState.evidenceAddress.isNotEmpty
+                ? locState.evidenceAddress
+                : null,
+          );
+          if (attempt > 1) {
+            debugPrint('✅ Lokasi ter-attach di percobaan ke-$attempt untuk $entryId');
+          }
+          return;
+        }
+        debugPrint('⚠️ Percobaan $attempt/$maxAttempts: evidence GPS belum siap ($entryId)');
+      } catch (e) {
+        debugPrint('❌ Percobaan $attempt/$maxAttempts _attachLocationUpdate($entryId): $e');
+      }
+
+      if (attempt < maxAttempts) {
+        await Future.delayed(retryDelays[attempt - 1]);
+      }
+    }
+
+    debugPrint(
+      '❌ GAGAL TOTAL: lokasi tidak ter-attach untuk $entryId setelah $maxAttempts percobaan',
+    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '⚠️ GPS gagal didapat untuk barcode "${widget.barcode ?? entryId}". '
+            'Video tetap tersimpan, tapi tanpa lokasi.',
+          ),
+          backgroundColor: AppTheme.error,
+          duration: const Duration(seconds: 4),
+        ),
       );
-      if (locState == null) return;
-      await _storage.updateLocation(
-        entryId,
-        latitude: locState.lat!,
-        longitude: locState.lon!,
-        locationName: locState.evidenceAddress.isNotEmpty
-            ? locState.evidenceAddress
-            : null,
-      );
-    } catch (e) {
-      debugPrint('❌ Error _attachLocationUpdate: $e');
     }
   }
 
