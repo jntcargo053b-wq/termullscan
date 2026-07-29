@@ -161,11 +161,46 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     WidgetsBinding.instance.addObserver(this);
     _requestPermissions();
     _startScannerWatchdog();
+    _wmSettings.addListener(_onWatermarkSettingsChanged);
+    _warmUpGpsIfEnabled();
+  }
+
+  // ─── GPS WARM-UP ──────────────────────────────────────────
+  //
+  // 🔴 FIX GPS WARM-UP: sebelumnya `acquireForCapture` baru dipanggil di
+  // dalam `_processDetectedBarcode`/`_processManualCode` — TEPAT SETELAH
+  // barcode terbaca. Padahal operator biasanya butuh beberapa detik untuk
+  // mengarahkan kamera & mendapat barcode yang valid; waktu itu terbuang
+  // percuma kalau GPS baru mulai "start from zero" persis di momen
+  // barcode terbaca. Kalau operator sedang bergerak cepat (jalan sambil
+  // scan), sample GPS di awal proses cenderung lebih noise/kurang
+  // stabil — makin cepat GPS mulai memanaskan diri, makin besar peluang
+  // evidence sudah matang begitu benar-benar dibutuhkan sebagai bukti.
+  //
+  // Warm-up sekarang dimulai begitu layar scanner ini dibuka (owner =
+  // this). `dispose()` di bawah sudah lama punya `releaseAfterCapture
+  // (owner: this)` — tapi tanpa `acquireForCapture` yang sepasang,
+  // release itu sebelumnya tidak pernah benar-benar melepas apa pun.
+
+  void _warmUpGpsIfEnabled() {
+    if (!_wmSettings.gpsWatermarkEnabled) return;
+    unawaited(PodLocationService.instance.acquireForCapture(owner: this));
+  }
+
+  /// Kalau user baru menyalakan watermark GPS lewat bottom sheet
+  /// pengaturan SELAGI layar scanner ini masih terbuka, langsung mulai
+  /// warm-up juga — tanpa ini, warm-up baru akan terjadi di scan
+  /// berikutnya (barcode pertama tetap kena tunggu penuh).
+  void _onWatermarkSettingsChanged() {
+    if (_wmSettings.gpsWatermarkEnabled) {
+      unawaited(PodLocationService.instance.acquireForCapture(owner: this));
+    }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _wmSettings.removeListener(_onWatermarkSettingsChanged);
     _debounceTimer?.cancel();
     _processingWatchdog?.cancel();
     _scannerWatchdog?.cancel();
@@ -793,7 +828,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           isManual: false,
         );
         await _storage.add(entry);
-        if (gpsOn) unawaited(_attachLocationUpdate(entry.id));
+        if (gpsOn) unawaited(_attachLocationUpdate(entry.id, codeLabel: code));
 
         if (!mounted) return;
         _scanCountVN.value++;
@@ -1001,7 +1036,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           isManual: true,
         );
         await _storage.add(entry);
-        if (gpsOn) unawaited(_attachLocationUpdate(entry.id));
+        if (gpsOn) unawaited(_attachLocationUpdate(entry.id, codeLabel: code));
 
         if (!mounted) return;
         _scanCountVN.value++;
@@ -1041,23 +1076,66 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   }
 
   // ─── GPS: update entry begitu alamat siap ──────────────────
+  //
+  // 🟡 FIX FIRE-AND-FORGET: sebelumnya method ini cuma dicoba SEKALI —
+  // kalau `awaitEvidenceReady` timeout atau `updateLocation` error, entry
+  // ini akan punya latitude/longitude kosong SELAMANYA tanpa retry
+  // maupun pemberitahuan apa pun (dipanggil lewat `unawaited(...)`,
+  // errornya cuma nyangkut di debugPrint yang tidak pernah dilihat siapa
+  // pun). Untuk aplikasi POD, lokasi adalah bagian penting dari bukti
+  // pengiriman — kegagalan di sini tidak boleh diam-diam. Sekarang:
+  // (1) dicoba ulang sampai 3x dengan jeda antar-percobaan, memberi
+  //     kesempatan tambahan kalau GPS/geocoding cuma lambat sesaat;
+  // (2) kalau tetap gagal setelah semua percobaan, operator diberi tahu
+  //     lewat SnackBar (bukan cuma log) supaya sadar entry ini perlu
+  //     dicek/dilengkapi manual.
+  Future<void> _attachLocationUpdate(String entryId, {String? codeLabel}) async {
+    const maxAttempts = 3;
+    const retryDelays = [Duration(seconds: 3), Duration(seconds: 6)];
 
-  Future<void> _attachLocationUpdate(String entryId) async {
-    try {
-      final locState = await PodLocationService.instance.awaitEvidenceReady(
-        timeout: const Duration(seconds: 15),
+    for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        final locState = await PodLocationService.instance.awaitEvidenceReady(
+          timeout: const Duration(seconds: 15),
+        );
+        if (locState != null) {
+          await _storage.updateLocation(
+            entryId,
+            latitude: locState.lat!,
+            longitude: locState.lon!,
+            locationName: locState.evidenceAddress.isNotEmpty
+                ? locState.evidenceAddress
+                : null,
+          );
+          if (attempt > 1) {
+            debugPrint('✅ Lokasi ter-attach di percobaan ke-$attempt untuk $entryId');
+          }
+          return;
+        }
+        debugPrint('⚠️ Percobaan $attempt/$maxAttempts: evidence GPS belum siap ($entryId)');
+      } catch (e) {
+        debugPrint('❌ Percobaan $attempt/$maxAttempts _attachLocationUpdate($entryId): $e');
+      }
+
+      if (attempt < maxAttempts) {
+        await Future.delayed(retryDelays[attempt - 1]);
+      }
+    }
+
+    debugPrint(
+      '❌ GAGAL TOTAL: lokasi tidak ter-attach untuk $entryId setelah $maxAttempts percobaan',
+    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '⚠️ GPS gagal didapat untuk barcode "${codeLabel ?? entryId}". '
+            'Entry tetap tersimpan, tapi tanpa lokasi.',
+          ),
+          backgroundColor: AppTheme.error,
+          duration: const Duration(seconds: 4),
+        ),
       );
-      if (locState == null) return;
-      await _storage.updateLocation(
-        entryId,
-        latitude: locState.lat!,
-        longitude: locState.lon!,
-        locationName: locState.evidenceAddress.isNotEmpty
-            ? locState.evidenceAddress
-            : null,
-      );
-    } catch (e) {
-      debugPrint('❌ Error _attachLocationUpdate: $e');
     }
   }
 
