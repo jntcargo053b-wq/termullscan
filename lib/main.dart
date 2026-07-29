@@ -12,6 +12,7 @@ import 'services/storage_service.dart';
 import 'services/watermark/watermark_service.dart';
 import 'services/background/video_processing_service.dart';
 import 'services/pod_location_service.dart';
+import 'services/update_service.dart';
 import 'models/scan_entry.dart';
 
 void main() {
@@ -71,6 +72,10 @@ void main() {
         debugPrint('⏱️ Cold start completed in ${elapsed}ms');
 
         unawaited(_preloadWatermarkAfterFirstFrame(watermarkSettings));
+
+        // ─── 7. Cek update OTA (Shorebird) ────────────────────
+        // Non-blocking, no-op kalau APK bukan hasil build shorebird.
+        unawaited(UpdateService.checkOnStartup());
       });
     },
     (error, stack) {
@@ -123,6 +128,7 @@ class TermulScanApp extends StatelessWidget {
     return MaterialApp(
       title: 'TermulScan',
       debugShowCheckedModeBanner: false,
+      scaffoldMessengerKey: UpdateService.messengerKey,
       theme: AppTheme.dark,
       home: const HomeScreen(),
     );

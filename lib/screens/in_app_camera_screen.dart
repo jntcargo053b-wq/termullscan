@@ -487,7 +487,7 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
   Widget _buildRoundIconButton({required IconData icon, required VoidCallback onTap}) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.45),
+        color: Colors.black.withValues(alpha: 0.45),
         shape: BoxShape.circle,
       ),
       child: IconButton(
@@ -508,7 +508,7 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.6),
+              color: Colors.black.withValues(alpha: 0.6),
               borderRadius: BorderRadius.circular(20),
             ),
             child: const Text(

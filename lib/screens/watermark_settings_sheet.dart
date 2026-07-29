@@ -227,10 +227,10 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                             width: 140,
                             padding: const EdgeInsets.all(8),
                             decoration: BoxDecoration(
-                              color: isSelected ? Colors.amber.withOpacity(0.15) : Colors.transparent,
+                              color: isSelected ? Colors.amber.withValues(alpha: 0.15) : Colors.transparent,
                               borderRadius: BorderRadius.circular(12),
                               border: Border.all(
-                                color: isSelected ? Colors.amber : Colors.grey.withOpacity(0.3),
+                                color: isSelected ? Colors.amber : Colors.grey.withValues(alpha: 0.3),
                                 width: isSelected ? 2 : 1,
                               ),
                             ),
@@ -425,7 +425,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                 decoration: BoxDecoration(
                   color: const Color(0xFF2A2A2A),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.grey.withOpacity(0.3)),
+                  border: Border.all(color: Colors.grey.withValues(alpha: 0.3)),
                 ),
                 child: DropdownButton<String>(
                   value: _settings.fontFamily,
@@ -455,7 +455,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                 decoration: BoxDecoration(
                   color: const Color(0xFF2A2A2A),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.grey.withOpacity(0.3)),
+                  border: Border.all(color: Colors.grey.withValues(alpha: 0.3)),
                 ),
                 child: Row(
                   children: [
@@ -544,7 +544,7 @@ class _WatermarkSettingsSheetState extends State<WatermarkSettingsSheet> {
                       onPressed: _resetDefaults,
                       style: OutlinedButton.styleFrom(
                         foregroundColor: Colors.grey,
-                        side: BorderSide(color: Colors.grey.withOpacity(0.3)),
+                        side: BorderSide(color: Colors.grey.withValues(alpha: 0.3)),
                       ),
                       child: const Text('Reset Default'),
                     ),

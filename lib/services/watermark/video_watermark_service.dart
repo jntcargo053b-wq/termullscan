@@ -7,7 +7,6 @@ import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart' show TextPainter, TextSpan, TextStyle;
@@ -63,10 +62,6 @@ class VideoWatermarkService {
   static bool _hwEncoderChecked = false;
   static const int _maxHwFallbackAttempts = 2;
 
-  static const Set<String> _supportedPixelFormats = {
-    'yuv420p', 'yuv422p', 'yuv444p', 'nv12', 'nv21', 'rgb24', 'bgr24',
-  };
-  
   static int _lastMemoryCheck = 0;
   static const int _memoryCheckInterval = 30;
 
@@ -398,7 +393,6 @@ class VideoWatermarkService {
 
     lastError = null;
     String? overlayPath;
-    int overlayW = 0, overlayH = 0;
     int overlayOffsetX = 0, overlayOffsetY = 0;
 
     _isCancelled = false;
@@ -456,8 +450,6 @@ class VideoWatermarkService {
       int ovH = needH + (_internalPadding * 2).ceil();
       ovW = (ovW ~/ 2) * 2;
       ovH = (ovH ~/ 2) * 2;
-      overlayW = ovW;
-      overlayH = ovH;
       debugPrint('🎨 Overlay akan dirender pada ${ovW}x${ovH} '
           '(internal padding: ${_internalPadding}px)');
 

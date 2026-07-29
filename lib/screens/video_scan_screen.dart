@@ -5,7 +5,6 @@ import 'dart:async';
 import 'dart:io';
 import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:gap/gap.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -56,9 +55,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
 
   bool _isRecording = false;
   bool _isProcessing = false;
-  String? _videoPath;
   int? _videoDuration;
-  String? _thumbnailPath;
 
   // ─── LIFECYCLE ──────────────────────────────────────────────
 
@@ -157,7 +154,6 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         final savedPath = await _saveVideo(xfile.path);
         if (savedPath != null) {
           setState(() {
-            _videoPath = savedPath;
             _isRecording = false;
           });
           await _processVideo(savedPath);
@@ -204,9 +200,6 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       if (xfile != null) {
         final savedPath = await _saveVideo(xfile.path);
         if (savedPath != null) {
-          setState(() {
-            _videoPath = savedPath;
-          });
           await _processVideo(savedPath);
         } else {
           setState(() => _isProcessing = false);
@@ -353,10 +346,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
 
         final thumbPath = savedEntry.videoThumbnail;
         if (thumbPath != null) {
-          final generated = await _generateThumbnail(previewPath, thumbPath);
-          if (generated != null && mounted) {
-            setState(() => _thumbnailPath = generated);
-          }
+          await _generateThumbnail(previewPath, thumbPath);
         }
 
         if (videoPath != previewPath) {
@@ -375,7 +365,6 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
 
         if (!mounted) return;
         setState(() {
-          _videoPath = previewPath;
           _isRecording = false;
           _isProcessing = false;
         });
@@ -384,9 +373,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         await _cleanupVideoCandidates({videoPath, previewPath});
         if (!mounted) return;
         setState(() {
-          _videoPath = null;
           _videoDuration = null;
-          _thumbnailPath = null;
           _isRecording = false;
           _isProcessing = false;
         });
@@ -394,9 +381,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
         await _cleanupVideoCandidates({videoPath, previewPath});
         if (mounted) {
           setState(() {
-            _videoPath = null;
             _videoDuration = null;
-            _thumbnailPath = null;
             _isRecording = false;
             _isProcessing = false;
           });
@@ -407,9 +392,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       await _cleanupVideoCandidates({videoPath, previewPath});
       if (mounted) {
         setState(() {
-          _videoPath = null;
           _videoDuration = null;
-          _thumbnailPath = null;
           _isRecording = false;
           _isProcessing = false;
         });
@@ -645,10 +628,10 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
                 width: 120,
                 height: 120,
                 decoration: BoxDecoration(
-                  color: AppTheme.accentOrange.withOpacity(0.1),
+                  color: AppTheme.accentOrange.withValues(alpha: 0.1),
                   shape: BoxShape.circle,
                   border: Border.all(
-                    color: AppTheme.accentOrange.withOpacity(0.4),
+                    color: AppTheme.accentOrange.withValues(alpha: 0.4),
                     width: 2,
                   ),
                 ),
@@ -728,7 +711,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
                   style: OutlinedButton.styleFrom(
                     foregroundColor: AppTheme.accentOrange,
                     side: BorderSide(
-                        color: AppTheme.accentOrange.withOpacity(0.6)),
+                        color: AppTheme.accentOrange.withValues(alpha: 0.6)),
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     textStyle: const TextStyle(fontWeight: FontWeight.w600),
                   ),

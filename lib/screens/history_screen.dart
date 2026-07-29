@@ -2,7 +2,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/history_provider.dart';
-import '../models/scan_entry.dart';
 
 class HistoryScreen extends StatefulWidget {
   @override

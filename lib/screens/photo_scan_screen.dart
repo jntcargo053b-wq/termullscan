@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:gap/gap.dart';
@@ -13,7 +12,6 @@ import '../services/storage_service.dart';
 import '../services/permission_service.dart';
 import '../services/task_queue.dart';
 import '../services/pod_location_service.dart';
-import '../config/app_config.dart';
 import '../theme/app_theme.dart';
 import '../watermark/watermark_renderer.dart';
 import '../watermark/watermark_settings.dart';
@@ -35,10 +33,10 @@ class _CameraIconWidget extends StatelessWidget {
       width: 120,
       height: 120,
       decoration: BoxDecoration(
-        color: AppTheme.accentOrange.withOpacity(0.1),
+        color: AppTheme.accentOrange.withValues(alpha: 0.1),
         shape: BoxShape.circle,
         border: Border.all(
-          color: AppTheme.accentOrange.withOpacity(0.4),
+          color: AppTheme.accentOrange.withValues(alpha: 0.4),
           width: 2,
         ),
       ),
@@ -210,7 +208,7 @@ class _ActionButtonsWidget extends StatelessWidget {
             style: OutlinedButton.styleFrom(
               foregroundColor: AppTheme.accentOrange,
               side: BorderSide(
-                  color: AppTheme.accentOrange.withOpacity(0.6)),
+                  color: AppTheme.accentOrange.withValues(alpha: 0.6)),
               padding: const EdgeInsets.symmetric(vertical: 16),
               textStyle: const TextStyle(fontWeight: FontWeight.w600),
             ),

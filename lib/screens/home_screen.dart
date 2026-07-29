@@ -273,7 +273,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: AppTheme.accentOrange.withOpacity(0.15),
+                    color: AppTheme.accentOrange.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Icon(icon, color: AppTheme.accentOrange, size: 28),

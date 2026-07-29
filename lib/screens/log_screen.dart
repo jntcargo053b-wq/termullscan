@@ -795,7 +795,7 @@ class _LogItem extends StatelessWidget {
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         decoration: BoxDecoration(
-          color: isSelected ? AppTheme.accent.withOpacity(0.1) : AppTheme.surface,
+          color: isSelected ? AppTheme.accent.withValues(alpha: 0.1) : AppTheme.surface,
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
             color: isSelected ? AppTheme.accent : AppTheme.surfaceLight,
@@ -866,7 +866,7 @@ class _LogItem extends StatelessWidget {
                 const Gap(2),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                  decoration: BoxDecoration(color: AppTheme.accent.withOpacity(0.2), borderRadius: BorderRadius.circular(4)),
+                  decoration: BoxDecoration(color: AppTheme.accent.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4)),
                   child: Text('${entry.photoPaths.length}', style: const TextStyle(color: AppTheme.accent, fontSize: 9, fontWeight: FontWeight.w700)),
                 ),
               ],
@@ -888,7 +888,7 @@ class _LogItem extends StatelessWidget {
                       Container(
                         margin: const EdgeInsets.only(right: 4),
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(color: Colors.green.withOpacity(0.2), borderRadius: BorderRadius.circular(4), border: Border.all(color: Colors.green.withOpacity(0.4))),
+                        decoration: BoxDecoration(color: Colors.green.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4), border: Border.all(color: Colors.green.withValues(alpha: 0.4))),
                         child: const Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -901,7 +901,7 @@ class _LogItem extends StatelessWidget {
                     if (entry.isManual)
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(color: AppTheme.accent.withOpacity(0.2), borderRadius: BorderRadius.circular(4), border: Border.all(color: AppTheme.accent.withOpacity(0.4))),
+                        decoration: BoxDecoration(color: AppTheme.accent.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(4), border: Border.all(color: AppTheme.accent.withValues(alpha: 0.4))),
                         child: const Text('Manual', style: TextStyle(color: AppTheme.accent, fontSize: 9, fontWeight: FontWeight.w700)),
                       ),
                     IconButton(icon: const Icon(Icons.delete_outline, color: Colors.grey, size: 18), onPressed: onDelete, tooltip: 'Hapus'),
@@ -989,7 +989,7 @@ class _PhotoPreviewDialogState extends State<_PhotoPreviewDialog> {
         children: [
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(color: Colors.black.withOpacity(0.8), border: Border(bottom: BorderSide(color: AppTheme.surfaceLight))),
+            decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.8), border: Border(bottom: BorderSide(color: AppTheme.surfaceLight))),
             child: Row(
               children: [
                 Expanded(
@@ -1028,7 +1028,7 @@ class _PhotoPreviewDialogState extends State<_PhotoPreviewDialog> {
           ),
           Container(
             padding: const EdgeInsets.symmetric(vertical: 12),
-            decoration: BoxDecoration(color: Colors.black.withOpacity(0.8), border: Border(top: BorderSide(color: AppTheme.surfaceLight))),
+            decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.8), border: Border(top: BorderSide(color: AppTheme.surfaceLight))),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -1224,7 +1224,7 @@ class _VideoPreviewDialogState extends State<_VideoPreviewDialog> {
         children: [
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(color: Colors.black.withOpacity(0.8), border: Border(bottom: BorderSide(color: AppTheme.surfaceLight))),
+            decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.8), border: Border(bottom: BorderSide(color: AppTheme.surfaceLight))),
             child: Row(
               children: [
                 Expanded(
@@ -1245,7 +1245,7 @@ class _VideoPreviewDialogState extends State<_VideoPreviewDialog> {
           ),
           Container(
             padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-            decoration: BoxDecoration(color: Colors.black.withOpacity(0.8), border: Border(top: BorderSide(color: AppTheme.surfaceLight))),
+            decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.8), border: Border(top: BorderSide(color: AppTheme.surfaceLight))),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
