@@ -988,6 +988,16 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           ),
         );
       }
+      // 🔴 FIX ENTRY HANTU: kalau layar kamera ditutup (back sistem,
+      // atau "Selesai"/keluar tanpa pernah ambil apa pun) tanpa pernah
+      // ada foto/video yang ter-attach, entry yang sudah kadung dibuat
+      // di _processDetectedBarcode/_processManualCode akan nyangkut
+      // kosong selamanya di database (muncul di history tanpa media).
+      // Hasil pop dari PhotoScanScreen/VideoScanScreen bentuknya beda-beda
+      // (map count/paths, map error, string 'save'/'retake', atau null
+      // polos dari back), jadi yang paling aman adalah cek ulang entry-nya
+      // langsung dari DB, bukan menebak dari shape hasil pop.
+      await _cleanupIfEmptyEntry(entryId);
     } catch (e) {
       debugPrint('❌ Error navigasi otomatis ke kamera: $e');
     } finally {
@@ -1001,6 +1011,30 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         _scannerState = _ScannerState.paused;
         await _recreateScannerController();
       }
+    }
+  }
+
+  /// Hapus entry yang barusan dibuat kalau ternyata tidak ada foto/video
+  /// yang pernah ter-attach ke dalamnya (imagePath & videoPath kosong).
+  /// Aman dipanggil kapan saja: kalau entry sudah tidak ada (mis. sudah
+  /// terhapus), atau sudah punya media, method ini tidak melakukan apa-apa.
+  Future<void> _cleanupIfEmptyEntry(String entryId) async {
+    try {
+      final entry = await _storage.getEntry(entryId);
+      if (entry == null) return;
+
+      final hasImage = entry.imagePath?.trim().isNotEmpty ?? false;
+      final hasVideo = entry.videoPath?.trim().isNotEmpty ?? false;
+      if (hasImage || hasVideo) return;
+
+      await _storage.delete(entryId);
+      if (_scanCountVN.value > 0) {
+        _scanCountVN.value -= 1;
+        _scanCountRestorer.value = _scanCountVN.value;
+      }
+      debugPrint('🧹 Entry hantu dihapus (tidak ada foto/video): $entryId');
+    } catch (e) {
+      debugPrint('⚠️ Gagal cek/hapus entry kosong $entryId: $e');
     }
   }
 
