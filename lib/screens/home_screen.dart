@@ -150,13 +150,32 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     _buildMenuCard(
                       icon: Icons.qr_code_scanner,
-                      title: 'Scan Barcode',
-                      subtitle: 'Ambil foto dengan watermark',
+                      title: 'Scan Foto',
+                      subtitle: 'Scan barcode → kamera foto langsung terbuka',
                       onTap: () async {
                         final result = await Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) => const BarcodeScanScreen(),
+                            builder: (_) => const BarcodeScanScreen(
+                              mode: ScanCaptureMode.photo,
+                            ),
+                          ),
+                        );
+                        if (result != null) await _loadData();
+                      },
+                    ),
+                    const Gap(16),
+                    _buildMenuCard(
+                      icon: Icons.videocam,
+                      title: 'Scan Video',
+                      subtitle: 'Scan barcode → kamera video langsung terbuka',
+                      onTap: () async {
+                        final result = await Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const BarcodeScanScreen(
+                              mode: ScanCaptureMode.video,
+                            ),
                           ),
                         );
                         if (result != null) await _loadData();

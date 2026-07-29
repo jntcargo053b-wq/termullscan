@@ -54,8 +54,15 @@ class _ActiveScan {
       );
 }
 
+// ─── MODE SCAN (ditentukan dari menu Home) ───────────────────
+/// Menentukan layar tujuan otomatis setelah barcode terbaca.
+/// Dengan mode ini, kartu "nomor hasil scan + tombol pilih" dihilangkan —
+/// begitu barcode terbaca, aplikasi langsung membuka kamera yang sesuai.
+enum ScanCaptureMode { photo, video }
+
 class BarcodeScanScreen extends StatefulWidget {
-  const BarcodeScanScreen({super.key});
+  final ScanCaptureMode mode;
+  const BarcodeScanScreen({super.key, this.mode = ScanCaptureMode.photo});
 
   @override
   State<BarcodeScanScreen> createState() => _BarcodeScanScreenState();
@@ -538,24 +545,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     });
   }
 
-  void _scheduleActiveScanClear() {
-    Future.delayed(const Duration(seconds: 30), () {
-      if (mounted && _activeScanVN.value != null) {
-        final active = _activeScanVN.value;
-        if (active != null && active.photoCount == 0 && active.videoCount == 0) {
-          _activeScanVN.value = null;
-          _activeBarcodeRestorer.value = '';
-          _activeEntryIdRestorer.value = '';
-          _activePhotoCountRestorer.value = 0;
-          _activeVideoCountRestorer.value = 0;
-          debugPrint('🗑️ Active scan cleared after 30s timeout');
-          if (!_navigationLocked) {
-            _resumeScanning();
-          }
-        }
-      }
-    });
-  }
+
 
   // ─── PROCESSING LOCK ─────────────────────────────────────────
 
@@ -642,13 +632,26 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     _activePhotoCountRestorer.value = 0;
     _activeVideoCountRestorer.value = 0;
 
-    unawaited(_processDetectedBarcode(code: code, format: barcode.format.name));
+    unawaited(_handleBarcodeDetected(code: code, format: barcode.format.name));
   }
 
-  Future<void> _processDetectedBarcode({
+  /// Simpan barcode ke DB lalu LANGSUNG buka kamera (foto/video sesuai mode) —
+  /// tanpa kartu nomor hasil scan dan tanpa tombol yang harus di-tap manual.
+  Future<void> _handleBarcodeDetected({
     required String code,
     required String format,
   }) async {
+    final entryId = await _processDetectedBarcode(code: code, format: format);
+    if (entryId != null && mounted) {
+      await _autoNavigateToCapture(barcode: code, entryId: entryId);
+    }
+  }
+
+  Future<String?> _processDetectedBarcode({
+    required String code,
+    required String format,
+  }) async {
+    String? savedEntryId;
     await _executeWithProcessingLock(() async {
       try {
         HapticFeedback.mediumImpact();
@@ -689,12 +692,10 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         _scanCountVN.value++;
         _scanCountRestorer.value = _scanCountVN.value;
         _activeScanVN.value = _activeScanVN.value?.copyWith(entryId: entry.id);
-
         _activeEntryIdRestorer.value = entry.id;
 
-        _scheduleActiveScanClear();
-
         await _stopScannerSafely();
+        savedEntryId = entry.id;
       } catch (e) {
         debugPrint('❌ Error _processDetectedBarcode: $e');
         _activeScanVN.value = null;
@@ -717,6 +718,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         if (mounted) setState(() {});
       }
     });
+    return savedEntryId;
   }
 
   // ─── MANUAL INPUT ─────────────────────────────────────────
@@ -832,7 +834,10 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
       );
 
       if (confirmed == true) {
-        await _processManualCode(code);
+        final entryId = await _processManualCode(code);
+        if (entryId != null && mounted) {
+          await _autoNavigateToCapture(barcode: code, entryId: entryId);
+        }
       } else if (mounted) {
         reopenedManualInput = true;
         _showManualInput();
@@ -847,10 +852,12 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     }
   }
 
-  Future<void> _processManualCode(String code) async {
+  Future<String?> _processManualCode(String code) async {
+    String? savedEntryId;
     await _executeWithProcessingLock(() async {
       try {
         HapticFeedback.mediumImpact();
+        _activeScanVN.value = _ActiveScan(barcode: code);
 
         if (_wmSettings.gpsWatermarkEnabled) {
           unawaited(
@@ -894,9 +901,8 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         _activePhotoCountRestorer.value = 0;
         _activeVideoCountRestorer.value = 0;
 
-        _scheduleActiveScanClear();
-
         await _stopScannerSafely();
+        savedEntryId = entry.id;
       } catch (e) {
         debugPrint('❌ Error _processManualCode: $e');
         _activeScanVN.value = null;
@@ -919,6 +925,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
         if (mounted) setState(() {});
       }
     });
+    return savedEntryId;
   }
 
   // ─── GPS: update entry begitu alamat siap ──────────────────
@@ -944,95 +951,51 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
 
   // ─── NAVIGATION HELPERS ──────────────────────────────────
 
-  Future<void> _goToPhotoScan() async {
-    final active = _activeScanVN.value;
-    if (active == null || active.entryId == null) return;
-
-    final barcode = active.barcode;
-    final entryId = active.entryId!;
-
-    _lockNavigation();
-    _scannerState = _ScannerState.navigating;
-    _scanning = false;
-
-    try {
-      await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => PhotoScanScreen(
-            barcode: barcode,
-            entryId: entryId,
-            batchMode: true,
-          ),
-        ),
-      );
-
-      final entry = await _storage.getEntry(entryId);
-      final photoCount = entry?.imagePath?.split(',').length ?? 0;
-      final videoCount = entry?.videoPath != null ? 1 : 0;
-
-      if (mounted) {
-        _activeScanVN.value = _ActiveScan(
-          barcode: barcode,
-          entryId: entryId,
-          photoCount: photoCount,
-          videoCount: videoCount,
-        );
-        _activePhotoCountRestorer.value = photoCount;
-        _activeVideoCountRestorer.value = videoCount;
-        debugPrint('📊 Media counts from DB - Photos: $photoCount, Videos: $videoCount');
-      }
-    } catch (e) {
-      debugPrint('❌ Error navigasi ke foto scan: $e');
-    } finally {
-      _unlockNavigation();
-      if (mounted) {
-        _scannerState = _ScannerState.paused;
-        await _recreateScannerController();
-      }
-    }
-  }
-
-  Future<void> _goToVideoScan() async {
-    final active = _activeScanVN.value;
-    if (active == null || active.entryId == null) return;
-
-    final barcode = active.barcode;
-    final entryId = active.entryId!;
+  /// Dipanggil OTOMATIS begitu barcode/kode manual berhasil disimpan.
+  /// Tidak ada lagi kartu "nomor hasil scan" + tombol pilih — layar kamera
+  /// yang sesuai (foto/video, ditentukan `widget.mode` dari menu Home)
+  /// langsung terbuka.
+  Future<void> _autoNavigateToCapture({
+    required String barcode,
+    required String entryId,
+  }) async {
+    if (!mounted) return;
 
     _lockNavigation();
     _scannerState = _ScannerState.navigating;
     _scanning = false;
 
     try {
-      await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => VideoScanScreen(
-            barcode: barcode,
-            entryId: entryId,
+      if (widget.mode == ScanCaptureMode.video) {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => VideoScanScreen(
+              barcode: barcode,
+              entryId: entryId,
+            ),
           ),
-        ),
-      );
-
-      final entry = await _storage.getEntry(entryId);
-      final photoCount = entry?.imagePath?.split(',').length ?? 0;
-      final videoCount = entry?.videoPath != null ? 1 : 0;
-
-      if (mounted) {
-        _activeScanVN.value = _ActiveScan(
-          barcode: barcode,
-          entryId: entryId,
-          photoCount: photoCount,
-          videoCount: videoCount,
         );
-        _activePhotoCountRestorer.value = photoCount;
-        _activeVideoCountRestorer.value = videoCount;
-        debugPrint('📊 Media counts from DB - Photos: $photoCount, Videos: $videoCount');
+      } else {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => PhotoScanScreen(
+              barcode: barcode,
+              entryId: entryId,
+              batchMode: true,
+            ),
+          ),
+        );
       }
     } catch (e) {
-      debugPrint('❌ Error navigasi ke video scan: $e');
+      debugPrint('❌ Error navigasi otomatis ke kamera: $e');
     } finally {
+      _activeScanVN.value = null;
+      _activeBarcodeRestorer.value = '';
+      _activeEntryIdRestorer.value = '';
+      _activePhotoCountRestorer.value = 0;
+      _activeVideoCountRestorer.value = 0;
       _unlockNavigation();
       if (mounted) {
         _scannerState = _ScannerState.paused;
@@ -1199,10 +1162,10 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
           ValueListenableBuilder<_ActiveScan?>(
             valueListenable: _activeScanVN,
             builder: (context, active, _) {
-              final showWatermark = active == null;
+              final isProcessing = active != null;
               return Stack(
                 children: [
-                  if (showWatermark)
+                  if (!isProcessing)
                     Positioned(
                       top: 12, left: 0, right: 0,
                       child: ListenableBuilder(
@@ -1245,136 +1208,34 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
                         },
                       ),
                     ),
-                  if (active == null)
+                  if (!isProcessing)
                     const Positioned.fill(
                       child: IgnorePointer(child: _ScanFrameOverlay()),
                     ),
-                  if (active != null)
-                    Positioned(
-                      top: 12, left: 0, right: 0,
-                      child: Container(
-                        margin: const EdgeInsets.symmetric(horizontal: 20),
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.75),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: AppTheme.accent.withValues(alpha: 0.4)),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.qr_code, color: AppTheme.accent, size: 18),
-                            const Gap(8),
-                            Expanded(
-                              child: Text(
-                                active.barcode,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 14,
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            const Gap(8),
-                            Row(
+                  // ─── Auto-lanjut: begitu barcode terbaca, tidak ada lagi
+                  // kartu nomor + tombol pilih. Overlay ini hanya tampil
+                  // sesaat selama entry disimpan dan kamera dibuka otomatis.
+                  if (isProcessing)
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: Container(
+                          color: Colors.black.withValues(alpha: 0.55),
+                          child: Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
                               children: [
-                                if (active.photoCount > 0) ...[
-                                  const Icon(Icons.photo_camera, color: AppTheme.accent, size: 14),
-                                  const Gap(4),
-                                  Text(
-                                    '${active.photoCount}',
-                                    style: const TextStyle(
-                                      color: AppTheme.accent,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ],
-                                if (active.videoCount > 0) ...[
-                                  const Gap(8),
-                                  const Icon(Icons.videocam, color: Colors.blue, size: 14),
-                                  const Gap(4),
-                                  Text(
-                                    '${active.videoCount}',
-                                    style: const TextStyle(
-                                      color: Colors.blue,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ],
-                                if (active.photoCount == 0 && active.videoCount == 0) ...[
-                                  const Text(
-                                    '0 media',
-                                    style: TextStyle(
-                                      color: Colors.grey,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ],
+                                const CircularProgressIndicator(color: AppTheme.accent),
+                                const Gap(16),
+                                Text(
+                                  widget.mode == ScanCaptureMode.video
+                                      ? 'Membuka kamera video...'
+                                      : 'Membuka kamera foto...',
+                                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                                ),
                               ],
                             ),
-                          ],
+                          ),
                         ),
-                      ),
-                    ),
-                  if (active != null)
-                    Positioned(
-                      top: 12,
-                      right: 12,
-                      child: IconButton(
-                        icon: const Icon(Icons.close, color: Colors.white70),
-                        onPressed: () {
-                          _activeScanVN.value = null;
-                          _activeBarcodeRestorer.value = '';
-                          _activeEntryIdRestorer.value = '';
-                          _activePhotoCountRestorer.value = 0;
-                          _activeVideoCountRestorer.value = 0;
-                          _resumeScanning();
-                        },
-                        tooltip: 'Tutup',
-                      ),
-                    ),
-                  if (active != null && active.entryId != null)
-                    Positioned(
-                      bottom: 40, left: 0, right: 0,
-                      child: Column(
-                        children: [
-                          TextButton.icon(
-                            onPressed: _goToPhotoScan,
-                            icon: const Icon(Icons.camera_alt, color: Colors.white70, size: 18),
-                            label: const Text(
-                              'Ambil Foto',
-                              style: TextStyle(color: Colors.white70, fontSize: 13),
-                            ),
-                            style: TextButton.styleFrom(
-                              backgroundColor: const Color(0x88000000),
-                              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(20),
-                                side: const BorderSide(color: Colors.white24),
-                              ),
-                            ),
-                          ),
-                          const Gap(8),
-                          TextButton.icon(
-                            onPressed: _goToVideoScan,
-                            icon: const Icon(Icons.videocam, color: Colors.white70, size: 18),
-                            label: const Text(
-                              'Rekam Video',
-                              style: TextStyle(color: Colors.white70, fontSize: 13),
-                            ),
-                            style: TextButton.styleFrom(
-                              backgroundColor: const Color(0x88000000),
-                              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(20),
-                                side: const BorderSide(color: Colors.white24),
-                              ),
-                            ),
-                          ),
-                        ],
                       ),
                     ),
                 ],
