@@ -63,7 +63,7 @@ class TextPainterCache {
 
     final shadows = [
       Shadow(
-        color: Colors.black.withOpacity(opacity),
+        color: Colors.black.withValues(alpha: opacity),
         blurRadius: blur,
         offset: Offset(dx, dy),
       ),
@@ -90,12 +90,12 @@ class TextPainterCache {
 
     final shadows = [
       Shadow(
-        color: Colors.black.withOpacity(opacity),
+        color: Colors.black.withValues(alpha: opacity),
         blurRadius: blur,
         offset: const Offset(0, 2),
       ),
       Shadow(
-        color: Colors.black.withOpacity(opacity * 0.6),
+        color: Colors.black.withValues(alpha: opacity * 0.6),
         blurRadius: blur * 0.5,
         offset: const Offset(0, 0),
       ),

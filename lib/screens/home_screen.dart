@@ -315,7 +315,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           fontSize: 13,
                         ),
                       ),
-                    ),
+                    ],
                   ),
                 ),
                 Icon(Icons.chevron_right, color: AppTheme.textSecondary),

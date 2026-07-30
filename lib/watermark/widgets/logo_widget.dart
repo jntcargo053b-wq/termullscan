@@ -5,7 +5,7 @@ class LogoWidget {
   /// Menggambar logo dengan opacity murni (tidak mengubah warna asli logo).
   ///
   /// FIX PENTING: implementasi lama memakai
-  /// `ColorFilter.mode(Colors.white.withOpacity(opacity), blendMode)` yang
+  /// `ColorFilter.mode(Colors.white.withValues(alpha: opacity), blendMode)` yang
   /// men-tint seluruh logo menjadi putih solid saat opacity mendekati 1.0
   /// (logo berwarna/brand jadi hilang, cuma siluet putih). Preview di UI
   /// (pakai Image.file biasa) tidak kena bug ini, jadi hasil akhir foto
@@ -42,7 +42,7 @@ class LogoWidget {
         ..filterQuality = FilterQuality.high
         ..isAntiAlias = true
         // Alpha-only modulation — warna asli logo (brand color) tetap terjaga.
-        ..color = Colors.white.withOpacity(opacity.clamp(0.0, 1.0)),
+        ..color = Colors.white.withValues(alpha: opacity.clamp(0.0, 1.0)),
     );
   }
 }

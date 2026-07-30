@@ -15,7 +15,6 @@ import '../watermark_settings.dart';
 import '../helpers/layout_helper.dart';
 import '../helpers/text_helper.dart';
 import '../helpers/watermark_typography.dart';
-import '../utils/text_painter_cache.dart';
 import '../widgets/logo_widget.dart';
 
 class StampLayout extends WatermarkLayout {
@@ -164,7 +163,7 @@ class StampLayout extends WatermarkLayout {
     canvas.drawRRect(
       RRect.fromRectAndRadius(stampRect, Radius.circular(stampH * 0.14)),
       Paint()
-        ..color = stampColor.withOpacity(0.12)
+        ..color = stampColor.withValues(alpha: 0.12)
         ..style = PaintingStyle.fill,
     );
     canvas.drawRRect(
@@ -327,7 +326,7 @@ class StampLayout extends WatermarkLayout {
         Radius.circular(8),
       ),
       Paint()
-        ..color = Colors.black.withOpacity(data.backgroundOpacity * 1.2)
+        ..color = Colors.black.withValues(alpha: data.backgroundOpacity * 1.2)
         ..style = PaintingStyle.fill,
     );
 
@@ -339,7 +338,7 @@ class StampLayout extends WatermarkLayout {
         accentBarW,
         panelHeight - 12,
       ),
-      Paint()..color = stampColor.withOpacity(0.7),
+      Paint()..color = stampColor.withValues(alpha: 0.7),
     );
 
     // ─── PANEL TEXT ────────────────────────────────────────────
@@ -405,7 +404,7 @@ class StampLayout extends WatermarkLayout {
           ),
           Radius.circular(cardPad * 0.8),
         ),
-        Paint()..color = Colors.black.withOpacity(0.35),
+        Paint()..color = Colors.black.withValues(alpha: 0.35),
       );
 
       LogoWidget.paint(
@@ -443,7 +442,7 @@ class StampLayout extends WatermarkLayout {
       decoration: BoxDecoration(
         color: Colors.grey.shade900,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.shade700.withOpacity(0.3)),
+        border: Border.all(color: Colors.grey.shade700.withValues(alpha: 0.3)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
@@ -456,7 +455,7 @@ class StampLayout extends WatermarkLayout {
                 decoration: BoxDecoration(
                   border: Border.all(color: stampColor, width: 2),
                   borderRadius: BorderRadius.circular(6),
-                  color: stampColor.withOpacity(0.1),
+                  color: stampColor.withValues(alpha: 0.1),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.center,
@@ -496,7 +495,7 @@ class StampLayout extends WatermarkLayout {
                 Container(
                   padding: const EdgeInsets.all(4),
                   decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.3),
+                    color: Colors.black.withValues(alpha: 0.3),
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Image.file(

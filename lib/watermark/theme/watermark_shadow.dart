@@ -24,13 +24,13 @@ class WatermarkShadowStyle {
 
   List<Shadow> toTextShadows() => [
         Shadow(
-          color: color.withOpacity(opacity),
+          color: color.withValues(alpha: opacity),
           blurRadius: blur,
           offset: offset,
         ),
       ];
 
-  Paint toPaint() => Paint()..color = color.withOpacity(opacity);
+  Paint toPaint() => Paint()..color = color.withValues(alpha: opacity);
 }
 
 class WatermarkShadow {

@@ -429,10 +429,8 @@ class MinimalLayout extends WatermarkLayout {
                       begin: isBottom ? Alignment.topCenter : Alignment.bottomCenter,
                       end: isBottom ? Alignment.bottomCenter : Alignment.topCenter,
                       colors: [
-                        Colors.black.withOpacity(0.0),
-                        Colors.black.withOpacity(
-                          (previewData.backgroundOpacity).clamp(0.0, 1.0),
-                        ),
+                        Colors.black.withValues(alpha: 0.0),
+                        Colors.black.withValues(alpha: (previewData.backgroundOpacity).clamp(0.0, 1.0),),
                       ],
                     ),
                   ),
@@ -452,7 +450,7 @@ class MinimalLayout extends WatermarkLayout {
                         Container(
                           padding: const EdgeInsets.all(_previewCardPadding),
                           decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.10),
+                            color: Colors.white.withValues(alpha: 0.10),
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: _buildPreviewLogo(logoPath, metrics),
@@ -469,7 +467,7 @@ class MinimalLayout extends WatermarkLayout {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  color: Colors.grey.shade800.withOpacity(0.85),
+                  color: Colors.grey.shade800.withValues(alpha: 0.85),
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(

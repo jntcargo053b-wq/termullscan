@@ -28,5 +28,5 @@ class WatermarkLogoStyle {
   /// Warna latar kartu logo (transparan gelap agar logo tetap kontras
   /// di atas foto apa pun).
   static Color cardBackground({double opacity = 0.30}) =>
-      Colors.black.withOpacity(opacity);
+      Colors.black.withValues(alpha: opacity);
 }

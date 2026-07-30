@@ -285,7 +285,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   Widget build(BuildContext context) {
     return PopScope(
       canPop: false,
-      onPopInvokedWithDidPop: (didPop, result) {
+      onPopInvoked: (didPop) {
         if (didPop) return;
         Navigator.pop(context, _savedCount > 0 ? {'count': _savedCount} : null);
       },

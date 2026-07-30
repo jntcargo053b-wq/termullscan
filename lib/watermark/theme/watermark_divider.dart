@@ -24,7 +24,7 @@ class WatermarkDividerStyle {
       p1,
       p2,
       Paint()
-        ..color = color.withOpacity(opacity)
+        ..color = color.withValues(alpha: opacity)
         ..strokeWidth = strokeWidth,
     );
   }

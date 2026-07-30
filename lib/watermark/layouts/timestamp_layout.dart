@@ -8,7 +8,6 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../models/watermark_data.dart';
 import '../watermark_style.dart';
-import '../watermark_settings.dart';
 import '../helpers/layout_helper.dart';
 import '../helpers/text_helper.dart';
 import '../helpers/watermark_typography.dart';
@@ -183,7 +182,7 @@ class TimestampLayout extends WatermarkLayout {
     // ─── BAR BAWAH ──────────────────────────────────────────────
     canvas.drawRect(
       ui.Rect.fromLTWH(0, barTop, photoWidth, barHeight),
-      ui.Paint()..color = Colors.black.withOpacity(bgOpacity),
+      ui.Paint()..color = Colors.black.withValues(alpha: bgOpacity),
     );
 
     double cursorY = barTop + padding * _topPaddingFactor;
@@ -229,7 +228,7 @@ class TimestampLayout extends WatermarkLayout {
         x: padding,
         y: cursorY,
         maxWidth: metrics.textAvailableWidth,
-        color: Colors.white.withOpacity(_opacityMeta),
+        color: Colors.white.withValues(alpha: _opacityMeta),
         fontSize: metaFontSize,
         fontWeight: FontWeight.w600,
         maxLines: 1,
@@ -244,7 +243,7 @@ class TimestampLayout extends WatermarkLayout {
         x: padding,
         y: cursorY,
         maxWidth: metrics.textAvailableWidth,
-        color: Colors.white.withOpacity(_opacityOperator),
+        color: Colors.white.withValues(alpha: _opacityOperator),
         fontSize: metaFontSize,
         fontWeight: FontWeight.w500,
         maxLines: 1,
@@ -313,7 +312,7 @@ class TimestampLayout extends WatermarkLayout {
       text: TextSpan(
         text: _dayName(data.timestamp),
         style: TextStyle(
-          color: Colors.white.withOpacity(_opacityDay),
+          color: Colors.white.withValues(alpha: _opacityDay),
           fontSize: dayFontSize,
           fontWeight: FontWeight.w400,
           fontFamily: data.fontFamily,
@@ -442,7 +441,7 @@ class TimestampLayout extends WatermarkLayout {
       text: TextSpan(
         text: 'Foto Terverifikasi GPS',
         style: TextStyle(
-          color: Colors.white.withOpacity(_opacityBrand),
+          color: Colors.white.withValues(alpha: _opacityBrand),
           fontSize: taglineFontSize,
           fontWeight: FontWeight.w400,
           fontFamily: data.fontFamily,
@@ -476,7 +475,7 @@ class TimestampLayout extends WatermarkLayout {
       text: TextSpan(
         text: '$code   •   TERMULSCAN VERIFIED',
         style: TextStyle(
-          color: Colors.white.withOpacity(_opacityCode),
+          color: Colors.white.withValues(alpha: _opacityCode),
           fontSize: baseSize * _codeScale,
           fontWeight: FontWeight.w500,
           letterSpacing: 1.0,
@@ -554,7 +553,7 @@ class TimestampLayout extends WatermarkLayout {
                   Text(
                     'Foto Terverifikasi GPS',
                     style: TextStyle(
-                      color: Colors.white.withOpacity(_opacityBrand),
+                      color: Colors.white.withValues(alpha: _opacityBrand),
                       fontSize: baseSize * _taglineScale,
                     ),
                   ),
@@ -572,7 +571,7 @@ class TimestampLayout extends WatermarkLayout {
                   child: Text(
                     '${_generateVerificationCode(previewData)} • VERIFIED',
                     style: TextStyle(
-                      color: Colors.white.withOpacity(_opacityCode),
+                      color: Colors.white.withValues(alpha: _opacityCode),
                       fontSize: baseSize * _codeScale,
                       letterSpacing: 0.5,
                     ),
@@ -592,9 +591,7 @@ class TimestampLayout extends WatermarkLayout {
                   vertical: padding * _topPaddingFactor,
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(
-                    previewData.backgroundOpacity.clamp(0.4, 1.0),
-                  ),
+                  color: Colors.black.withValues(alpha: previewData.backgroundOpacity.clamp(0.4, 1.0),),
                 ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -604,7 +601,7 @@ class TimestampLayout extends WatermarkLayout {
                       Text(
                         '📦 ${previewData.barcodeValue}',
                         style: TextStyle(
-                          color: Colors.white.withOpacity(_opacityMeta),
+                          color: Colors.white.withValues(alpha: _opacityMeta),
                           fontSize: baseSize * _metaScale,
                           fontWeight: FontWeight.w600,
                         ),
@@ -613,7 +610,7 @@ class TimestampLayout extends WatermarkLayout {
                       Text(
                         '👤 ${previewData.operatorName}',
                         style: TextStyle(
-                          color: Colors.white.withOpacity(_opacityOperator),
+                          color: Colors.white.withValues(alpha: _opacityOperator),
                           fontSize: baseSize * _metaScale,
                           fontWeight: FontWeight.w500,
                         ),
@@ -652,7 +649,7 @@ class TimestampLayout extends WatermarkLayout {
                             Text(
                               _dayName(previewData.timestamp),
                               style: TextStyle(
-                                color: Colors.white.withOpacity(_opacityDay),
+                                color: Colors.white.withValues(alpha: _opacityDay),
                                 fontSize: baseSize * _dayScale,
                               ),
                             ),
@@ -720,7 +717,7 @@ class TimestampLayout extends WatermarkLayout {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  color: Colors.grey.shade800.withOpacity(0.85),
+                  color: Colors.grey.shade800.withValues(alpha: 0.85),
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(

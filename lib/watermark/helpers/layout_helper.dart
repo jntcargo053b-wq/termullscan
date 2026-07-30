@@ -126,7 +126,7 @@ class LayoutHelper {
   }) {
     canvas.drawShadow(
       Path()..addRRect(rrect),
-      shadowColor.withOpacity(shadowOpacity),
+      shadowColor.withValues(alpha: shadowOpacity),
       elevation,
       false,
     );
@@ -237,20 +237,20 @@ class LayoutHelper {
     
     switch (gradientType) {
       case StripGradientType.solid:
-        paint.color = color.withOpacity(opacity);
+        paint.color = color.withValues(alpha: opacity);
         canvas.drawRect(rect, paint);
         break;
         
       case StripGradientType.linear:
         if (gradientColors == null || gradientColors.length < 2) {
-          paint.color = color.withOpacity(opacity);
+          paint.color = color.withValues(alpha: opacity);
           canvas.drawRect(rect, paint);
           return;
         }
         final shader = ui.Gradient.linear(
           rect.topLeft,
           rect.bottomRight,
-          gradientColors.map((c) => c.withOpacity(opacity)).toList(),
+          gradientColors.map((c) => c.withValues(alpha: opacity)).toList(),
         );
         paint.shader = shader;
         canvas.drawRect(rect, paint);
@@ -258,7 +258,7 @@ class LayoutHelper {
         
       case StripGradientType.radial:
         if (gradientColors == null || gradientColors.length < 2) {
-          paint.color = color.withOpacity(opacity);
+          paint.color = color.withValues(alpha: opacity);
           canvas.drawRect(rect, paint);
           return;
         }
@@ -267,7 +267,7 @@ class LayoutHelper {
         final shader = ui.Gradient.radial(
           center,
           radius,
-          gradientColors.map((c) => c.withOpacity(opacity)).toList(),
+          gradientColors.map((c) => c.withValues(alpha: opacity)).toList(),
         );
         paint.shader = shader;
         canvas.drawRect(rect, paint);
@@ -323,7 +323,7 @@ class LayoutHelper {
     if (width <= 0 || height <= 0) return;
 
     final paint = Paint()
-      ..color = Colors.red.withOpacity(0.3)
+      ..color = Colors.red.withValues(alpha: 0.3)
       ..strokeWidth = 1
       ..style = PaintingStyle.stroke;
 
@@ -345,7 +345,7 @@ class LayoutHelper {
     double strokeWidth = 2,
   }) {
     final paint = Paint()
-      ..color = color.withOpacity(0.8)
+      ..color = color.withValues(alpha: 0.8)
       ..strokeWidth = strokeWidth
       ..style = PaintingStyle.stroke;
     canvas.drawRect(rect, paint);

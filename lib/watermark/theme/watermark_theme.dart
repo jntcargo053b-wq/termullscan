@@ -2,7 +2,6 @@
 import 'dart:math' as math; // ← WAJIB ditambahkan
 import 'package:flutter/material.dart';
 import '../watermark_style.dart';
-import '../watermark_settings.dart';
 import '../models/watermark_data.dart';
 
 // ─── SUB‑THEME: Panel ───────────────────────────────────────────

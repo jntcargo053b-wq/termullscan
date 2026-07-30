@@ -7,7 +7,6 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../models/watermark_data.dart';
 import '../watermark_style.dart';
-import '../watermark_settings.dart';
 import '../helpers/layout_helper.dart';
 import '../helpers/text_helper.dart';
 import '../helpers/watermark_typography.dart';
@@ -249,7 +248,7 @@ class ProfessionalLayout extends WatermarkLayout {
 
     canvas.drawRect(
       ui.Rect.fromLTWH(0, barTop, photoWidth, barHeight),
-      ui.Paint()..color = Colors.black.withOpacity(bgOpacity),
+      ui.Paint()..color = Colors.black.withValues(alpha: bgOpacity),
     );
 
     final accentBarW = math.max(2.0, baseSize * _accentBarWidthScale);
@@ -260,7 +259,7 @@ class ProfessionalLayout extends WatermarkLayout {
         accentBarW,
         barHeight - padding * 1.4,
       ),
-      ui.Paint()..color = _accentColor.withOpacity(0.9),
+      ui.Paint()..color = _accentColor.withValues(alpha: 0.9),
     );
 
     final leftX = padding * _textLeftInset;
@@ -328,7 +327,7 @@ class ProfessionalLayout extends WatermarkLayout {
         x: leftX,
         y: cursorY,
         maxWidth: availW,
-        color: Colors.white.withOpacity(_opacityMeta),
+        color: Colors.white.withValues(alpha: _opacityMeta),
         fontSize: metaFontSize,
         fontWeight: FontWeight.w700,
         maxLines: 1,
@@ -343,7 +342,7 @@ class ProfessionalLayout extends WatermarkLayout {
         x: leftX,
         y: cursorY,
         maxWidth: availW,
-        color: Colors.white.withOpacity(_opacityOperator),
+        color: Colors.white.withValues(alpha: _opacityOperator),
         fontSize: metaFontSize,
         fontWeight: FontWeight.w600,
         maxLines: 1,
@@ -405,7 +404,7 @@ class ProfessionalLayout extends WatermarkLayout {
     dateTp.paint(canvas, ui.Offset(dateColX, rowTop));
 
     final dayStyle = TextPainterCache.getStyle(
-      color: Colors.white.withOpacity(_opacityDay),
+      color: Colors.white.withValues(alpha: _opacityDay),
       fontSize: dayFontSize,
       fontWeight: FontWeight.w400,
       fontFamily: data.fontFamily,
@@ -530,7 +529,7 @@ class ProfessionalLayout extends WatermarkLayout {
     brandTp.paint(canvas, ui.Offset(photoWidth - padding - brandTp.width, padding * _topPaddingFactor));
 
     final taglineStyle = TextPainterCache.getStyle(
-      color: Colors.white.withOpacity(_opacityBrand),
+      color: Colors.white.withValues(alpha: _opacityBrand),
       fontSize: taglineFontSize,
       fontWeight: FontWeight.w400,
       fontFamily: data.fontFamily,
@@ -563,7 +562,7 @@ class ProfessionalLayout extends WatermarkLayout {
     final shadow = TextHelper.softShadow(opacity: _shadowOpacity, blur: 4);
 
     final vertStyle = TextPainterCache.getStyle(
-      color: Colors.white.withOpacity(_opacityCode),
+      color: Colors.white.withValues(alpha: _opacityCode),
       fontSize: baseSize * _codeScale,
       fontWeight: FontWeight.w500,
       letterSpacing: 1.0,
@@ -641,7 +640,7 @@ class ProfessionalLayout extends WatermarkLayout {
                   Text(
                     'Dokumentasi Resmi',
                     style: TextStyle(
-                      color: Colors.white.withOpacity(_opacityBrand),
+                      color: Colors.white.withValues(alpha: _opacityBrand),
                       fontSize: baseSize * _taglineScale,
                     ),
                   ),
@@ -659,7 +658,7 @@ class ProfessionalLayout extends WatermarkLayout {
                   child: Text(
                     '${_generateVerificationCode(previewData)} • VERIFIED',
                     style: TextStyle(
-                      color: Colors.white.withOpacity(_opacityCode),
+                      color: Colors.white.withValues(alpha: _opacityCode),
                       fontSize: baseSize * _codeScale,
                       letterSpacing: 0.5,
                     ),
@@ -679,9 +678,7 @@ class ProfessionalLayout extends WatermarkLayout {
                   vertical: padding * _topPaddingFactor,
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(
-                    previewData.backgroundOpacity.clamp(0.4, 1.0),
-                  ),
+                  color: Colors.black.withValues(alpha: previewData.backgroundOpacity.clamp(0.4, 1.0),),
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -704,7 +701,7 @@ class ProfessionalLayout extends WatermarkLayout {
                             Text(
                               'KODE BARANG: ${previewData.barcodeValue}',
                               style: TextStyle(
-                                color: Colors.white.withOpacity(_opacityMeta),
+                                color: Colors.white.withValues(alpha: _opacityMeta),
                                 fontSize: baseSize * _metaScale,
                                 fontWeight: FontWeight.w700,
                               ),
@@ -713,7 +710,7 @@ class ProfessionalLayout extends WatermarkLayout {
                             Text(
                               'OPERATOR: ${previewData.operatorName}',
                               style: TextStyle(
-                                color: Colors.white.withOpacity(_opacityOperator),
+                                color: Colors.white.withValues(alpha: _opacityOperator),
                                 fontSize: baseSize * _metaScale,
                                 fontWeight: FontWeight.w600,
                               ),
@@ -751,7 +748,7 @@ class ProfessionalLayout extends WatermarkLayout {
                                   Text(
                                     _dayName(previewData.timestamp),
                                     style: TextStyle(
-                                      color: Colors.white.withOpacity(_opacityDay),
+                                      color: Colors.white.withValues(alpha: _opacityDay),
                                       fontSize: baseSize * _dayScale,
                                     ),
                                   ),
@@ -821,7 +818,7 @@ class ProfessionalLayout extends WatermarkLayout {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  color: Colors.grey.shade800.withOpacity(0.85),
+                  color: Colors.grey.shade800.withValues(alpha: 0.85),
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(

@@ -11,7 +11,6 @@ import 'base_layout.dart';
 import 'layout_metrics.dart';
 import '../models/watermark_data.dart';
 import '../watermark_style.dart';
-import '../watermark_settings.dart';
 import '../helpers/layout_helper.dart';
 import '../helpers/text_helper.dart';
 import '../helpers/watermark_typography.dart';
@@ -112,8 +111,8 @@ class PolaroidLayout extends WatermarkLayout {
     const cardRadius = Radius.circular(14);
     final cardRRect = RRect.fromRectAndRadius(paperRect, cardRadius);
     final cardPath = Path()..addRRect(cardRRect);
-    canvas.drawShadow(cardPath, Colors.black.withOpacity(0.20), 6, true);
-    canvas.drawShadow(cardPath, Colors.black.withOpacity(0.28), 22, true);
+    canvas.drawShadow(cardPath, Colors.black.withValues(alpha: 0.20), 6, true);
+    canvas.drawShadow(cardPath, Colors.black.withValues(alpha: 0.28), 22, true);
 
     // Clip seluruh kanvas ke rounded-rect supaya foto & strip bawah ikut
     // mengikuti sudut membulat kartu, bukan hanya background paper-nya.
@@ -153,14 +152,14 @@ class PolaroidLayout extends WatermarkLayout {
       photoRect.longestSide * 0.62,
       [
         Colors.transparent,
-        Colors.black.withOpacity(0.16),
+        Colors.black.withValues(alpha: 0.16),
       ],
       [0.72, 1.0],
     );
     canvas.drawRect(photoRect, Paint()..shader = vignette);
     canvas.drawRect(
       photoRect,
-      Paint()..color = const Color(0xFFE8A95B).withOpacity(0.05),
+      Paint()..color = const Color(0xFFE8A95B).withValues(alpha: 0.05),
     );
     canvas.restore();
 
@@ -225,7 +224,7 @@ class PolaroidLayout extends WatermarkLayout {
           ),
           Radius.circular(cardPad * 0.8),
         ),
-        Paint()..color = Colors.black.withOpacity(0.30),
+        Paint()..color = Colors.black.withValues(alpha: 0.30),
       );
 
       LogoWidget.paint(
@@ -268,7 +267,7 @@ class PolaroidLayout extends WatermarkLayout {
         borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.25),
+            color: Colors.black.withValues(alpha: 0.25),
             blurRadius: 14,
             offset: const Offset(0, 6),
           ),
@@ -294,7 +293,7 @@ class PolaroidLayout extends WatermarkLayout {
                     radius: 1.0,
                     colors: [
                       const Color(0xFF3A3A38),
-                      Colors.black.withOpacity(0.85),
+                      Colors.black.withValues(alpha: 0.85),
                     ],
                   ),
                 ),
@@ -356,7 +355,7 @@ class PolaroidLayout extends WatermarkLayout {
                     decoration: BoxDecoration(
                       color: const Color(0xFFE67E22),
                       borderRadius: BorderRadius.circular(3),
-                      border: Border.all(color: Colors.white.withOpacity(0.6), width: 1),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.6), width: 1),
                     ),
                     child: const Text(
                       'MANUAL',
@@ -375,7 +374,7 @@ class PolaroidLayout extends WatermarkLayout {
                 Container(
                   padding: const EdgeInsets.all(4),
                   decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.08),
+                    color: Colors.black.withValues(alpha: 0.08),
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Image.file(
@@ -499,7 +498,7 @@ class PolaroidLayout extends WatermarkLayout {
     canvas.drawRRect(
       RRect.fromRectAndRadius(rect, Radius.circular(badgeH * 0.22)),
       Paint()
-        ..color = Colors.white.withOpacity(0.55)
+        ..color = Colors.white.withValues(alpha: 0.55)
         ..style = PaintingStyle.stroke
         ..strokeWidth = math.max(1.0, badgeH * 0.06),
     );
@@ -538,7 +537,7 @@ class _PreviewRow extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Icon(icon, size: 10, color: valueColor.withOpacity(0.6)),
+        Icon(icon, size: 10, color: valueColor.withValues(alpha: 0.6)),
         const Gap(4),
         Text(
           label.toUpperCase(),
