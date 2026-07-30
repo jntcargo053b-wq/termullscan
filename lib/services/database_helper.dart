@@ -207,6 +207,26 @@ class DatabaseHelper {
     });
   }
 
+  /// Exact-match lookup by kode barcode/manual (kolom `value`), dipakai
+  /// untuk cek duplikat saat scan. Sengaja terpisah dari `getEntries`
+  /// (yang pakai `searchQuery` LIKE lintas banyak kolom untuk pencarian
+  /// bebas) karena cek duplikat butuh exact match yang cepat & presisi,
+  /// bukan substring match yang bisa false-positive (mis. kode "123"
+  /// akan match "1234", "0123", dst kalau pakai LIKE).
+  Future<ScanEntry?> getEntryByValue(String value) async {
+    return _runWithProtection((db) async {
+      final result = await db.query(
+        'scan_entries',
+        where: 'value = ?',
+        whereArgs: [value],
+        orderBy: 'timestamp DESC',
+        limit: 1,
+      );
+      if (result.isEmpty) return null;
+      return ScanEntry.fromMap(result.first);
+    });
+  }
+
   Future<List<ScanEntry>> getEntries({
     int? limit = 20,
     int offset = 0,

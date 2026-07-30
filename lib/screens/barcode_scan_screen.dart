@@ -1,33 +1,41 @@
 // lib/screens/barcode_scan_screen.dart
 // ============================================================================
-// VERSI FINAL – SIAP PAKAI (tanpa error analyzer)
+// SCAN BARCODE → BUKA KAMERA FOTO/VIDEO
+// ============================================================================
+// Alur: deteksi barcode → STOP scanner segera → validasi lokal → cek
+// duplikat (exact match by value, StorageService.getEntryByValue) →
+// navigasi ke PhotoScanScreen/VideoScanScreen sesuai `mode` → tunggu hasil →
+// RESUME scanner supaya operator bisa langsung scan paket berikutnya tanpa
+// kembali ke Home dulu.
+//
+// ✅ THROTTLE/DEBOUNCE: `_busy` di-set SYNCHRONOUS di awal `_onDetect()`,
+// sebelum await apa pun, jadi deteksi berikutnya (termasuk kode yang
+// BERBEDA) langsung diabaikan selama satu kode masih diproses — bukan cuma
+// dicek belakangan setelah beberapa await sudah jalan. Scanner juga benar-
+// benar di-stop() (bukan cuma diabaikan lewat flag) selama validasi/cek
+// duplikat/navigasi berjalan, supaya kamera tidak dipakai dua controller
+// sekaligus begitu PhotoScanScreen/VideoScanScreen membuka kameranya sendiri.
+//
+// ✅ SETSTATE: layar ini TIDAK memakai setState() sama sekali — status
+// "mendeteksi"/busy dikirim lewat ValueNotifier + ValueListenableBuilder
+// sempit, jadi CameraPreview (MobileScanner) dan chrome UI di sekitarnya
+// tidak ikut rebuild tiap kali status berubah.
 // ============================================================================
 
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
+import '../models/scan_entry.dart';
+import '../services/storage_service.dart';
+import 'photo_scan_screen.dart';
+import 'video_scan_screen.dart';
 
-// ============================================================================
-// TOKEN PEMBATALAN
-// ============================================================================
-
-class _CancelToken {
-  final Completer<void> _completer = Completer<void>();
-  bool get isCompleted => _completer.isCompleted;
-  Future<void> get whenCancelled => _completer.future;
-
-  void cancel() {
-    if (!_completer.isCompleted) _completer.complete();
-  }
-}
-
-// ============================================================================
-// STATE WIDGET
-// ============================================================================
+enum ScanCaptureMode { photo, video }
 
 class BarcodeScanScreen extends StatefulWidget {
-  const BarcodeScanScreen({super.key});
+  final ScanCaptureMode mode;
+  const BarcodeScanScreen({super.key, required this.mode});
 
   @override
   State<BarcodeScanScreen> createState() => _BarcodeScanScreenState();
@@ -35,26 +43,21 @@ class BarcodeScanScreen extends StatefulWidget {
 
 class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     with WidgetsBindingObserver {
-  // ─── SCANNER CONTROLLER ──────────────────────────────────────
   final MobileScannerController _scannerController = MobileScannerController(
-    formats: [BarcodeFormat.qrCode, BarcodeFormat.code128, BarcodeFormat.ean13],
+    formats: const [BarcodeFormat.qrCode, BarcodeFormat.code128, BarcodeFormat.ean13],
     detectionSpeed: DetectionSpeed.noDuplicates,
   );
+  final StorageService _storage = StorageService();
 
-  // ─── STATE VARIABLES ──────────────────────────────────────────
-  bool _isProcessingLocked = false;
-  Completer<void>? _processingCompleter;
-  _CancelToken? _cancelToken;
+  // ─── STATUS (ValueNotifier, bukan setState) ──────────────────
+  final ValueNotifier<String?> _statusVN = ValueNotifier(null);
+  final ValueNotifier<bool> _busyVN = ValueNotifier(false);
 
+  // ─── GUARD REENTRANCY (throttle) ──────────────────────────────
+  bool _busy = false;
   bool _resumeScheduled = false;
+  int _savedCount = 0;
 
-  bool _manualFlowBusy = false;
-  int _processingCount = 0;
-  bool _isNavigating = false;
-
-  final ValueNotifier<BarcodeCapture?> _activeScanVN = ValueNotifier(null);
-
-  // ─── LIFECYCLE ────────────────────────────────────────────────
   @override
   void initState() {
     super.initState();
@@ -66,13 +69,17 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _scannerController.dispose();
-    _activeScanVN.dispose();
+    _statusVN.dispose();
+    _busyVN.dispose();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
+    // `_busy` berarti scanner memang sengaja sedang di-stop (lagi validasi/
+    // navigasi) — jangan resume paksa dari sini, biar `_handleCode`/
+    // `_showManualInput` yang mengatur resume-nya sendiri setelah selesai.
+    if (state == AppLifecycleState.resumed && !_busy) {
       _resumeScanning();
     }
   }
@@ -82,283 +89,184 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
   Future<void> _startScannerWithRetry() async {
     try {
       await _scannerController.start();
-      debugPrint('✅ Scanner started');
     } catch (e) {
       debugPrint('❌ Scanner start error: $e');
-      Future.delayed(const Duration(seconds: 2), _startScannerWithRetry);
+      if (!mounted) return;
+      await Future.delayed(const Duration(seconds: 2));
+      if (mounted && !_busy) _startScannerWithRetry();
     }
   }
-
-  // ─── RESUME SCANNING (RACE CONDITION FIX) ────────────────────
 
   Future<void> _resumeScanning() async {
-    if (_resumeScheduled) {
-      debugPrint('⚠️ Resume already scheduled, skipping');
-      return;
-    }
-
+    if (_resumeScheduled || !mounted) return;
     _resumeScheduled = true;
-
-    final cameraStatus = await Permission.camera.status;
-    if (!cameraStatus.isGranted) {
-      debugPrint('⚠️ Resume skipped: camera permission not granted');
-      _resumeScheduled = false;
-      return;
-    }
-
     try {
+      final cameraStatus = await Permission.camera.status;
+      if (!cameraStatus.isGranted) return;
       await _scannerController.start();
-      debugPrint('✅ Scanner resumed');
     } catch (e) {
       debugPrint('❌ Resume start error: $e');
-      Future.delayed(const Duration(seconds: 1), _startScannerWithRetry);
     } finally {
       _resumeScheduled = false;
     }
   }
 
-  // ─── PROCESSING LOCK ──────────────────────────────────────────
+  // ─── DETEKSI BARCODE ───────────────────────────────────────────
 
-  Future<void> _executeWithProcessingLock(
-    Future<void> Function(_CancelToken token) action,
-  ) async {
-    if (_isProcessingLocked) {
-      debugPrint('⏳ Menunggu lock...');
-      final waitingOn = _processingCompleter;
-      if (waitingOn != null) {
-        try {
-          await waitingOn.future.timeout(const Duration(seconds: 60));
-        } on TimeoutException catch (_) {
-          debugPrint('🚨 Force unlock setelah 60s (deadlock terdeteksi)');
-          _cancelToken?.cancel();
-          _isProcessingLocked = false;
-          _processingCompleter = null;
-          _cancelToken = null;
-        }
-      }
+  void _onDetect(BarcodeCapture capture) {
+    if (_busy) return; // throttle: abaikan selama satu kode masih diproses
+    final barcodes = capture.barcodes;
+    if (barcodes.isEmpty) return;
+    final code = barcodes.first.rawValue;
+    if (code == null || code.isEmpty) return;
 
-      if (_isProcessingLocked) {
-        debugPrint('⚠️ Lock diambil alih, aksi dibatalkan');
-        return;
-      }
+    _busy = true; // ✅ set SYNCHRONOUS sebelum await apa pun
+    unawaited(_handleCode(code));
+  }
+
+  Future<void> _handleCode(String code) async {
+    _busyVN.value = true;
+    _statusVN.value = '📷 Memproses $code...';
+
+    // Stop scanner segera — mencegah decode frame sia-sia & rebutan
+    // hardware kamera dengan layar foto/video yang akan dibuka.
+    try {
+      await _scannerController.stop();
+    } catch (e) {
+      debugPrint('⚠️ Gagal stop scanner: $e');
     }
 
-    final token = _CancelToken();
-    _cancelToken = token;
-    _isProcessingLocked = true;
-    _processingCompleter = Completer<void>();
-
-    debugPrint('🔒 Lock acquired');
-
     try {
-      await action(token).timeout(
-        const Duration(seconds: 30),
-        onTimeout: () {
-          debugPrint('⏰ Timeout 30s, kirim sinyal batal...');
-          token.cancel();
-          return Future.delayed(const Duration(milliseconds: 200));
-        },
-      );
-      debugPrint('✅ Processing selesai');
+      final trimmed = code.trim();
+      if (trimmed.length < 4) {
+        _showError('Kode tidak valid: terlalu pendek');
+        return;
+      }
+
+      final existing = await _storage.getEntryByValue(trimmed);
+      if (!mounted) return;
+
+      String? entryId;
+      if (existing != null) {
+        final proceed = await _showDuplicateDialog(existing);
+        if (!mounted || proceed != true) return;
+        entryId = existing.id;
+      }
+
+      await _openCaptureScreen(code: trimmed, entryId: entryId);
+    } catch (e) {
+      debugPrint('❌ Gagal memproses barcode: $e');
+      _showError('Gagal memproses barcode: $e');
     } finally {
-      _isProcessingLocked = false;
-      _processingCompleter?.complete();
-      _processingCompleter = null;
-      _cancelToken = null;
-      debugPrint('🔓 Lock released');
+      _busy = false;
+      _busyVN.value = false;
+      _statusVN.value = null;
+      if (mounted) unawaited(_resumeScanning());
     }
   }
 
-  // ─── PROSES BARCODE ──────────────────────────────────────────
-
-  void _processBarcode(String code) {
-    if (_isNavigating || _manualFlowBusy) {
-      debugPrint('⏭️ Skip scan: busy');
-      return;
-    }
-
-    _executeWithProcessingLock((token) async {
-      _processingCount++;
-      try {
-        final valid = await _validateBarcodeLocally(code);
-        if (token.isCompleted) return;
-
-        if (!valid) {
-          _showError('Kode tidak valid');
-          return;
-        }
-
-        final existing = await _checkExistingEntry(code);
-        if (token.isCompleted) return;
-
-        if (existing != null) {
-          _showDuplicateDialog(existing);
-          return;
-        }
-
-        final entry = await _saveEntryToFirebase(code);
-        if (token.isCompleted) {
-          debugPrint('⛔ Hasil Firebase diabaikan (cancelled)');
-          return;
-        }
-
-        await _updateUIAfterSave(entry);
-      } finally {
-        _processingCount--;
+  Future<void> _openCaptureScreen({required String code, String? entryId}) async {
+    if (widget.mode == ScanCaptureMode.photo) {
+      final result = await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PhotoScanScreen(barcode: code, entryId: entryId),
+        ),
+      );
+      if (!mounted) return;
+      if (result is Map && result['error'] != null) {
+        _showError('Gagal menyimpan foto: ${result['error']}');
+        return;
       }
-    }).catchError((e) {
-      _showError('Gagal memproses barcode: $e');
-    });
+      final count = result is Map ? (result['count'] as int? ?? 0) : 0;
+      if (count > 0) {
+        _savedCount += count;
+        _showSuccess(code);
+      }
+    } else {
+      final result = await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => VideoScanScreen(barcode: code, entryId: entryId),
+        ),
+      );
+      if (!mounted) return;
+      if (result is Map && result['path'] != null) {
+        _savedCount++;
+        _showSuccess(code);
+      }
+    }
   }
 
   // ─── MANUAL INPUT ─────────────────────────────────────────────
 
-  void _showManualInput() {
-    if (_manualFlowBusy) return;
-    _manualFlowBusy = true;
-    _lockNavigation();
+  Future<void> _showManualInput() async {
+    if (_busy) return;
+    _busy = true;
+    _busyVN.value = true;
+    try {
+      await _scannerController.stop();
+    } catch (_) {}
 
-    bool submitted = false;
-
-    showModalBottomSheet(
+    final code = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (_) => _ManualInputDialog(
-        onSubmitted: (code) {
-          submitted = true;
-          _confirmAndProcessManualCode(code);
-        },
-      ),
-    ).whenComplete(() {
-      _unlockNavigation();
-      if (!submitted) {
-        _manualFlowBusy = false;
-        debugPrint('🔄 Manual input dismissed without submit');
-        if (_processingCount == 0 && mounted) {
-          _resumeScanning();
-        }
-      }
-    });
-  }
+      builder: (_) => const _ManualInputSheet(),
+    );
 
-  Future<void> _confirmAndProcessManualCode(String code) async {
-    try {
-      await _executeWithProcessingLock((token) async {
-        _processingCount++;
-        try {
-          final valid = await _validateBarcodeLocally(code);
-          if (token.isCompleted) return;
-          if (!valid) {
-            _showError('Kode tidak valid');
-            return;
-          }
+    if (!mounted) return;
 
-          final existing = await _checkExistingEntry(code);
-          if (token.isCompleted) return;
-          if (existing != null) {
-            _showDuplicateDialog(existing);
-            return;
-          }
-
-          final entry = await _saveEntryFromManual(code);
-          if (token.isCompleted) return;
-          await _updateUIAfterSave(entry);
-        } finally {
-          _processingCount--;
-        }
-      });
-    } catch (e) {
-      _showError('Gagal menyimpan manual: $e');
-    } finally {
-      _manualFlowBusy = false;
-      if (_processingCount == 0 && mounted) {
-        _resumeScanning();
-      }
+    if (code == null || code.isEmpty) {
+      _busy = false;
+      _busyVN.value = false;
+      unawaited(_resumeScanning());
+      return;
     }
+
+    // `_handleCode` sendiri yang men-toggle `_busy` kembali ke false di
+    // blok `finally`-nya begitu selesai (termasuk resume scanner).
+    await _handleCode(code);
   }
 
-  // ─── UI ───────────────────────────────────────────────────────
+  // ─── DIALOG & FEEDBACK ──────────────────────────────────────────
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Scan Barcode'),
+  Future<bool?> _showDuplicateDialog(ScanEntry existing) {
+    final mediaLabel = widget.mode == ScanCaptureMode.photo ? 'foto' : 'video';
+    return showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Kode Sudah Ada'),
+        content: Text(
+          'Barcode "${existing.value}" sudah tercatat pada '
+          '${existing.formattedTimestamp}.\n\n'
+          'Tambahkan $mediaLabel baru ke entry yang sama?',
+        ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.flash_on),
-            onPressed: () => _scannerController.toggleTorch(),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Batal'),
           ),
-        ],
-      ),
-      body: Stack(
-        children: [
-          MobileScanner(
-            controller: _scannerController,
-            onDetect: (capture) {
-              final barcodes = capture.barcodes;
-              if (barcodes.isNotEmpty) {
-                final code = barcodes.first.rawValue;
-                if (code != null && code.isNotEmpty) {
-                  _activeScanVN.value = capture;
-                  _processBarcode(code);
-                }
-              }
-            },
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Lanjutkan'),
           ),
-          ValueListenableBuilder<BarcodeCapture?>(
-            valueListenable: _activeScanVN,
-            builder: (_, capture, __) {
-              if (capture == null) return const SizedBox.shrink();
-              return Positioned(
-                top: 100,
-                left: 0,
-                right: 0,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  color: Colors.black54,
-                  child: const Text(
-                    '📷 Mendeteksi...',
-                    style: TextStyle(color: Colors.white),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              );
-            },
-          ),
-          Positioned(
-            bottom: 40,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: FloatingActionButton.extended(
-                onPressed: _manualFlowBusy ? null : _showManualInput,
-                icon: const Icon(Icons.edit),
-                label: const Text('Input Manual'),
-              ),
-            ),
-          ),
-          if (_processingCount > 0)
-            const Positioned(
-              bottom: 120,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: CircularProgressIndicator(),
-              ),
-            ),
         ],
       ),
     );
   }
 
-  // ─── HELPERS ──────────────────────────────────────────────────
-
-  void _lockNavigation() => _isNavigating = true;
-  void _unlockNavigation() => _isNavigating = false;
+  void _showSuccess(String code) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('✅ Berhasil: $code'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
 
   void _showError(String msg) {
     if (!mounted) return;
@@ -371,67 +279,96 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     );
   }
 
-  void _showDuplicateDialog(dynamic existing) {
-    if (!mounted) return;
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Kode sudah ada'),
-        content: Text('Entry dengan kode ini sudah tersimpan.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('OK'),
+  // ─── UI ───────────────────────────────────────────────────────
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithDidPop: (didPop, result) {
+        if (didPop) return;
+        Navigator.pop(context, _savedCount > 0 ? {'count': _savedCount} : null);
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(widget.mode == ScanCaptureMode.photo ? 'Scan Foto' : 'Scan Video'),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () => Navigator.pop(
+              context,
+              _savedCount > 0 ? {'count': _savedCount} : null,
+            ),
           ),
-        ],
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.flash_on),
+              onPressed: () => _scannerController.toggleTorch(),
+            ),
+          ],
+        ),
+        body: Stack(
+          children: [
+            MobileScanner(controller: _scannerController, onDetect: _onDetect),
+            ValueListenableBuilder<String?>(
+              valueListenable: _statusVN,
+              builder: (_, status, __) {
+                if (status == null) return const SizedBox.shrink();
+                return Positioned(
+                  top: 100,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    color: Colors.black54,
+                    child: Text(
+                      status,
+                      style: const TextStyle(color: Colors.white),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                );
+              },
+            ),
+            Positioned(
+              bottom: 40,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: ValueListenableBuilder<bool>(
+                  valueListenable: _busyVN,
+                  builder: (_, busy, __) => FloatingActionButton.extended(
+                    onPressed: busy ? null : _showManualInput,
+                    icon: busy
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.edit),
+                    label: Text(busy ? 'Memproses...' : 'Input Manual'),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
-
-  // ==========================================================================
-  // PLACEHOLDER – GANTI DENGAN IMPLEMENTASI NYATA
-  // ==========================================================================
-
-  Future<bool> _validateBarcodeLocally(String code) async {
-    return code.isNotEmpty && code.length >= 4;
-  }
-
-  Future<dynamic> _checkExistingEntry(String code) async {
-    return null;
-  }
-
-  Future<dynamic> _saveEntryToFirebase(String code) async {
-    await Future.delayed(const Duration(seconds: 2));
-    return {'id': 'fire_$code', 'code': code, 'timestamp': DateTime.now()};
-  }
-
-  Future<dynamic> _saveEntryFromManual(String code) async {
-    await Future.delayed(const Duration(seconds: 1));
-    return {'id': 'manual_$code', 'code': code, 'timestamp': DateTime.now()};
-  }
-
-  Future<void> _updateUIAfterSave(dynamic entry) async {
-    debugPrint('✅ Entry tersimpan: $entry');
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('✅ Berhasil: ${entry['code']}')),
-    );
-  }
 }
 
 // ============================================================================
-// DIALOG INPUT MANUAL
+// BOTTOM SHEET INPUT MANUAL
 // ============================================================================
 
-class _ManualInputDialog extends StatefulWidget {
-  final void Function(String code) onSubmitted;
-  const _ManualInputDialog({required this.onSubmitted});
+class _ManualInputSheet extends StatefulWidget {
+  const _ManualInputSheet();
 
   @override
-  State<_ManualInputDialog> createState() => _ManualInputDialogState();
+  State<_ManualInputSheet> createState() => _ManualInputSheetState();
 }
 
-class _ManualInputDialogState extends State<_ManualInputDialog> {
+class _ManualInputSheetState extends State<_ManualInputSheet> {
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
 
@@ -446,6 +383,20 @@ class _ManualInputDialogState extends State<_ManualInputDialog> {
     _controller.dispose();
     _focusNode.dispose();
     super.dispose();
+  }
+
+  void _submit() {
+    final code = _controller.text.trim();
+    if (code.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Kode tidak boleh kosong'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+    Navigator.pop(context, code);
   }
 
   @override
@@ -475,7 +426,7 @@ class _ManualInputDialogState extends State<_ManualInputDialog> {
               border: OutlineInputBorder(),
               prefixIcon: Icon(Icons.qr_code),
             ),
-            onSubmitted: (value) => _submit(),
+            onSubmitted: (_) => _submit(),
           ),
           const SizedBox(height: 16),
           Row(
@@ -496,20 +447,5 @@ class _ManualInputDialogState extends State<_ManualInputDialog> {
         ],
       ),
     );
-  }
-
-  void _submit() {
-    final code = _controller.text.trim();
-    if (code.isNotEmpty) {
-      widget.onSubmitted(code);
-      Navigator.pop(context);
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Kode tidak boleh kosong'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-    }
   }
 }

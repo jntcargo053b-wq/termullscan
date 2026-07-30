@@ -81,6 +81,12 @@ class StorageService {
 
   Future<ScanEntry?> getEntry(String id) async => _db.getEntry(id);
 
+  /// Cek duplikat kode (barcode/manual) sebelum membuat entry baru.
+  /// Exact match by `value`, bukan LIKE — lihat catatan di
+  /// DatabaseHelper.getEntryByValue.
+  Future<ScanEntry?> getEntryByValue(String value) async =>
+      _db.getEntryByValue(value);
+
   Future<void> migrateFromJson(List<ScanEntry> entries) async =>
       _db.migrateFromJson(entries);
 

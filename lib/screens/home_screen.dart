@@ -155,7 +155,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         final result = await Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) => const BarcodeScanScreen(),
+                            builder: (_) => const BarcodeScanScreen(
+                              mode: ScanCaptureMode.photo,
+                            ),
                           ),
                         );
                         if (result != null) await _loadData();
@@ -170,7 +172,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         final result = await Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) => const BarcodeScanScreen(),
+                            builder: (_) => const BarcodeScanScreen(
+                              mode: ScanCaptureMode.video,
+                            ),
                           ),
                         );
                         if (result != null) await _loadData();
