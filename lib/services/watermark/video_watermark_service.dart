@@ -9,7 +9,6 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
-import 'package:flutter/painting.dart' show TextPainter, TextSpan, TextStyle;
 import 'package:intl/intl.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit_config.dart';
@@ -66,11 +65,9 @@ class VideoWatermarkService {
   static const int _memoryCheckInterval = 30;
 
   // ===================== KONSTANTA PADDING & MARGIN =====================
-  
-  // Internal padding: jarak antara konten watermark dengan tepi overlay
-  static const double _internalPadding = 20.0;
-  
-  // Step-based margin ke tepi video
+
+  // Step-based margin ke tepi video (dipakai fallback drawtext saja —
+  // jalur overlay PNG utama sudah menangani padding di dalam layout)
   // Menggunakan nilai bulat yang konsisten untuk resolusi standar
   static const Map<int, int> _marginByResolution = {
     480: 16,   // SD
@@ -435,23 +432,27 @@ class VideoWatermarkService {
         debugPrint('🔄 Rotasi terdeteksi: ${videoInfo.rotation}°');
       }
 
-      // HITUNG EDGE MARGIN (step-based)
-      final edgeMargin = computeEdgeMargin(displayWidth, displayHeight);
-      debugPrint('📏 Edge margin: ${edgeMargin}px '
-          '(shortSide: ${min(displayWidth, displayHeight)}px)');
-
       _currentDuration = videoInfo.duration;
 
-      // KOMPUTASI UKURAN WATERMARK
-      final (needW, needH) = _computeWatermarkSize(settings, entry);
-      
-      // Overlay size = watermark size + internal padding
-      int ovW = needW + (_internalPadding * 2).ceil();
-      int ovH = needH + (_internalPadding * 2).ceil();
-      ovW = (ovW ~/ 2) * 2;
-      ovH = (ovH ~/ 2) * 2;
-      debugPrint('🎨 Overlay akan dirender pada ${ovW}x${ovH} '
-          '(internal padding: ${_internalPadding}px)');
+      // ─── UKURAN OVERLAY = UKURAN FRAME VIDEO ASLI ────────────────
+      // PENTING: overlay TIDAK BOLEH di-crop ke kotak kecil hasil
+      // tebakan TextPainter (_computeWatermarkSize lama). Setiap
+      // layout (Professional/Minimal/Stamp/Timestamp) menghitung
+      // baseSize = min(canvasWidth, canvasHeight) dan menurunkan
+      // SEMUA proporsi (font, padding, tinggi bar, ukuran logo) dari
+      // baseSize itu — bukan dari settings.fontSize. Kalau canvas
+      // yang dikirim adalah kotak kecil, baseSize-nya ikut kecil dan
+      // proporsi yang dihasilkan tidak nyambung dengan kotak yang
+      // sudah ditentukan lebih dulu oleh formula yang berbeda
+      // (settings.fontSize mentah). Dengan canvas = ukuran frame
+      // video asli, baseSize yang dipakai layout SAMA PERSIS dengan
+      // yang akan dipakai kalau watermark ini dirender di foto biasa
+      // — jadi ukuran & posisinya konsisten, dan posisi (pojok/bar)
+      // sudah ditangani sendiri oleh masing-masing layout di dalam
+      // computeMetrics()/paintWatermarkOnly() menggunakan data.position.
+      final ovW = displayWidth;
+      final ovH = displayHeight;
+      debugPrint('🎨 Overlay akan dirender full-frame ${ovW}x${ovH}');
 
       // RENDER OVERLAY
       final overlayResult = await _renderOverlay(
@@ -479,32 +480,14 @@ class VideoWatermarkService {
       overlayPath = overlayResult.$1;
       if (overlayPath == null) throw Exception('Overlay path null');
 
-      // KOMPUTASI POSISI menggunakan edge margin yang sudah dihitung
-      switch (settings.position) {
-        case WatermarkPosition.bottomRight:
-          overlayOffsetX = displayWidth - ovW - edgeMargin;
-          overlayOffsetY = displayHeight - ovH - edgeMargin;
-          break;
-        case WatermarkPosition.bottomLeft:
-          overlayOffsetX = edgeMargin;
-          overlayOffsetY = displayHeight - ovH - edgeMargin;
-          break;
-        case WatermarkPosition.topRight:
-          overlayOffsetX = displayWidth - ovW - edgeMargin;
-          overlayOffsetY = edgeMargin;
-          break;
-        case WatermarkPosition.topLeft:
-          overlayOffsetX = edgeMargin;
-          overlayOffsetY = edgeMargin;
-          break;
-      }
-      
-      // CLAMP POSISI (mencegah offset negatif)
-      overlayOffsetX = max(0, overlayOffsetX);
-      overlayOffsetY = max(0, overlayOffsetY);
-      
-      debugPrint('🖼️ Overlay PNG siap, posisi ($overlayOffsetX,$overlayOffsetY) '
-          'dengan edge margin ${edgeMargin}px');
+      // Overlay sudah seukuran frame & watermark sudah digambar pada
+      // posisi yang benar DI DALAM overlay itu sendiri (oleh layout,
+      // berdasarkan data.position) — jadi overlay ditempel pas di
+      // (0,0), bukan digeser lagi dari luar.
+      overlayOffsetX = 0;
+      overlayOffsetY = 0;
+
+      debugPrint('🖼️ Overlay PNG siap (full-frame, posisi ditangani layout)');
 
       // SETUP SESSION
       await _sessionLock.synchronized(() async {
@@ -606,49 +589,6 @@ class VideoWatermarkService {
         } catch (_) {}
       }
     }
-  }
-
-  // ===================== KOMPUTASI UKURAN WATERMARK =====================
-
-  static (int, int) _computeWatermarkSize(WatermarkSettings settings, ScanEntry entry) {
-    final operator = settings.operatorName.isNotEmpty ? settings.operatorName : '';
-    final company = settings.companyName.isNotEmpty ? '\n${settings.companyName}' : '';
-    final dateFormat = DateFormat('yyyy-MM-dd HH:mm:ss');
-    final timestamp = dateFormat.format(entry.timestamp);
-    final barcode = entry.value ?? 'No Barcode';
-    final location = entry.locationName ?? '';
-
-    String text = '$operator$company\n$timestamp\n$barcode';
-    if (location.isNotEmpty) text += '\n$location';
-
-    final textStyle = TextStyle(
-      fontSize: settings.fontSize.toDouble(),
-      fontFamily: settings.fontFamily,
-      color: const ui.Color(0xFFFFFFFF),
-    );
-    final textSpan = TextSpan(text: text, style: textStyle);
-    final painter = TextPainter(
-      text: textSpan,
-      textDirection: ui.TextDirection.ltr,
-    );
-    painter.layout(maxWidth: double.infinity);
-    final size = painter.size;
-
-    // Hanya ukuran konten, padding akan ditambahkan di overlay
-    int w = size.width.ceil();
-    int h = size.height.ceil();
-    
-    if (settings.hasLogo && settings.logoPath != null) {
-      w += 60;
-      h = max(h, 70);
-    }
-    
-    // Minimal ukuran agar tidak terlalu kecil
-    w = max(w, 100);
-    h = max(h, 50);
-    w = (w ~/ 2) * 2;
-    h = (h ~/ 2) * 2;
-    return (w, h);
   }
 
   // ===================== GET VIDEO INFO =====================
