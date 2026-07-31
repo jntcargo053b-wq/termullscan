@@ -31,6 +31,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'pod_gps_engine.dart';
 import 'pod_address_resolver.dart';
+import 'gnss_quality_service.dart';
 import '../models/resolved_location.dart';
 
 export 'pod_gps_engine.dart' show PodConfidence, PodConfidenceLabel, PodLockResult;
@@ -67,6 +68,14 @@ class PodLocationState {
   final double? addressLat;
   final double? addressLon;
 
+  /// true jika native side sedang mengirim data GNSS (Android saja)
+  /// DAN confidence belum tembus "good/excellent" karena jumlah
+  /// satelit/C-N0 belum memenuhi ambang (bukan karena accuracy OS).
+  /// UI bisa memakai ini untuk pesan yang lebih akurat daripada
+  /// sekadar "mencari sinyal", misal "sinyal GNSS masih lemah —
+  /// coba dekat jendela/area terbuka".
+  final bool gnssGateActive;
+
   const PodLocationState({
     this.lat,
     this.lon,
@@ -86,6 +95,7 @@ class PodLocationState {
     this.mockDetected = false,
     this.addressLat,
     this.addressLon,
+    this.gnssGateActive = false,
   });
 
   PodLocationState copyWith({
@@ -107,6 +117,7 @@ class PodLocationState {
     bool? mockDetected,
     double? addressLat,
     double? addressLon,
+    bool? gnssGateActive,
     bool clearPosition = false,
     bool clearAddress = false,
     bool clearLockResult = false,
@@ -133,6 +144,7 @@ class PodLocationState {
     mockDetected:   mockDetected   ?? this.mockDetected,
     addressLat:     clearAddress ? null : addressLat ?? this.addressLat,
     addressLon:     clearAddress ? null : addressLon ?? this.addressLon,
+    gnssGateActive: gnssGateActive ?? this.gnssGateActive,
   );
 
   bool get hasPosition => lat != null && lon != null;
@@ -191,6 +203,12 @@ class PodLocationService {
 
   // Dependencies
   final PodGpsEngine _gpsEngine = PodGpsEngine();
+  final GnssQualityService _gnssQuality = GnssQualityService.instance;
+
+  // Data GNSS dianggap terlalu basi untuk dipasangkan dengan sample
+  // posisi jika lebih tua dari ini — mencegah quality lama (misal dari
+  // sesaat sebelum tersembunyi di balik gedung) menempel ke sample baru.
+  static const Duration _gnssQualityMaxAge = Duration(seconds: 3);
 
   StreamSubscription<Position>? _positionStream;
   Timer? _staleTimer;
@@ -381,6 +399,7 @@ class PodLocationService {
     _stateCtrl.close();
     PodAddressResolver.close();
     _gpsEngine.dispose();
+    _gnssQuality.dispose();
   }
 
   // ── INTERNAL: start acquire ──────────────────────────────────
@@ -390,6 +409,7 @@ class PodLocationService {
     _stopStream();
     _gpsEngine.reset();
     _cancelTimers();
+    _gnssQuality.start();
     _geocodeDone = false;
     _lastGeocodeLat = null;
     _lastGeocodeLon = null;
@@ -550,8 +570,20 @@ class PodLocationService {
       return;
     }
 
+    // Pasangkan data GNSS terbaru (jika masih cukup segar) dengan
+    // sample posisi ini. Jika platform tidak mendukung (iOS) atau
+    // belum ada data masuk, keduanya tetap null → gate otomatis
+    // nonaktif di PodGpsEngine (fallback ke logika accuracy-only).
+    final gnss = _gnssQuality.latest;
+    final gnssFresh = gnss != null &&
+        DateTime.now().difference(gnss.timestamp) <= _gnssQualityMaxAge;
+
     // Proses sample; return value tidak digunakan
-    _gpsEngine.processSample(raw);
+    _gpsEngine.processSample(
+      raw,
+      gnssSatellitesUsed: gnssFresh ? gnss.satellitesUsedInFix : null,
+      gnssAvgCn0DbHz: gnssFresh ? gnss.avgCn0DbHz : null,
+    );
 
     final conf     = _gpsEngine.confidence;
     final lock     = _gpsEngine.lockResult;
@@ -573,6 +605,7 @@ class PodLocationService {
       isFallbackLock: _gpsEngine.isFallbackLock,
       mode:           PodGpsMode.acquiring,
       mockDetected:   false,
+      gnssGateActive: _gpsEngine.gnssGateActive && !conf.canCapture,
     ));
 
     // ✅ FIX ALAMAT TIDAK MUNCUL: dulu geocode hanya dipicu kalau
@@ -877,6 +910,7 @@ class PodLocationService {
   void _stopStream() {
     _positionStream?.cancel();
     _positionStream = null;
+    _gnssQuality.stop();
   }
 
   void _cancelTimers() {

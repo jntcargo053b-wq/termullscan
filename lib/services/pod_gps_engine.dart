@@ -42,6 +42,14 @@ class GpsConfig {
   final double outlierMadFactor;
   final double outlierMinThreshold;
 
+  // ── GNSS quality gate (BARU) ─────────────────────────────────
+  // Hanya aktif di Android & hanya jika native side benar-benar
+  // mengirim data (lihat PodSample.passesGnssGate). Tujuannya
+  // menyaring fix yang accuracy-nya *terlihat* bagus tapi sinyalnya
+  // sebenarnya lemah/multipath (umum terjadi di gudang beratap logam).
+  final int minGnssSatellitesUsed;
+  final double minGnssAvgCn0DbHz;
+
   const GpsConfig({
     this.accuracyThreshold = 25.0,
     this.captureThreshold = 20.0,
@@ -56,6 +64,8 @@ class GpsConfig {
     this.outlierMinSamples = 4,
     this.outlierMadFactor = 3.0,
     this.outlierMinThreshold = 5.0,
+    this.minGnssSatellitesUsed = 6,
+    this.minGnssAvgCn0DbHz = 22.0,
   });
 }
 
@@ -93,18 +103,43 @@ class PodSample {
   final double accuracy;
   final int timestampMs;
 
+  // ── GNSS quality (BARU, opsional) ────────────────────────────
+  // null jika platform tidak mendukung (iOS) atau native side belum
+  // sempat kirim data GNSS untuk sample ini. Saat null, sample ini
+  // TIDAK ikut menyaring (gate dianggap lolos) — sistem fallback
+  // penuh ke logika accuracy-only lama.
+  final int? gnssSatellitesUsed;
+  final double? gnssAvgCn0DbHz;
+
   const PodSample({
     required this.lat,
     required this.lon,
     required this.accuracy,
     required this.timestampMs,
+    this.gnssSatellitesUsed,
+    this.gnssAvgCn0DbHz,
   });
 
   DateTime get time => DateTime.fromMillisecondsSinceEpoch(timestampMs);
 
+  bool get hasGnssData =>
+      gnssSatellitesUsed != null && gnssAvgCn0DbHz != null;
+
+  /// Lolos gate jika: tidak ada data GNSS (tidak digating), ATAU
+  /// jumlah satelit & C/N0 memenuhi ambang minimum.
+  bool passesGnssGate(GpsConfig config) {
+    final sats = gnssSatellitesUsed;
+    final cn0 = gnssAvgCn0DbHz;
+    if (sats == null || cn0 == null) return true;
+    return sats >= config.minGnssSatellitesUsed &&
+        cn0 >= config.minGnssAvgCn0DbHz;
+  }
+
   @override
   String toString() =>
-      'PodSample(lat=$lat, lon=$lon, acc=${accuracy.toStringAsFixed(1)}m, time=$time)';
+      'PodSample(lat=$lat, lon=$lon, acc=${accuracy.toStringAsFixed(1)}m, '
+      'time=$time, gnss=${hasGnssData ? "$gnssSatellitesUsed sat/"
+          "${gnssAvgCn0DbHz!.toStringAsFixed(1)}dBHz" : "n/a"})';
 }
 
 // ── Lock Result ────────────────────────────────────────────────
@@ -209,6 +244,12 @@ class PodGpsEngine {
   bool _locked = false;
   bool _isFallbackLock = false;
 
+  /// true jika native side pernah kirim data GNSS untuk window
+  /// saat ini (dipakai UI untuk menampilkan info "menunggu sinyal
+  /// GNSS lebih kuat" saat gate belum lolos).
+  bool _gnssGateActive = false;
+  bool get gnssGateActive => _gnssGateActive;
+
   // ─── Constructor ──────────────────────────────────────────────
   PodGpsEngine({GpsConfig? config}) : _config = config ?? const GpsConfig();
 
@@ -248,7 +289,15 @@ class PodGpsEngine {
   }
 
   // ─── Proses satu sample dari OS ──────────────────────────────
-  bool processSample(Position raw) {
+  /// [gnssSatellitesUsed]/[gnssAvgCn0DbHz]: hasil GnssQualitySample
+  /// terbaru (jika ada dan cukup baru) untuk sample posisi ini.
+  /// Biarkan null bila platform tidak mendukung (iOS) atau data
+  /// GNSS terlalu basi untuk dipasangkan dengan sample ini.
+  bool processSample(
+    Position raw, {
+    int? gnssSatellitesUsed,
+    double? gnssAvgCn0DbHz,
+  }) {
     // Mock GPS → tolak
     if (raw.isMocked) {
       _log('mock GPS terdeteksi (isMocked), skip', level: GpsLogLevel.info);
@@ -293,6 +342,8 @@ class PodGpsEngine {
       lon: raw.longitude,
       accuracy: raw.accuracy,
       timestampMs: raw.timestamp.millisecondsSinceEpoch,
+      gnssSatellitesUsed: gnssSatellitesUsed,
+      gnssAvgCn0DbHz: gnssAvgCn0DbHz,
     );
     _window.add(sample);
     if (_window.length > _config.maxWindow) _window.removeAt(0);
@@ -384,18 +435,35 @@ class PodGpsEngine {
     final radius = stats.radiusMeters;
     final n = cleaned.length;
 
+    // ── GNSS gate (BARU) ──────────────────────────────────────
+    // Hanya menyalakan syarat ini jika native side memang pernah
+    // kirim data GNSS untuk window ini — kalau tidak (iOS, atau
+    // Android yang belum sempat terima callback pertama), gate
+    // dianggap lolos semua (fallback penuh ke logika lama).
+    final gnssDataAvailable = cleaned.any((s) => s.hasGnssData);
+    final gnssGatedCount =
+        cleaned.where((s) => s.passesGnssGate(_config)).length;
+    _gnssGateActive = gnssDataAvailable;
+    final gnssOk = !gnssDataAvailable || gnssGatedCount >= _config.targetSamples;
+
     PodConfidence newConf;
 
     if (n >= _config.targetSamples &&
         avgAcc <= _config.excellentThreshold &&
         stdDev <= _config.excellentMaxStdDev &&
-        radius <= _config.excellentMaxRadius) {
+        radius <= _config.excellentMaxRadius &&
+        gnssOk) {
       newConf = PodConfidence.excellent;
       _locked = true;
-    } else if (n >= _config.targetSamples && avgAcc <= _config.captureThreshold) {
+    } else if (n >= _config.targetSamples &&
+        avgAcc <= _config.captureThreshold &&
+        gnssOk) {
       newConf = PodConfidence.good;
       _locked = true;
     } else if (n >= 1 && avgAcc <= _config.accuracyThreshold) {
+      // Tetap "fair" walau GNSS gate belum lolos — UI bisa menampilkan
+      // status stabilisasi tanpa memblokir selamanya; force-lock via
+      // timeout tetap tersedia sebagai fallback (lihat _forceLock).
       newConf = PodConfidence.fair;
     } else {
       newConf = PodConfidence.poor;
@@ -594,6 +662,7 @@ class PodGpsEngine {
     _isFallbackLock = false;
     _confidence = PodConfidence.searching;
     _posInit = false;
+    _gnssGateActive = false;
     _timeoutTimer?.cancel();
     _timeoutTimer = null;
   }
@@ -615,6 +684,7 @@ class PodGpsEngine {
       'canCapture': canCapture,
       'isLocked': _locked,
       'isFallback': _isFallbackLock,
+      'gnssGateActive': _gnssGateActive,
       'sampleCount': _window.length,
       'samplesNeeded': _config.targetSamples,
       'progress': lockProgress,

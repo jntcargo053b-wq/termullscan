@@ -621,18 +621,22 @@ class VideoWatermarkService {
           displayWidth = w;
           displayHeight = h;
 
-          // Baca rotasi dari tag
-          final tags = stream.getTags();
-          if (tags != null) {
-            final rotateTag = tags['rotate'];
-            if (rotateTag != null) {
-              final rotValue = int.tryParse(rotateTag.toString());
-              if (rotValue != null) {
-                rotation = rotValue % 360;
-                if (rotation < 0) rotation += 360;
-              }
-            }
-          }
+          // Baca rotasi dari DUA sumber: tag 'rotate' lama (legacy) DAN
+          // display matrix side_data (cara modern yang dipakai banyak
+          // kamera Android/iOS sekarang). Kalau hanya cek tag 'rotate',
+          // video yang rotasinya disimpan via display matrix akan
+          // terbaca rotation=0 di sini padahal FFmpeg tetap
+          // memutarnya otomatis saat filter_complex diproses —
+          // akibatnya displayWidth/displayHeight tidak ditukar,
+          // overlay dirender landscape sementara frame asli portrait,
+          // dan watermark jadi jatuh di tengah video, bukan di bawah.
+          final rotationTag = _getRotationTag(stream);
+          final displayMatrix = _getDisplayMatrix(stream);
+          rotation = _getEffectiveRotation(rotationTag, displayMatrix);
+
+          debugPrint('📐 Stream: ${width}x${height}, '
+              'Tag: $rotationTag°, Matrix: $displayMatrix°, '
+              'Efektif: $rotation°');
 
           // Sesuaikan display dimensions berdasarkan rotasi
           if (rotation == 90 || rotation == 270) {
@@ -697,6 +701,56 @@ class VideoWatermarkService {
     }
   }
 
+  // Rotasi dari tag metadata lama (mis. 'rotate: 90' pada stream tags)
+  static int _getRotationTag(dynamic stream) {
+    try {
+      final tags = stream.getTags();
+      if (tags != null && tags.containsKey('rotate')) {
+        final rotStr = tags['rotate']?.toString() ?? '0';
+        return int.tryParse(rotStr) ?? 0;
+      }
+    } catch (_) {}
+    return 0;
+  }
+
+  // Rotasi dari display matrix side_data (cara modern, dipakai banyak
+  // kamera Android/iOS terbaru — TIDAK muncul di tags['rotate'])
+  static int _getDisplayMatrix(dynamic stream) {
+    try {
+      final props = stream.getAllProperties() as Map?;
+      final sideDataList = props?['side_data_list'];
+      if (sideDataList is List) {
+        for (final sd in sideDataList) {
+          if (sd is Map && sd.containsKey('rotation')) {
+            final raw = sd['rotation'];
+            final rot = raw is num ? raw.toInt() : int.tryParse('$raw') ?? 0;
+            if (rot != 0) {
+              return -rot;
+            }
+          }
+        }
+      }
+    } catch (_) {}
+    return 0;
+  }
+
+  // Display matrix diprioritaskan kalau ada (lebih dipercaya & lebih
+  // sering dipakai encoder modern); fallback ke tag rotate lama
+  static int _getEffectiveRotation(int rotationTag, int displayMatrix) {
+    if (displayMatrix != 0) {
+      return _normalizeRotation(displayMatrix);
+    } else if (rotationTag != 0) {
+      return _normalizeRotation(rotationTag);
+    }
+    return 0;
+  }
+
+  static int _normalizeRotation(int rotation) {
+    var r = rotation % 360;
+    if (r < 0) r += 360;
+    return ((r + 45) ~/ 90) * 90 % 360;
+  }
+
   // ===================== BUILD FFMPEG ARGUMENTS =====================
 
   static List<String> _buildFFmpegArguments({
@@ -711,6 +765,12 @@ class VideoWatermarkService {
     if (!File(inputPath).existsSync()) throw Exception('Input file not found');
     if (!File(overlayPath).existsSync()) throw Exception('Overlay file not found');
 
+    // Orientasi video TIDAK diubah di sini — FFmpeg sudah menampilkan
+    // video dengan benar apa adanya. Yang diperbaiki hanya UKURAN
+    // canvas overlay watermark (lihat displayWidth/displayHeight di
+    // render()), supaya watermark digambar pas di posisi yang benar
+    // relatif terhadap tampilan video, bukan relatif terhadap
+    // dimensi mentah sebelum rotasi.
     final filterComplex =
         '[0:v]format=${videoInfo.pixelFormat},setsar=1[base];'
         '[base][1:v]overlay=$offsetX:$offsetY:format=auto:eof_action=pass[outv]';
