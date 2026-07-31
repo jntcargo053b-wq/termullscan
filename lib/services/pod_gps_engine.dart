@@ -488,7 +488,8 @@ class PodGpsEngine {
     _log(
       '${_confidence.label} | '
       'n=$n (rejected=$rejected) avgAcc=${avgAcc.toStringAsFixed(1)}m '
-      'stdDev=${stdDev.toStringAsFixed(1)}m radius=${radius.toStringAsFixed(1)}m locked=$_locked',
+      'stdDev=${stdDev.toStringAsFixed(1)}m radius=${radius.toStringAsFixed(1)}m locked=$_locked | '
+      'gnss=${gnssDataAvailable ? "$gnssGatedCount/$n lolos gate" : "tidak ada data (n/a)"}',
       level: GpsLogLevel.debug,
     );
   }
@@ -554,6 +555,31 @@ class PodGpsEngine {
   }
 
   // ─── Hitung centroid (weighted) ──────────────────────────────
+  // ─── Bobot kualitas GNSS (BARU) ──────────────────────────────
+  /// Mengubah kekuatan sinyal (satelit dipakai + C/N0) menjadi
+  /// pengali bobot untuk centroid. Ini yang sebelumnya HILANG:
+  /// gate lama cuma menahan label confidence, tidak pernah ikut
+  /// menghitung ulang centroid — jadi lat/lon akhir tidak berubah
+  /// sama sekali walau gate "aktif".
+  ///
+  /// Sample tanpa data GNSS (iOS / belum ada payload) → netral (1.0),
+  /// tidak ikut mempengaruhi apa pun (fallback penuh ke logika lama).
+  /// Sample dengan sinyal jauh di bawah ambang → bobotnya diperkecil
+  /// signifikan (bukan nol, supaya window tidak pernah kosong total).
+  /// Sample dengan sinyal jauh di atas ambang → bobotnya diperbesar,
+  /// supaya fix yang benar-benar bersih lebih dominan di centroid.
+  double _gnssQualityWeight(PodSample s) {
+    if (!s.hasGnssData) return 1.0;
+    final satRatio =
+        (s.gnssSatellitesUsed! / _config.minGnssSatellitesUsed).clamp(0.15, 2.5);
+    final cn0Ratio =
+        (s.gnssAvgCn0DbHz! / _config.minGnssAvgCn0DbHz).clamp(0.15, 2.5);
+    // Produk (bukan rata-rata) → sample yang lemah di DUA-DUANYA
+    // (satelit sedikit DAN sinyal lemah, ciri khas multipath berat
+    // di dalam gudang) turun tajam; harus kuat di keduanya untuk naik.
+    return (satRatio * cn0Ratio).clamp(0.05, 4.0);
+  }
+
   _ClusterStats _computeClusterStats(List<PodSample> samples) {
     if (samples.isEmpty) {
       return _ClusterStats(
@@ -572,7 +598,7 @@ class PodGpsEngine {
 
     for (final s in samples) {
       final clampedAcc = max(s.accuracy, 1.0);
-      final w = 1.0 / (clampedAcc * clampedAcc);
+      final w = (1.0 / (clampedAcc * clampedAcc)) * _gnssQualityWeight(s);
       sumLatW += s.lat * w;
       sumLonW += s.lon * w;
       sumW += w;
