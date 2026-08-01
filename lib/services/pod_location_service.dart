@@ -65,6 +65,13 @@ class PodLocationState {
   final PodGpsMode mode;
   final ResolvedLocation? resolvedLocation;
   final bool mockDetected;
+
+  /// true jika PodGpsEngine mencurigai spoofing lewat heuristik lanjutan
+  /// (teleport speed, timestamp mundur, 0 satelit tapi ada fix, accuracy
+  /// vs HDOP tidak konsisten, atau streak fix identik persis) —
+  /// terpisah dari [mockDetected] (flag eksplisit OS) karena ini
+  /// berbasis kecurigaan, bukan kepastian dari sistem operasi.
+  final bool spoofSuspected;
   final double? addressLat;
   final double? addressLon;
 
@@ -93,6 +100,7 @@ class PodLocationState {
     this.mode = PodGpsMode.idle,
     this.resolvedLocation,
     this.mockDetected = false,
+    this.spoofSuspected = false,
     this.addressLat,
     this.addressLon,
     this.gnssGateActive = false,
@@ -115,6 +123,7 @@ class PodLocationState {
     PodGpsMode? mode,
     ResolvedLocation? resolvedLocation,
     bool? mockDetected,
+    bool? spoofSuspected,
     double? addressLat,
     double? addressLon,
     bool? gnssGateActive,
@@ -142,15 +151,16 @@ class PodLocationState {
     resolvedLocation:
         clearAddress ? null : resolvedLocation ?? this.resolvedLocation,
     mockDetected:   mockDetected   ?? this.mockDetected,
+    spoofSuspected: spoofSuspected ?? this.spoofSuspected,
     addressLat:     clearAddress ? null : addressLat ?? this.addressLat,
     addressLon:     clearAddress ? null : addressLon ?? this.addressLon,
     gnssGateActive: gnssGateActive ?? this.gnssGateActive,
   );
 
   bool get hasPosition => lat != null && lon != null;
-  // canCapture WAJIB false selama mock GPS terdeteksi, meskipun
+  // canCapture WAJIB false selama mock/spoof GPS terdeteksi, meskipun
   // confidence masih menyimpan nilai "good/excellent" dari sebelumnya.
-  bool get canCapture  => confidence.canCapture && !mockDetected;
+  bool get canCapture  => confidence.canCapture && !mockDetected && !spoofSuspected;
   bool get isStale     => mode == PodGpsMode.stale;
 
   bool get hasFreshPosition {
@@ -339,6 +349,7 @@ class PodLocationService {
       mode: hasPreview ? PodGpsMode.stale : PodGpsMode.idle,
       positionFromCache: hasPreview,
       mockDetected: false,
+      spoofSuspected: false,
       clearLockResult: true,
       clearAddress: !currentState.hasMatchingAddress,
     ));
@@ -420,6 +431,7 @@ class PodLocationService {
       lockProgress: 0.0,
       mode:         PodGpsMode.acquiring,
       mockDetected: false,
+      spoofSuspected: false,
       positionFromCache: currentState.hasPosition,
       clearLockResult: true,
       clearAddress: !currentState.hasMatchingAddress,
@@ -443,18 +455,20 @@ class PodLocationService {
       } else if (osLast != null &&
           _isTimestampWithin(osLast.timestamp, _cachedPreviewMaxAge)) {
         if (generation != _acquisitionGeneration) return;
-        final recentEnoughForEngine =
-            _isTimestampWithin(osLast.timestamp, PodLocationState.evidenceMaxAge);
-        if (recentEnoughForEngine) _gpsEngine.processSample(osLast);
+        // ⚠️ JANGAN processSample(osLast) ke _gpsEngine.
+        // OS lastKnownPosition cuma untuk preview instan di UI. Kalau
+        // dimasukkan ke _window, dia ikut kehitung di weighted centroid
+        // dan bisa jadi bahan _forceLock() (fallback saat timeout) —
+        // artinya koordinat FINAL (yang dipakai watermark/POD) bisa
+        // berasal dari cache basi, bukan sample GPS live. Engine wajib
+        // mulai murni dari sample live.
         _emit(currentState.copyWith(
           lat:            osLast.latitude,
           lon:            osLast.longitude,
           accuracy:       osLast.accuracy,
           positionTimestamp: osLast.timestamp,
           positionFromCache: true,
-          confidence:     recentEnoughForEngine
-              ? _gpsEngine.confidence
-              : PodConfidence.searching,
+          confidence:     PodConfidence.searching,
           lockProgress:   _gpsEngine.lockProgress,
           isFallbackLock: _gpsEngine.isFallbackLock,
           mode:           PodGpsMode.acquiring,
@@ -583,7 +597,32 @@ class PodLocationService {
       raw,
       gnssSatellitesUsed: gnssFresh ? gnss.satellitesUsedInFix : null,
       gnssAvgCn0DbHz: gnssFresh ? gnss.avgCn0DbHz : null,
+      hdop: gnssFresh ? gnss.hdop : null,
+      pdop: gnssFresh ? gnss.pdop : null,
     );
+
+    // ⭐ Spoofing lanjutan terdeteksi (bukan isMocked, tapi heuristik
+    // lain — lihat PodGpsEngine._evaluateSpoofHeuristics): blokir
+    // capture sama seperti mock, tapi dengan pesan yang beda supaya
+    // user tahu ini kecurigaan berbasis pola, bukan flag OS eksplisit.
+    if (_gpsEngine.spoofSuspected) {
+      _stopStream();
+      _cancelTimers();
+      _acquisitionGeneration++;
+      _latestGeocodeRequest++;
+      _emit(const PodLocationState(
+        confidence: PodConfidence.poor,
+        address: '⚠️ Lokasi mencurigakan terdeteksi — coba di area terbuka',
+        mode: PodGpsMode.idle,
+        spoofSuspected: true,
+      ));
+      if (kDebugMode) {
+        debugPrint(
+          'PodLocationService: spoofing dicurigai (${_gpsEngine.spoofReasons.join("; ")}), blokir capture',
+        );
+      }
+      return;
+    }
 
     final conf     = _gpsEngine.confidence;
     final lock     = _gpsEngine.lockResult;
@@ -605,6 +644,7 @@ class PodLocationService {
       isFallbackLock: _gpsEngine.isFallbackLock,
       mode:           PodGpsMode.acquiring,
       mockDetected:   false,
+      spoofSuspected: false,
       gnssGateActive: _gpsEngine.gnssGateActive && !conf.canCapture,
     ));
 

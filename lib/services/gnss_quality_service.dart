@@ -31,6 +31,16 @@ class GnssQualitySample {
   final int satellitesTotal;
   final int healthySatellitesUsed;
   final double avgCn0DbHz;
+
+  // ── Dilution of Precision (BARU, dari NMEA GSA, Android-only) ──
+  // null jika sentence GSA belum pernah diterima atau sudah basi
+  // (lihat NMEA_DOP_MAX_AGE_MS di native side). Saat null, seluruh
+  // gating berbasis DOP di PodGpsEngine otomatis nonaktif — fallback
+  // penuh ke logika satelit/CN0/accuracy yang sudah ada.
+  final double? pdop;
+  final double? hdop;
+  final double? vdop;
+
   final DateTime timestamp;
 
   const GnssQualitySample({
@@ -38,6 +48,9 @@ class GnssQualitySample {
     required this.satellitesTotal,
     required this.healthySatellitesUsed,
     required this.avgCn0DbHz,
+    this.pdop,
+    this.hdop,
+    this.vdop,
     required this.timestamp,
   });
 
@@ -48,6 +61,9 @@ class GnssQualitySample {
       healthySatellitesUsed:
           (map['healthySatellitesUsed'] as num?)?.toInt() ?? 0,
       avgCn0DbHz: (map['avgCn0DbHz'] as num?)?.toDouble() ?? 0.0,
+      pdop: (map['pdop'] as num?)?.toDouble(),
+      hdop: (map['hdop'] as num?)?.toDouble(),
+      vdop: (map['vdop'] as num?)?.toDouble(),
       timestamp: DateTime.fromMillisecondsSinceEpoch(
         (map['timestampMs'] as num?)?.toInt() ??
             DateTime.now().millisecondsSinceEpoch,
@@ -55,10 +71,13 @@ class GnssQualitySample {
     );
   }
 
+  bool get hasDop => pdop != null || hdop != null || vdop != null;
+
   @override
   String toString() =>
       'GnssQualitySample(used=$satellitesUsedInFix/$satellitesTotal, '
-      'healthy=$healthySatellitesUsed, avgCn0=${avgCn0DbHz.toStringAsFixed(1)}dBHz)';
+      'healthy=$healthySatellitesUsed, avgCn0=${avgCn0DbHz.toStringAsFixed(1)}dBHz, '
+      'hdop=${hdop?.toStringAsFixed(1) ?? "n/a"}, pdop=${pdop?.toStringAsFixed(1) ?? "n/a"})';
 }
 
 class GnssQualityService {

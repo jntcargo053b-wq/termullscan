@@ -10,7 +10,9 @@
 //   excellent max radius (cluster)     : 12m
 //   outlier rejection (MAD-based)      : BARU
 //   confidence score (0–1)             : BARU
-//   hard timeout       : 12 detik
+//   timeout            : adaptif — 8 detik outdoor, 15 detik indoor
+//                         (dideteksi dari sample pertama: GNSS sat/CN0
+//                         kalau ada, fallback ke accuracy OS)
 //   target samples     : 3 (fast lock), max 10 untuk refine
 //   min sampel utk Excellent : 3
 //   centroid           : weighted (bobot 1/accuracy²)
@@ -19,6 +21,12 @@
 //   startup            : lastKnownPosition (OS cache + SharedPrefs)
 //   distanceFilter     : 0 saat acquiring, 5 setelah locked
 //   mock GPS           : ditolak (raw.isMocked) + heuristik akurasi=0
+//                         + deteksi spoofing lanjutan (teleport speed,
+//                         timestamp mundur, 0 satelit tapi ada fix,
+//                         accuracy vs HDOP tidak konsisten, streak fix
+//                         identik persis) — lihat _evaluateSpoofHeuristics
+//   DOP                : HDOP/PDOP dari NMEA GSA (opsional, Android),
+//                         ikut menyaring gate GNSS kalau tersedia
 // ============================================================
 
 import 'dart:async';
@@ -35,7 +43,20 @@ class GpsConfig {
   final double excellentMaxRadius;
   final int targetSamples;
   final int maxWindow;
-  final Duration hardTimeout;
+
+  // ── Timeout adaptif indoor/outdoor (BARU) ────────────────────
+  // Di luar/langit terbuka, GPS lock cepat (3-5 detik) → timeout
+  // pendek supaya capture tidak terasa lambat. Di gudang/indoor,
+  // sinyal lemah & multipath butuh waktu lebih lama untuk kumpul
+  // sample yang layak sebelum force-lock — timeout diperpanjang.
+  // Lingkungan dideteksi dari sample PERTAMA yang masuk window:
+  //   - Android + data GNSS tersedia → pakai satelit/C-N0 (akurat)
+  //   - Selain itu (iOS, atau GNSS native belum sempat kirim data)
+  //     → fallback ke accuracy sample pertama vs [indoorAccuracyHint]
+  final Duration outdoorTimeout;
+  final Duration indoorTimeout;
+  final double indoorAccuracyHint;
+
   final double moveThreshold;
   final double resetThreshold;
   final int outlierMinSamples;
@@ -50,6 +71,30 @@ class GpsConfig {
   final int minGnssSatellitesUsed;
   final double minGnssAvgCn0DbHz;
 
+  // ── Dilution of Precision gate (BARU) ────────────────────────
+  // HDOP/PDOP dari sentence NMEA GSA (lihat gnss_quality_service.dart).
+  // null di sample → gate ini otomatis lolos (fallback ke satelit/CN0/
+  // accuracy). Skala umum: <1 ideal, 1-2 excellent, 2-5 good, 5-10
+  // moderate, >10 buruk (geometri satelit lemah/mengelompok).
+  final double maxHdop;
+  final double maxPdop;
+
+  // ── Deteksi spoofing (BARU) ──────────────────────────────────
+  // Selain raw.isMocked (flag OS, gampang dilewati aplikasi fake-GPS
+  // yang tidak set flag ini), dipakai beberapa heuristik independen:
+  //   1. Kecepatan implisit antar-sample > maxPlausibleSpeedMps → teleport
+  //   2. Timestamp mundur dari sample terakhir → jam dimanipulasi
+  //   3. GNSS lapor 0 satelit dipakai tapi OS tetap kasih fix → mustahil
+  //      untuk fix asli, indikasi kuat lokasi disuntik dari luar GNSS
+  //   4. Accuracy sangat bagus tapi HDOP sangat buruk → tidak konsisten
+  //      secara fisik (accuracy asli berkorelasi dengan geometri satelit)
+  //   5. N sample terakhir punya lat/lon/accuracy IDENTIK persis →
+  //      GPS asli selalu punya jitter kecil, replay statis mencurigakan
+  final double maxPlausibleSpeedMps;
+  final double spoofDopMismatchHdop;
+  final double spoofDopMismatchMaxAccuracy;
+  final int spoofIdenticalStreak;
+
   const GpsConfig({
     this.accuracyThreshold = 25.0,
     this.captureThreshold = 20.0,
@@ -58,7 +103,9 @@ class GpsConfig {
     this.excellentMaxRadius = 12.0,
     this.targetSamples = 3,
     this.maxWindow = 10,
-    this.hardTimeout = const Duration(seconds: 12), // ← FIX: tambahkan 'const'
+    this.outdoorTimeout = const Duration(seconds: 8),
+    this.indoorTimeout = const Duration(seconds: 15),
+    this.indoorAccuracyHint = 20.0,
     this.moveThreshold = 20.0,
     this.resetThreshold = 50.0,
     this.outlierMinSamples = 4,
@@ -66,6 +113,12 @@ class GpsConfig {
     this.outlierMinThreshold = 5.0,
     this.minGnssSatellitesUsed = 6,
     this.minGnssAvgCn0DbHz = 22.0,
+    this.maxHdop = 6.0,
+    this.maxPdop = 8.0,
+    this.maxPlausibleSpeedMps = 55.0, // ~198 km/h, generi utk motor/mobil
+    this.spoofDopMismatchHdop = 8.0,
+    this.spoofDopMismatchMaxAccuracy = 5.0,
+    this.spoofIdenticalStreak = 3,
   });
 }
 
@@ -111,6 +164,10 @@ class PodSample {
   final int? gnssSatellitesUsed;
   final double? gnssAvgCn0DbHz;
 
+  // ── Dilution of Precision (BARU, opsional, dari NMEA GSA) ────
+  final double? hdop;
+  final double? pdop;
+
   const PodSample({
     required this.lat,
     required this.lon,
@@ -118,6 +175,8 @@ class PodSample {
     required this.timestampMs,
     this.gnssSatellitesUsed,
     this.gnssAvgCn0DbHz,
+    this.hdop,
+    this.pdop,
   });
 
   DateTime get time => DateTime.fromMillisecondsSinceEpoch(timestampMs);
@@ -125,21 +184,33 @@ class PodSample {
   bool get hasGnssData =>
       gnssSatellitesUsed != null && gnssAvgCn0DbHz != null;
 
+  bool get hasDopData => hdop != null || pdop != null;
+
   /// Lolos gate jika: tidak ada data GNSS (tidak digating), ATAU
-  /// jumlah satelit & C/N0 memenuhi ambang minimum.
+  /// jumlah satelit & C/N0 memenuhi ambang minimum DAN (kalau ada)
+  /// HDOP/PDOP masih di bawah ambang geometri satelit yang wajar.
   bool passesGnssGate(GpsConfig config) {
     final sats = gnssSatellitesUsed;
     final cn0 = gnssAvgCn0DbHz;
     if (sats == null || cn0 == null) return true;
-    return sats >= config.minGnssSatellitesUsed &&
+    final satOk = sats >= config.minGnssSatellitesUsed &&
         cn0 >= config.minGnssAvgCn0DbHz;
+    if (!satOk) return false;
+
+    final h = hdop;
+    final p = pdop;
+    if (h != null && h > config.maxHdop) return false;
+    if (p != null && p > config.maxPdop) return false;
+    return true;
   }
 
   @override
   String toString() =>
       'PodSample(lat=$lat, lon=$lon, acc=${accuracy.toStringAsFixed(1)}m, '
       'time=$time, gnss=${hasGnssData ? "$gnssSatellitesUsed sat/"
-          "${gnssAvgCn0DbHz!.toStringAsFixed(1)}dBHz" : "n/a"})';
+          "${gnssAvgCn0DbHz!.toStringAsFixed(1)}dBHz" : "n/a"}, '
+      'dop=${hasDopData ? "hdop=${hdop?.toStringAsFixed(1) ?? "-"}/"
+          "pdop=${pdop?.toStringAsFixed(1) ?? "-"}" : "n/a"})';
 }
 
 // ── Lock Result ────────────────────────────────────────────────
@@ -239,7 +310,16 @@ class PodGpsEngine {
   PodConfidence _confidence = PodConfidence.searching;
   Timer? _timeoutTimer;
 
+  /// Timeout yang benar-benar dipakai untuk sesi akuisisi berjalan,
+  /// hasil deteksi indoor/outdoor dari sample pertama. Direset ke
+  /// [GpsConfig.outdoorTimeout] setiap [_hardReset] supaya lingkungan
+  /// dideteksi ulang dari nol (mis. user pindah dari luar ke gudang).
+  late Duration _activeTimeout;
+  Duration get activeTimeout => _activeTimeout;
+  bool get isIndoorDetected => _activeTimeout == _config.indoorTimeout;
+
   double _lastLat = 0, _lastLon = 0;
+  int? _lastSampleTimeMs;
   bool _posInit = false;
   bool _locked = false;
   bool _isFallbackLock = false;
@@ -250,8 +330,21 @@ class PodGpsEngine {
   bool _gnssGateActive = false;
   bool get gnssGateActive => _gnssGateActive;
 
+  /// Latch — sekali true, tetap true sampai [_hardReset] (pindah lokasi
+  /// jauh) atau [reset] manual. Mencegah flicker UI kalau cuma 1 sample
+  /// aneh di tengah rangkaian sample yang sah.
+  bool _spoofSuspected = false;
+  bool get spoofSuspected => _spoofSuspected;
+
+  /// Alasan (untuk log/debug) kenapa sample terakhir dianggap
+  /// mencurigakan. Kosong kalau [spoofSuspected] false.
+  final List<String> _spoofReasons = [];
+  List<String> get spoofReasons => List.unmodifiable(_spoofReasons);
+
   // ─── Constructor ──────────────────────────────────────────────
-  PodGpsEngine({GpsConfig? config}) : _config = config ?? const GpsConfig();
+  PodGpsEngine({GpsConfig? config}) : _config = config ?? const GpsConfig() {
+    _activeTimeout = _config.outdoorTimeout;
+  }
 
   // ─── Public getters ──────────────────────────────────────────
   PodConfidence get confidence => _confidence;
@@ -263,8 +356,9 @@ class PodGpsEngine {
   int get samplesNeeded => _config.targetSamples;
 
   /// Finalisasi sample terbaik yang sudah ada saat deadline service habis.
-  /// Cache OS boleh masuk ke window, tetapi service tetap memutuskan apakah
-  /// hasilnya fresh/live sebelum menjadikannya evidence.
+  /// Window hanya berisi sample GPS live (OS lastKnownPosition tidak pernah
+  /// di-processSample, lihat pod_location_service.dart), jadi hasil ini
+  /// selalu berbasis data live meski dipaksa oleh deadline.
   bool forceLockIfPossible() {
     if (_locked) return true;
     if (_window.isEmpty) return false;
@@ -289,24 +383,50 @@ class PodGpsEngine {
   }
 
   // ─── Proses satu sample dari OS ──────────────────────────────
-  /// [gnssSatellitesUsed]/[gnssAvgCn0DbHz]: hasil GnssQualitySample
-  /// terbaru (jika ada dan cukup baru) untuk sample posisi ini.
-  /// Biarkan null bila platform tidak mendukung (iOS) atau data
-  /// GNSS terlalu basi untuk dipasangkan dengan sample ini.
+  /// [gnssSatellitesUsed]/[gnssAvgCn0DbHz]/[hdop]/[pdop]: hasil
+  /// GnssQualitySample terbaru (jika ada dan cukup baru) untuk sample
+  /// posisi ini. Biarkan null bila platform tidak mendukung (iOS) atau
+  /// data GNSS terlalu basi untuk dipasangkan dengan sample ini.
   bool processSample(
     Position raw, {
     int? gnssSatellitesUsed,
     double? gnssAvgCn0DbHz,
+    double? hdop,
+    double? pdop,
   }) {
-    // Mock GPS → tolak
+    // Mock GPS (flag eksplisit dari OS) → tolak
     if (raw.isMocked) {
+      _flagSpoof(['OS melaporkan isMocked=true']);
       _log('mock GPS terdeteksi (isMocked), skip', level: GpsLogLevel.info);
       return false;
     }
 
-    // Heuristik: akurasi 0.0 mencurigakan (spoofed)
+    // Heuristik dasar: akurasi 0.0 mencurigakan (spoofed)
     if (raw.accuracy <= 0.0) {
+      _flagSpoof(['akurasi=0 (mustahil untuk fix asli)']);
       _log('akurasi=0 mencurigakan (kemungkinan spoofed), skip', level: GpsLogLevel.info);
+      return false;
+    }
+
+    final sample = PodSample(
+      lat: raw.latitude,
+      lon: raw.longitude,
+      accuracy: raw.accuracy,
+      timestampMs: raw.timestamp.millisecondsSinceEpoch,
+      gnssSatellitesUsed: gnssSatellitesUsed,
+      gnssAvgCn0DbHz: gnssAvgCn0DbHz,
+      hdop: hdop,
+      pdop: pdop,
+    );
+
+    // ── Deteksi spoofing lanjutan (BARU) ────────────────────────
+    // Dijalankan SEBELUM filter accuracyThreshold karena fix palsu
+    // sering justru melaporkan accuracy yang "bagus" — kalau dicek
+    // setelah filter, sample seperti itu malah lolos begitu saja.
+    final spoofReasons = _evaluateSpoofHeuristics(sample);
+    if (spoofReasons.isNotEmpty) {
+      _flagSpoof(spoofReasons);
+      _log('spoofing dicurigai: ${spoofReasons.join("; ")}, skip', level: GpsLogLevel.info);
       return false;
     }
 
@@ -334,30 +454,134 @@ class PodGpsEngine {
 
     _lastLat = raw.latitude;
     _lastLon = raw.longitude;
+    _lastSampleTimeMs = raw.timestamp.millisecondsSinceEpoch;
     _posInit = true;
 
-    // Tambah ke window (FIFO: selalu tambah di akhir)
-    final sample = PodSample(
-      lat: raw.latitude,
-      lon: raw.longitude,
-      accuracy: raw.accuracy,
-      timestampMs: raw.timestamp.millisecondsSinceEpoch,
-      gnssSatellitesUsed: gnssSatellitesUsed,
-      gnssAvgCn0DbHz: gnssAvgCn0DbHz,
-    );
+    // Tambah ke window (FIFO: selalu tambah di akhir) — pakai `sample`
+    // yang sudah dibangun di atas untuk cek spoofing, tidak dibangun ulang.
     _window.add(sample);
     if (_window.length > _config.maxWindow) _window.removeAt(0);
 
     // Update best samples cache (insertion sort)
     _updateBestSamples(sample);
 
-    // Start timeout saat sample pertama masuk
-    _timeoutTimer ??= Timer(_config.hardTimeout, _onTimeout);
+    // Start timeout saat sample pertama masuk — durasinya adaptif,
+    // ditentukan sekali dari kondisi sample pertama saja (bukan
+    // dievaluasi ulang tiap sample, supaya tidak berubah-ubah di
+    // tengah proses akuisisi).
+    if (_timeoutTimer == null) {
+      final indoor = _looksIndoor(sample);
+      _activeTimeout = indoor ? _config.indoorTimeout : _config.outdoorTimeout;
+      _log(
+        'lingkungan terdeteksi ${indoor ? "INDOOR" : "OUTDOOR"} '
+        '(gnss=${sample.hasGnssData}, acc=${sample.accuracy.toStringAsFixed(1)}m) '
+        '→ timeout=${_activeTimeout.inSeconds}s',
+        level: GpsLogLevel.info,
+      );
+      _timeoutTimer = Timer(_activeTimeout, _onTimeout);
+    }
 
     // Evaluasi
     final prev = _confidence;
     _evaluate();
     return _confidence.index > prev.index;
+  }
+
+  void _flagSpoof(List<String> reasons) {
+    _spoofSuspected = true;
+    _spoofReasons
+      ..clear()
+      ..addAll(reasons);
+  }
+
+  // ─── Deteksi spoofing lanjutan ────────────────────────────────
+  /// Mengembalikan daftar alasan (kosong = tidak mencurigakan). Semua
+  /// cek di sini independen dari `raw.isMocked`/accuracy=0 (yang sudah
+  /// ditangani terpisah di [processSample]) — tujuannya menangkap
+  /// aplikasi fake-GPS yang TIDAK men-set flag isMocked (umum di
+  /// aplikasi mod/Xposed) dengan sinyal lain yang lebih sulit dipalsu
+  /// bersamaan:
+  ///   1. Kecepatan implisit antar-sample mustahil (teleport)
+  ///   2. Timestamp mundur dari sample terakhir (jam dimanipulasi)
+  ///   3. GNSS lapor 0 satelit dipakai tapi tetap ada fix (mustahil
+  ///      untuk fix GPS asli — indikasi lokasi disuntik dari luar GNSS)
+  ///   4. Accuracy sangat bagus tapi HDOP sangat buruk (tidak konsisten
+  ///      secara fisik — accuracy asli berkorelasi dengan geometri satelit)
+  ///   5. N sample terakhir di window punya lat/lon/accuracy identik
+  ///      persis (GPS asli selalu ada jitter kecil; replay statis)
+  List<String> _evaluateSpoofHeuristics(PodSample sample) {
+    final reasons = <String>[];
+
+    // (1) & (2): butuh sample sebelumnya sebagai baseline.
+    final lastMs = _lastSampleTimeMs;
+    if (_posInit && lastMs != null) {
+      final deltaMs = sample.timestampMs - lastMs;
+
+      if (deltaMs < 0) {
+        reasons.add('timestamp mundur ${-deltaMs}ms dari sample terakhir');
+      } else if (deltaMs > 0) {
+        final elapsedSec = deltaMs / 1000.0;
+        final distance = _haversine(_lastLat, _lastLon, sample.lat, sample.lon);
+        final impliedSpeed = distance / elapsedSec;
+        if (impliedSpeed > _config.maxPlausibleSpeedMps) {
+          reasons.add(
+            'kecepatan implisit ${impliedSpeed.toStringAsFixed(1)}m/s '
+            '(${distance.toStringAsFixed(0)}m dalam ${elapsedSec.toStringAsFixed(1)}s) '
+            'melebihi batas wajar ${_config.maxPlausibleSpeedMps}m/s',
+          );
+        }
+      }
+    }
+
+    // (3) GNSS: 0 satelit dipakai tapi OS tetap kasih fix.
+    if (sample.gnssSatellitesUsed != null && sample.gnssSatellitesUsed == 0) {
+      reasons.add('GNSS lapor 0 satelit dipakai tapi OS tetap memberi fix');
+    }
+
+    // (4) Accuracy vs HDOP tidak konsisten.
+    final hdop = sample.hdop;
+    if (hdop != null &&
+        hdop > _config.spoofDopMismatchHdop &&
+        sample.accuracy < _config.spoofDopMismatchMaxAccuracy) {
+      reasons.add(
+        'accuracy=${sample.accuracy.toStringAsFixed(1)}m terlalu bagus '
+        'untuk HDOP=${hdop.toStringAsFixed(1)} (geometri satelit buruk)',
+      );
+    }
+
+    // (5) Streak fix identik persis (tidak ada jitter sama sekali).
+    final streakNeeded = _config.spoofIdenticalStreak - 1;
+    if (streakNeeded > 0 && _window.length >= streakNeeded) {
+      final recent = _window.sublist(_window.length - streakNeeded);
+      final allIdentical = recent.every((s) =>
+          s.lat == sample.lat &&
+          s.lon == sample.lon &&
+          s.accuracy == sample.accuracy);
+      if (allIdentical) {
+        reasons.add(
+          '${streakNeeded + 1} sample berturut-turut identik persis '
+          '(lat/lon/accuracy) — tidak ada jitter GPS alami',
+        );
+      }
+    }
+
+    return reasons;
+  }
+
+  // ─── Deteksi indoor/outdoor (dari sample pertama saja) ───────
+  /// true → indoor (timeout diperpanjang), false → outdoor (timeout
+  /// dipersingkat, lock cepat). Prioritas ke data GNSS native
+  /// (lebih akurat, tidak tertipu accuracy yang "terlihat wajar"
+  /// padahal multipath). Kalau GNSS tidak tersedia (iOS, atau
+  /// Android belum sempat terima callback pertama), fallback ke
+  /// accuracy mentah dari OS.
+  bool _looksIndoor(PodSample sample) {
+    if (sample.hasGnssData) {
+      final weakSats = sample.gnssSatellitesUsed! < _config.minGnssSatellitesUsed;
+      final weakSignal = sample.gnssAvgCn0DbHz! < _config.minGnssAvgCn0DbHz;
+      return weakSats || weakSignal;
+    }
+    return sample.accuracy > _config.indoorAccuracyHint;
   }
 
   // ─── Update Best Samples Cache (Insertion Sort) ──────────────
@@ -659,7 +883,7 @@ class PodGpsEngine {
             .map((s) => now.difference(s.time).inMilliseconds / 1000.0)
             .reduce((a, b) => a + b) /
         samples.length;
-    final fFresh = (1.0 - (avgAgeSec / _config.hardTimeout.inSeconds)).clamp(0.0, 1.0);
+    final fFresh = (1.0 - (avgAgeSec / _activeTimeout.inSeconds)).clamp(0.0, 1.0);
 
     return fAcc * 0.35 + fSpread * 0.25 + fSample * 0.20 + fFresh * 0.20;
   }
@@ -675,8 +899,10 @@ class PodGpsEngine {
     //        (tidak pernah di-sort langsung)
     while (_window.length > 3) _window.removeAt(0);
 
+    // Pakai _activeTimeout (bukan re-deteksi) — soft unlock terjadi
+    // karena pergerakan kecil, bukan pindah lingkungan drastis.
     _timeoutTimer?.cancel();
-    _timeoutTimer = Timer(_config.hardTimeout, _onTimeout);
+    _timeoutTimer = Timer(_activeTimeout, _onTimeout);
   }
 
   // ─── Hard reset ──────────────────────────────────────────────
@@ -688,9 +914,13 @@ class PodGpsEngine {
     _isFallbackLock = false;
     _confidence = PodConfidence.searching;
     _posInit = false;
+    _lastSampleTimeMs = null;
     _gnssGateActive = false;
+    _spoofSuspected = false;
+    _spoofReasons.clear();
     _timeoutTimer?.cancel();
     _timeoutTimer = null;
+    _activeTimeout = _config.outdoorTimeout; // re-deteksi dari sample berikutnya
   }
 
   void reset() => _hardReset();
@@ -714,6 +944,10 @@ class PodGpsEngine {
       'sampleCount': _window.length,
       'samplesNeeded': _config.targetSamples,
       'progress': lockProgress,
+      'environment': isIndoorDetected ? 'indoor' : 'outdoor',
+      'timeoutSeconds': _activeTimeout.inSeconds,
+      'spoofSuspected': _spoofSuspected,
+      'spoofReasons': _spoofReasons,
       'lockResult': _lockResult != null
           ? {
               'accuracy': _lockResult!.accuracy,
