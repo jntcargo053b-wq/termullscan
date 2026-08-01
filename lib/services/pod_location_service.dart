@@ -83,6 +83,13 @@ class PodLocationState {
   /// coba dekat jendela/area terbuka".
   final bool gnssGateActive;
 
+  /// true jika device terdeteksi masih bergerak (kecepatan Doppler
+  /// dari chip GPS di atas ambang diam) DAN itu satu-satunya alasan
+  /// confidence belum tembus good/excellent (accuracy/GNSS sudah oke).
+  /// UI bisa memakai ini untuk pesan "berhenti dulu untuk mengunci
+  /// lokasi" — lihat Velocity Filter di GpsConfig.
+  final bool velocityGateActive;
+
   const PodLocationState({
     this.lat,
     this.lon,
@@ -104,6 +111,7 @@ class PodLocationState {
     this.addressLat,
     this.addressLon,
     this.gnssGateActive = false,
+    this.velocityGateActive = false,
   });
 
   PodLocationState copyWith({
@@ -127,6 +135,7 @@ class PodLocationState {
     double? addressLat,
     double? addressLon,
     bool? gnssGateActive,
+    bool? velocityGateActive,
     bool clearPosition = false,
     bool clearAddress = false,
     bool clearLockResult = false,
@@ -155,6 +164,7 @@ class PodLocationState {
     addressLat:     clearAddress ? null : addressLat ?? this.addressLat,
     addressLon:     clearAddress ? null : addressLon ?? this.addressLon,
     gnssGateActive: gnssGateActive ?? this.gnssGateActive,
+    velocityGateActive: velocityGateActive ?? this.velocityGateActive,
   );
 
   bool get hasPosition => lat != null && lon != null;
@@ -646,6 +656,7 @@ class PodLocationService {
       mockDetected:   false,
       spoofSuspected: false,
       gnssGateActive: _gpsEngine.gnssGateActive && !conf.canCapture,
+      velocityGateActive: _gpsEngine.velocityGateActive && !conf.canCapture,
     ));
 
     // ✅ FIX ALAMAT TIDAK MUNCUL: dulu geocode hanya dipicu kalau
