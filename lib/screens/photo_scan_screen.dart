@@ -15,6 +15,7 @@ import '../services/pod_location_service.dart';
 import '../theme/app_theme.dart';
 import '../watermark/watermark_renderer.dart';
 import '../watermark/watermark_settings.dart';
+import '../watermark/models/watermark_data.dart';
 import '../utils/image_compressor.dart';
 import '../utils/file_helper.dart';
 import 'watermark_settings_sheet.dart';
@@ -473,31 +474,37 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
   // ─── Core processing ────────────────────────────────────────
 
-  Future<String> _applyWatermark(String imagePath, DateTime timestamp, int photoIndex) async {
+  Future<String> _applyWatermark(
+    String imagePath,
+    DateTime timestamp,
+    int photoIndex, {
+    WatermarkData? liveSnapshot,
+  }) async {
     final fileName = _resolveFileName(photoIndex);
     final outputPath =
         '${File(imagePath).parent.path}/wm_${DateTime.now().millisecondsSinceEpoch}.jpg';
 
-    // ✅ FIX RACE CONDITION ALAMAT: dulu pakai `.currentState` (snapshot
-    // instan), sehingga watermark foto sering "kepalang dibakar" duluan
-    // sebelum reverse-geocoding (Nominatim/Photon/Android Geocoder)
-    // selesai — hasilnya watermark hanya menampilkan koordinat, padahal
-    // alamat sebenarnya berhasil didapat beberapa saat kemudian (tapi
-    // sudah terlambat karena file sudah jadi). Untuk aplikasi POD,
-    // alamat adalah bagian penting dari bukti pengiriman, jadi di sini
-    // kita tunggu (dengan timeout wajar) sampai alamat siap — tombol
-    // jepret kamera TETAP instan, yang ditunda hanya tahap render
-    // watermark (yang memang sudah menampilkan indikator "memproses").
-    // ✅ FIX: dulu timeout di sini cuma 6 detik, padahal jalur lain yang
-    // menunggu lokasi bukti (barcode_scan_screen, video_scan_screen bagian
-    // _attachLocationUpdate) memakai 15 detik. Rantai geocoding
-    // (resolveDetailed: Nominatim multi-zoom + POI lookup + Overpass,
-    // masing-masing dijaga rate-limit 1req/detik) realistiknya sering
-    // butuh lebih dari 6 detik, terutama di area yang datanya kurang
-    // lengkap di zoom tinggi — akibatnya alamat sering belum siap saat
-    // watermark foto dirender, dan watermark jatuh ke koordinat saja.
-    // Disamakan ke 15 detik agar fallback lock GPS 12 detik sempat terpakai.
-    final locState = _wmSettings.gpsWatermarkEnabled
+    // ✅ FIX SINKRONISASI LIVE PREVIEW ↔ SIMPAN: dulu di sini SELALU
+    // query ULANG lokasi lewat awaitEvidenceReady() (bisa nunggu s.d.
+    // 15 detik) — terpisah total dari apa yang barusan tampil di live
+    // preview kamera saat tombol jepret ditekan. Untuk kendaraan yang
+    // bergerak, jeda tunggu itu bisa bikin alamat/koordinat yang
+    // TERBAKAR di watermark berbeda dari yang DILIHAT operator saat
+    // menjepret — root cause-nya bukan akurasi GPS Engine, tapi
+    // desinkronisasi dua sumber data (live preview vs proses simpan).
+    //
+    // Sekarang: kalau foto berasal dari InAppCameraScreen, `liveSnapshot`
+    // SUDAH berisi persis apa yang tampil di layar saat itu (dibangun
+    // dari fungsi yang sama dengan overlay live) — dipakai LANGSUNG,
+    // tanpa query ulang apa pun, jadi WYSIWYG terjamin.
+    //
+    // `awaitEvidenceReady()` (query ulang, timeout 15 detik — disamakan
+    // dengan barcode_scan_screen & video_scan_screen) HANYA dipakai
+    // sebagai fallback untuk sumber yang TIDAK punya live preview sama
+    // sekali, yaitu foto dari galeri (`_pickFromGallery`), karena di
+    // situ memang tidak ada apa pun yang sudah "tampil" sebelumnya
+    // untuk disinkronkan.
+    final locState = liveSnapshot == null && _wmSettings.gpsWatermarkEnabled
         ? await PodLocationService.instance.awaitEvidenceReady(
             timeout: const Duration(seconds: 15),
           )
@@ -512,11 +519,13 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
           ? _wmSettings.operatorName 
           : 'Operator',
       companyName: _wmSettings.companyName,
-      latitude: locState?.lat,
-      longitude: locState?.lon,
-      locationName: locState != null && locState.evidenceAddress.isNotEmpty
-          ? locState.evidenceAddress
-          : null,
+      latitude: liveSnapshot?.latitude ?? locState?.lat,
+      longitude: liveSnapshot?.longitude ?? locState?.lon,
+      locationName: liveSnapshot != null
+          ? liveSnapshot.locationName
+          : (locState != null && locState.evidenceAddress.isNotEmpty
+              ? locState.evidenceAddress
+              : null),
       isManual: false,
     );
 
@@ -632,7 +641,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     String? watermarkedPath;
 
     try {
-      final xfile = await Navigator.push<XFile>(
+      final captureResult = await Navigator.push<CameraCaptureResult>(
         context,
         MaterialPageRoute(
           builder: (_) => const InAppCameraScreen(),
@@ -640,13 +649,18 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         ),
       );
       if (!mounted) return;
-      if (xfile != null) {
+      if (captureResult != null) {
+        final xfile = captureResult.file;
         pendingPath = await _saveToPending(xfile);
         try { await File(xfile.path).delete(); } catch (_) {}
 
         setState(() => _statusText = 'Menambahkan watermark...');
         final previewIndex = _nextPhotoIndex;
-        watermarkedPath = await _prepareWatermarkedPhoto(pendingPath, previewIndex);
+        watermarkedPath = await _prepareWatermarkedPhoto(
+          pendingPath,
+          previewIndex,
+          liveSnapshot: captureResult.watermarkData,
+        );
         if (!mounted) return;
 
         final previewResult = await _showPreview(XFile(watermarkedPath), MediaType.photo);
@@ -838,7 +852,11 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
 
   // ─── Core processing logic ──────────────────────────────────
 
-  Future<String> _prepareWatermarkedPhoto(String pendingPath, int photoIndex) async {
+  Future<String> _prepareWatermarkedPhoto(
+    String pendingPath,
+    int photoIndex, {
+    WatermarkData? liveSnapshot,
+  }) async {
     final inputFile = File(pendingPath);
     if (!await inputFile.exists()) {
       throw Exception('File input tidak ditemukan: $pendingPath');
@@ -860,8 +878,17 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     }
     debugPrint('✅ Kompresi OK: $compressedPath (${compressedSize ~/ 1024}KB)');
 
-    final timestamp = DateTime.now();
-    final watermarkedPath = await _applyWatermark(compressedPath, timestamp, photoIndex);
+    // ✅ Kalau ada liveSnapshot (foto dari InAppCameraScreen), pakai
+    // timestamp SAAT TOMBOL DITEKAN (sudah dibekukan di snapshot) —
+    // bukan DateTime.now() di titik ini, yang sudah lewat proses copy
+    // ke pending + kompresi (jeda tambahan, walau biasanya kecil).
+    final timestamp = liveSnapshot?.timestamp ?? DateTime.now();
+    final watermarkedPath = await _applyWatermark(
+      compressedPath,
+      timestamp,
+      photoIndex,
+      liveSnapshot: liveSnapshot,
+    );
 
     final watermarkedFile = File(watermarkedPath);
     if (!await watermarkedFile.exists()) {
