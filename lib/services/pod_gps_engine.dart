@@ -27,6 +27,9 @@
 //                         identik persis) — lihat _evaluateSpoofHeuristics
 //   DOP                : HDOP/PDOP dari NMEA GSA (opsional, Android),
 //                         ikut menyaring gate GNSS kalau tersedia
+//   accuracy gate      : adaptif — 25m outdoor, 40m indoor (gate admisi
+//                         window & tier "fair" saja; captureThreshold/
+//                         excellentThreshold TETAP fixed, tidak ikut turun)
 // ============================================================
 
 import 'dart:async';
@@ -36,7 +39,29 @@ import 'package:geolocator/geolocator.dart';
 
 // ── GPS Configuration ──────────────────────────────────────────
 class GpsConfig {
-  final double accuracyThreshold;
+  // ── Threshold admisi sample, adaptif indoor/outdoor (BARU) ───
+  // Ini HANYA gate admisi window + tier "fair" (lihat toString di
+  // PodConfidence) — TIDAK menggerbang izin capture. Izin capture
+  // (tier good/excellent) tetap digerbang [captureThreshold] &
+  // [excellentThreshold] yang FIXED, sengaja tidak ikut adaptif,
+  // supaya standar bukti POD saat capture tidak pernah turun hanya
+  // karena terdeteksi indoor.
+  //
+  // Alasan dibuat adaptif: di gudang/indoor dengan multipath berat,
+  // chip GPS sering lapor accuracy 40-80m terus-menerus. Kalau gate
+  // admisi tetap ketat (25m), window bisa kosong SEPANJANG sesi →
+  // saat timeout, _forceLock() tidak punya sample apa pun untuk
+  // dirata-rata (lihat _onTimeout: window kosong = tidak ada fallback
+  // sama sekali, bukan cuma fallback yang jelek). Melonggarkan gate
+  // admisi indoor memberi _forceLock() bahan seadanya — outlier
+  // rejection (MAD-based, lihat outlierMadFactor) tetap jadi jaring
+  // pengaman dari sample yang kelewat liar.
+  //
+  // Lingkungan dideteksi sekali dari sample PERTAMA (reuse _looksIndoor,
+  // logika sama seperti outdoorTimeout/indoorTimeout).
+  final double outdoorAccuracyThreshold;
+  final double indoorAccuracyThreshold;
+
   final double captureThreshold;
   final double excellentThreshold;
   final double excellentMaxStdDev;
@@ -96,7 +121,8 @@ class GpsConfig {
   final int spoofIdenticalStreak;
 
   const GpsConfig({
-    this.accuracyThreshold = 25.0,
+    this.outdoorAccuracyThreshold = 25.0,
+    this.indoorAccuracyThreshold = 40.0,
     this.captureThreshold = 20.0,
     this.excellentThreshold = 10.0,
     this.excellentMaxStdDev = 8.0,
@@ -318,6 +344,13 @@ class PodGpsEngine {
   Duration get activeTimeout => _activeTimeout;
   bool get isIndoorDetected => _activeTimeout == _config.indoorTimeout;
 
+  /// Threshold admisi sample yang aktif untuk sesi berjalan — hasil
+  /// deteksi indoor/outdoor yang SAMA dengan [_activeTimeout] (satu
+  /// deteksi lingkungan dipakai untuk keduanya, lihat _looksIndoor).
+  /// TIDAK mempengaruhi captureThreshold/excellentThreshold.
+  late double _activeAccuracyThreshold;
+  double get activeAccuracyThreshold => _activeAccuracyThreshold;
+
   double _lastLat = 0, _lastLon = 0;
   int? _lastSampleTimeMs;
   bool _posInit = false;
@@ -344,6 +377,7 @@ class PodGpsEngine {
   // ─── Constructor ──────────────────────────────────────────────
   PodGpsEngine({GpsConfig? config}) : _config = config ?? const GpsConfig() {
     _activeTimeout = _config.outdoorTimeout;
+    _activeAccuracyThreshold = _config.outdoorAccuracyThreshold;
   }
 
   // ─── Public getters ──────────────────────────────────────────
@@ -430,10 +464,37 @@ class PodGpsEngine {
       return false;
     }
 
-    // Filter akurasi
-    if (raw.accuracy > _config.accuracyThreshold) {
+    // Deteksi lingkungan (indoor/outdoor) — dilakukan SEKALI dari
+    // sample PERTAMA yang benar-benar masuk fungsi ini, SEBELUM filter
+    // accuracyThreshold. Ini penting: kalau deteksi dilakukan setelah
+    // filter (seperti timeout dulu), sample indoor yang accuracy-nya
+    // 30-40m akan selalu ditolak duluan oleh asumsi threshold outdoor
+    // (25m) sebelum sempat terdeteksi sebagai indoor — deadlock, gate
+    // tidak pernah melonggar. Timer timeout juga ikut dimulai di sini
+    // supaya sesi selalu punya batas waktu sejak callback GPS pertama,
+    // bukan menunggu sample pertama yang "cukup akurat".
+    if (_timeoutTimer == null) {
+      final indoor = _looksIndoor(sample);
+      _activeTimeout = indoor ? _config.indoorTimeout : _config.outdoorTimeout;
+      _activeAccuracyThreshold = indoor
+          ? _config.indoorAccuracyThreshold
+          : _config.outdoorAccuracyThreshold;
       _log(
-        'acc=${raw.accuracy.toStringAsFixed(1)}m > ${_config.accuracyThreshold}m, skip',
+        'lingkungan terdeteksi ${indoor ? "INDOOR" : "OUTDOOR"} '
+        '(gnss=${sample.hasGnssData}, acc=${sample.accuracy.toStringAsFixed(1)}m) '
+        '→ timeout=${_activeTimeout.inSeconds}s, '
+        'gate-admisi=${_activeAccuracyThreshold.toStringAsFixed(0)}m',
+        level: GpsLogLevel.info,
+      );
+      _timeoutTimer = Timer(_activeTimeout, _onTimeout);
+    }
+
+    // Filter akurasi (threshold adaptif indoor/outdoor — lihat di atas.
+    // TIDAK mempengaruhi captureThreshold/excellentThreshold, cuma
+    // gate admisi window + tier "fair").
+    if (raw.accuracy > _activeAccuracyThreshold) {
+      _log(
+        'acc=${raw.accuracy.toStringAsFixed(1)}m > ${_activeAccuracyThreshold.toStringAsFixed(0)}m, skip',
         level: GpsLogLevel.debug,
       );
       if (_confidence == PodConfidence.searching) _confidence = PodConfidence.poor;
@@ -464,22 +525,6 @@ class PodGpsEngine {
 
     // Update best samples cache (insertion sort)
     _updateBestSamples(sample);
-
-    // Start timeout saat sample pertama masuk — durasinya adaptif,
-    // ditentukan sekali dari kondisi sample pertama saja (bukan
-    // dievaluasi ulang tiap sample, supaya tidak berubah-ubah di
-    // tengah proses akuisisi).
-    if (_timeoutTimer == null) {
-      final indoor = _looksIndoor(sample);
-      _activeTimeout = indoor ? _config.indoorTimeout : _config.outdoorTimeout;
-      _log(
-        'lingkungan terdeteksi ${indoor ? "INDOOR" : "OUTDOOR"} '
-        '(gnss=${sample.hasGnssData}, acc=${sample.accuracy.toStringAsFixed(1)}m) '
-        '→ timeout=${_activeTimeout.inSeconds}s',
-        level: GpsLogLevel.info,
-      );
-      _timeoutTimer = Timer(_activeTimeout, _onTimeout);
-    }
 
     // Evaluasi
     final prev = _confidence;
@@ -684,7 +729,7 @@ class PodGpsEngine {
         gnssOk) {
       newConf = PodConfidence.good;
       _locked = true;
-    } else if (n >= 1 && avgAcc <= _config.accuracyThreshold) {
+    } else if (n >= 1 && avgAcc <= _activeAccuracyThreshold) {
       // Tetap "fair" walau GNSS gate belum lolos — UI bisa menampilkan
       // status stabilisasi tanpa memblokir selamanya; force-lock via
       // timeout tetap tersedia sebagai fallback (lihat _forceLock).
@@ -873,10 +918,10 @@ class PodGpsEngine {
     if (samples.isEmpty) return 0.0;
 
     final fSample = (samples.length / _config.targetSamples).clamp(0.0, 1.0);
-    final fAcc = (1.0 - (stats.avgAccuracy / _config.accuracyThreshold)).clamp(0.0, 1.0);
+    final fAcc = (1.0 - (stats.avgAccuracy / _activeAccuracyThreshold)).clamp(0.0, 1.0);
 
     final worstSpread = max(stats.stdDevMeters, stats.radiusMeters);
-    final fSpread = (1.0 - (worstSpread / _config.accuracyThreshold)).clamp(0.0, 1.0);
+    final fSpread = (1.0 - (worstSpread / _activeAccuracyThreshold)).clamp(0.0, 1.0);
 
     final now = DateTime.now();
     final avgAgeSec = samples
@@ -921,6 +966,7 @@ class PodGpsEngine {
     _timeoutTimer?.cancel();
     _timeoutTimer = null;
     _activeTimeout = _config.outdoorTimeout; // re-deteksi dari sample berikutnya
+    _activeAccuracyThreshold = _config.outdoorAccuracyThreshold;
   }
 
   void reset() => _hardReset();
@@ -946,6 +992,7 @@ class PodGpsEngine {
       'progress': lockProgress,
       'environment': isIndoorDetected ? 'indoor' : 'outdoor',
       'timeoutSeconds': _activeTimeout.inSeconds,
+      'accuracyThresholdMeters': _activeAccuracyThreshold,
       'spoofSuspected': _spoofSuspected,
       'spoofReasons': _spoofReasons,
       'lockResult': _lockResult != null
