@@ -3,11 +3,22 @@
 // WATERMARK DATA — Data untuk rendering watermark
 // ============================================================
 
+import 'package:flutter/foundation.dart' show immutable;
 import 'package:intl/intl.dart';
 import '../watermark_settings.dart';
 import '../../models/scan_entry.dart';
 import '../../models/resolved_location.dart';
 
+/// ✅ SENGAJA @immutable: kelas ini dipakai sebagai SNAPSHOT "beku" yang
+/// diambil tepat saat tombol shutter ditekan (lihat
+/// InAppCameraScreen._capture() → CameraCaptureResult.watermarkData,
+/// dipakai langsung oleh PhotoScanScreen._applyWatermark() tanpa query
+/// ulang GPS/waktu). Anotasi ini membuat analyzer MEMBLOKIR field baru
+/// yang tidak `final` atau yang bertipe mutable (List/Map/objek custom
+/// yang bisa di-mutasi in-place) — supaya jaminan "snapshot tidak bisa
+/// berubah walau PodLocationService terus menerima update GPS setelahnya"
+/// tetap terjaga otomatis, bukan cuma kebetulan benar hari ini.
+@immutable
 class WatermarkData {
   final DateTime timestamp;
   final String operatorName;
