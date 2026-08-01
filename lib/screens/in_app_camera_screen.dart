@@ -53,6 +53,26 @@ import '../watermark/watermark_settings.dart';
 import '../watermark/widgets/watermark_dynamic_painter.dart';
 import '../watermark/widgets/watermark_static_painter.dart';
 
+/// ✅ FIX SINKRONISASI LIVE PREVIEW ↔ SIMPAN: dulu layar ini hanya
+/// mengembalikan XFile mentah lewat Navigator.pop(), lalu
+/// PhotoScanScreen._applyWatermark() query ULANG lokasi (bahkan
+/// menunggu s.d. 15 detik lewat awaitEvidenceReady()) dan waktu
+/// (DateTime.now() baru) — terpisah total dari apa yang barusan
+/// tampil di layar saat tombol jepret ditekan. Untuk kendaraan yang
+/// bergerak, jeda tunggu itu bisa membuat alamat/koordinat yang
+/// TERBAKAR di watermark foto berbeda dari yang DILIHAT operator di
+/// live preview saat menjepret.
+///
+/// Sekarang [InAppCameraScreen] membawa serta snapshot [WatermarkData]
+/// yang PERSIS sama dengan yang sedang tampil di live preview pada
+/// detik tombol ditekan, supaya pemanggil (PhotoScanScreen) tinggal
+/// pakai data ini langsung — tidak query ulang GPS/waktu sama sekali.
+class CameraCaptureResult {
+  final XFile file;
+  final WatermarkData watermarkData;
+  const CameraCaptureResult({required this.file, required this.watermarkData});
+}
+
 class InAppCameraScreen extends StatefulWidget {
   const InAppCameraScreen({super.key});
 
@@ -269,8 +289,19 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
     setState(() => _isCapturing = true);
     try {
       HapticFeedback.mediumImpact();
+      // ✅ Snapshot PERSIS apa yang sedang tampil di live preview SAAT
+      // ini — dibangun lewat fungsi yang SAMA (_buildLiveData()) yang
+      // dipakai overlay di layar, jadi lat/lon/alamat dijamin identik
+      // dengan yang dilihat operator. Hanya timestamp yang di-refresh
+      // ke waktu jepret sebenarnya (bukan sisa tick jam terakhir).
+      final capturedData = _buildLiveData().copyWith(timestamp: DateTime.now());
       final xfile = await controller.takePicture();
-      if (mounted) Navigator.pop(context, xfile);
+      if (mounted) {
+        Navigator.pop(
+          context,
+          CameraCaptureResult(file: xfile, watermarkData: capturedData),
+        );
+      }
     } catch (e) {
       debugPrint('❌ Gagal mengambil foto: $e');
       if (mounted) {
