@@ -30,6 +30,11 @@
 //   accuracy gate      : adaptif — 25m outdoor, 40m indoor (gate admisi
 //                         window & tier "fair" saja; captureThreshold/
 //                         excellentThreshold TETAP fixed, tidak ikut turun)
+//   velocity filter    : raw.speed/speedAccuracy (Doppler, dari OS) —
+//                         (a) motion gate: good/excellent tidak terkunci
+//                         selama device masih bergerak (kurir belum
+//                         berhenti); (b) heuristik spoofing #6: speed
+//                         Doppler vs kecepatan implisit posisi mismatch
 // ============================================================
 
 import 'dart:async';
@@ -107,7 +112,8 @@ class GpsConfig {
   // ── Deteksi spoofing (BARU) ──────────────────────────────────
   // Selain raw.isMocked (flag OS, gampang dilewati aplikasi fake-GPS
   // yang tidak set flag ini), dipakai beberapa heuristik independen:
-  //   1. Kecepatan implisit antar-sample > maxPlausibleSpeedMps → teleport
+  //   1. Kecepatan implisit antar-sample (dari delta posisi) >
+  //      maxPlausibleSpeedMps → teleport
   //   2. Timestamp mundur dari sample terakhir → jam dimanipulasi
   //   3. GNSS lapor 0 satelit dipakai tapi OS tetap kasih fix → mustahil
   //      untuk fix asli, indikasi kuat lokasi disuntik dari luar GNSS
@@ -115,10 +121,40 @@ class GpsConfig {
   //      secara fisik (accuracy asli berkorelasi dengan geometri satelit)
   //   5. N sample terakhir punya lat/lon/accuracy IDENTIK persis →
   //      GPS asli selalu punya jitter kecil, replay statis mencurigakan
+  //   6. Kecepatan Doppler (raw.speed, dari chip GPS) tidak cocok
+  //      dengan kecepatan implisit dari delta posisi → lihat catatan
+  //      Velocity Filter di bawah
   final double maxPlausibleSpeedMps;
   final double spoofDopMismatchHdop;
   final double spoofDopMismatchMaxAccuracy;
   final int spoofIdenticalStreak;
+  final double spoofVelocityMismatchMps;
+
+  // ── Velocity Filter (BARU) ───────────────────────────────────
+  // `raw.speed`/`raw.speedAccuracy` (Position dari geolocator) SEBELUM
+  // ini tidak pernah dipakai sama sekali — padahal ini sumber sinyal
+  // yang independen dari lat/lon: speed dihitung chip GPS dari geseran
+  // Doppler carrier, bukan diturunkan dari posisi. Dua kegunaan:
+  //
+  // (a) MOTION GATE (kualitas): sample yang direkam saat device masih
+  //     bergerak (mis. kurir belum benar-benar berhenti) TIDAK boleh
+  //     mengunci tier good/excellent — GPS saat bergerak lebih rentan
+  //     smearing & posisi yang terekam bisa jadi bukan titik berhenti
+  //     yang sebenarnya. Sample tetap masuk window (tidak ditolak
+  //     admisinya) supaya tidak mengosongkan window seperti kasus
+  //     accuracy — cuma tidak dihitung capturable sampai device diam.
+  //     Gate hanya aktif kalau speedAccuracy cukup dipercaya (di bawah
+  //     [maxSpeedAccuracyForGate]); kalau tidak, gate lolos otomatis
+  //     (fallback aman, sama pola dengan gate GNSS/DOP).
+  //
+  // (b) DETEKSI SPOOFING (heuristik #6 di atas): fake-GPS berbasis
+  //     injeksi lat/lon biasanya TIDAK ikut mensimulasikan sinyal
+  //     Doppler yang konsisten — raw.speed sering diam di 0 (atau
+  //     nilai tetap) walau posisi "melompat" jauh antar-sample. Kalau
+  //     speedAccuracy dipercaya tapi selisih |impliedSpeed - raw.speed|
+  //     jauh, itu indikasi kuat posisi disuntik dari luar chip GPS.
+  final double maxPlausibleStationarySpeedMps;
+  final double maxSpeedAccuracyForGate;
 
   const GpsConfig({
     this.outdoorAccuracyThreshold = 25.0,
@@ -145,6 +181,9 @@ class GpsConfig {
     this.spoofDopMismatchHdop = 8.0,
     this.spoofDopMismatchMaxAccuracy = 5.0,
     this.spoofIdenticalStreak = 3,
+    this.spoofVelocityMismatchMps = 15.0,
+    this.maxPlausibleStationarySpeedMps = 3.0, // ~10.8 km/h, longgar utk jalan kaki bawa paket
+    this.maxSpeedAccuracyForGate = 3.0,
   });
 }
 
@@ -194,6 +233,13 @@ class PodSample {
   final double? hdop;
   final double? pdop;
 
+  // ── Velocity (BARU, opsional, dari Position.speed/speedAccuracy) ──
+  // null jika speedAccuracy dari OS <= 0 (indikasi provider tidak
+  // mendukung/tidak melaporkan kecepatan Doppler untuk fix ini) —
+  // dikonversi jadi null di processSample(), bukan disimpan 0 mentah.
+  final double? speed;
+  final double? speedAccuracy;
+
   const PodSample({
     required this.lat,
     required this.lon,
@@ -203,6 +249,8 @@ class PodSample {
     this.gnssAvgCn0DbHz,
     this.hdop,
     this.pdop,
+    this.speed,
+    this.speedAccuracy,
   });
 
   DateTime get time => DateTime.fromMillisecondsSinceEpoch(timestampMs);
@@ -211,6 +259,21 @@ class PodSample {
       gnssSatellitesUsed != null && gnssAvgCn0DbHz != null;
 
   bool get hasDopData => hdop != null || pdop != null;
+
+  /// true jika speed dari OS cukup dipercaya untuk dipakai gating
+  /// (speedAccuracy tersedia & di bawah ambang [GpsConfig.maxSpeedAccuracyForGate]).
+  bool hasReliableSpeed(GpsConfig config) =>
+      speed != null &&
+      speedAccuracy != null &&
+      speedAccuracy! <= config.maxSpeedAccuracyForGate;
+
+  /// Lolos gate jika: speed tidak dipercaya/tidak tersedia (tidak
+  /// digating, fallback aman), ATAU device dianggap diam (speed di
+  /// bawah [GpsConfig.maxPlausibleStationarySpeedMps]).
+  bool passesVelocityGate(GpsConfig config) {
+    if (!hasReliableSpeed(config)) return true;
+    return speed! <= config.maxPlausibleStationarySpeedMps;
+  }
 
   /// Lolos gate jika: tidak ada data GNSS (tidak digating), ATAU
   /// jumlah satelit & C/N0 memenuhi ambang minimum DAN (kalau ada)
@@ -236,7 +299,8 @@ class PodSample {
       'time=$time, gnss=${hasGnssData ? "$gnssSatellitesUsed sat/"
           "${gnssAvgCn0DbHz!.toStringAsFixed(1)}dBHz" : "n/a"}, '
       'dop=${hasDopData ? "hdop=${hdop?.toStringAsFixed(1) ?? "-"}/"
-          "pdop=${pdop?.toStringAsFixed(1) ?? "-"}" : "n/a"})';
+          "pdop=${pdop?.toStringAsFixed(1) ?? "-"}" : "n/a"}, '
+      'speed=${speed != null ? "${speed!.toStringAsFixed(1)}m/s" : "n/a"})';
 }
 
 // ── Lock Result ────────────────────────────────────────────────
@@ -363,6 +427,13 @@ class PodGpsEngine {
   bool _gnssGateActive = false;
   bool get gnssGateActive => _gnssGateActive;
 
+  /// true jika ada sample dengan speedAccuracy dipercaya di window
+  /// DAN confidence belum tembus good/excellent karena device masih
+  /// terdeteksi bergerak (bukan karena accuracy/GNSS). UI bisa pakai
+  /// ini untuk pesan "berhenti dulu untuk mengunci lokasi".
+  bool _velocityGateActive = false;
+  bool get velocityGateActive => _velocityGateActive;
+
   /// Latch — sekali true, tetap true sampai [_hardReset] (pindah lokasi
   /// jauh) atau [reset] manual. Mencegah flicker UI kalau cuma 1 sample
   /// aneh di tengah rangkaian sample yang sah.
@@ -451,6 +522,11 @@ class PodGpsEngine {
       gnssAvgCn0DbHz: gnssAvgCn0DbHz,
       hdop: hdop,
       pdop: pdop,
+      // speedAccuracy<=0 dianggap "provider tidak melaporkan speed
+      // Doppler" (bukan bacaan valid) — simpan null, bukan 0 mentah,
+      // supaya hasReliableSpeed()/gate otomatis skip (fallback aman).
+      speed: raw.speedAccuracy > 0 ? raw.speed : null,
+      speedAccuracy: raw.speedAccuracy > 0 ? raw.speedAccuracy : null,
     );
 
     // ── Deteksi spoofing lanjutan (BARU) ────────────────────────
@@ -557,7 +633,9 @@ class PodGpsEngine {
   List<String> _evaluateSpoofHeuristics(PodSample sample) {
     final reasons = <String>[];
 
-    // (1) & (2): butuh sample sebelumnya sebagai baseline.
+    // (1) & (2): butuh sample sebelumnya sebagai baseline. impliedSpeed
+    // (dari delta posisi) juga dipakai ulang di (6) di bawah.
+    double? impliedSpeed;
     final lastMs = _lastSampleTimeMs;
     if (_posInit && lastMs != null) {
       final deltaMs = sample.timestampMs - lastMs;
@@ -567,7 +645,7 @@ class PodGpsEngine {
       } else if (deltaMs > 0) {
         final elapsedSec = deltaMs / 1000.0;
         final distance = _haversine(_lastLat, _lastLon, sample.lat, sample.lon);
-        final impliedSpeed = distance / elapsedSec;
+        impliedSpeed = distance / elapsedSec;
         if (impliedSpeed > _config.maxPlausibleSpeedMps) {
           reasons.add(
             'kecepatan implisit ${impliedSpeed.toStringAsFixed(1)}m/s '
@@ -606,6 +684,24 @@ class PodGpsEngine {
         reasons.add(
           '${streakNeeded + 1} sample berturut-turut identik persis '
           '(lat/lon/accuracy) — tidak ada jitter GPS alami',
+        );
+      }
+    }
+
+    // (6) Velocity Filter — kecepatan Doppler (chip GPS) tidak cocok
+    // dengan kecepatan implisit dari delta posisi. Fake-GPS berbasis
+    // injeksi lat/lon umumnya tidak ikut mensimulasikan sinyal Doppler
+    // yang konsisten (raw.speed sering diam/0 walau posisi "melompat").
+    // Hanya dievaluasi kalau speedAccuracy dipercaya DAN ada baseline
+    // impliedSpeed dari (1) di atas.
+    if (impliedSpeed != null && sample.hasReliableSpeed(_config)) {
+      final mismatch = (impliedSpeed - sample.speed!).abs();
+      if (mismatch > _config.spoofVelocityMismatchMps) {
+        reasons.add(
+          'kecepatan Doppler (${sample.speed!.toStringAsFixed(1)}m/s) tidak '
+          'cocok dengan kecepatan implisit posisi '
+          '(${impliedSpeed.toStringAsFixed(1)}m/s), selisih '
+          '${mismatch.toStringAsFixed(1)}m/s',
         );
       }
     }
@@ -715,24 +811,41 @@ class PodGpsEngine {
     _gnssGateActive = gnssDataAvailable;
     final gnssOk = !gnssDataAvailable || gnssGatedCount >= _config.targetSamples;
 
+    // ── Velocity gate (BARU) ───────────────────────────────────
+    // Hanya menyala jika ada sample dengan speedAccuracy dipercaya
+    // di window ini. Kalau tidak (device/provider tidak melaporkan
+    // Doppler speed), gate lolos otomatis (fallback aman). Mencegah
+    // tier good/excellent terkunci saat device masih benar-benar
+    // bergerak (kurir belum berhenti) — lihat catatan Velocity
+    // Filter di GpsConfig.
+    final velocityDataAvailable = cleaned.any((s) => s.hasReliableSpeed(_config));
+    final velocityGatedCount =
+        cleaned.where((s) => s.passesVelocityGate(_config)).length;
+    _velocityGateActive = velocityDataAvailable;
+    final velocityOk =
+        !velocityDataAvailable || velocityGatedCount >= _config.targetSamples;
+
     PodConfidence newConf;
 
     if (n >= _config.targetSamples &&
         avgAcc <= _config.excellentThreshold &&
         stdDev <= _config.excellentMaxStdDev &&
         radius <= _config.excellentMaxRadius &&
-        gnssOk) {
+        gnssOk &&
+        velocityOk) {
       newConf = PodConfidence.excellent;
       _locked = true;
     } else if (n >= _config.targetSamples &&
         avgAcc <= _config.captureThreshold &&
-        gnssOk) {
+        gnssOk &&
+        velocityOk) {
       newConf = PodConfidence.good;
       _locked = true;
     } else if (n >= 1 && avgAcc <= _activeAccuracyThreshold) {
-      // Tetap "fair" walau GNSS gate belum lolos — UI bisa menampilkan
-      // status stabilisasi tanpa memblokir selamanya; force-lock via
-      // timeout tetap tersedia sebagai fallback (lihat _forceLock).
+      // Tetap "fair" walau GNSS/velocity gate belum lolos — UI bisa
+      // menampilkan status stabilisasi tanpa memblokir selamanya;
+      // force-lock via timeout tetap tersedia sebagai fallback
+      // (lihat _forceLock).
       newConf = PodConfidence.fair;
     } else {
       newConf = PodConfidence.poor;
@@ -961,6 +1074,7 @@ class PodGpsEngine {
     _posInit = false;
     _lastSampleTimeMs = null;
     _gnssGateActive = false;
+    _velocityGateActive = false;
     _spoofSuspected = false;
     _spoofReasons.clear();
     _timeoutTimer?.cancel();
@@ -987,6 +1101,7 @@ class PodGpsEngine {
       'isLocked': _locked,
       'isFallback': _isFallbackLock,
       'gnssGateActive': _gnssGateActive,
+      'velocityGateActive': _velocityGateActive,
       'sampleCount': _window.length,
       'samplesNeeded': _config.targetSamples,
       'progress': lockProgress,
