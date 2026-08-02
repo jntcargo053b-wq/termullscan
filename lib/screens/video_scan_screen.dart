@@ -22,6 +22,21 @@ import '../services/watermark/watermark_service.dart';
 import 'watermark_settings_sheet.dart';
 import 'preview_screen.dart';
 
+/// ✅ FIX EVIDENCE INTEGRITY: sebelumnya `locationName` di jalur video
+/// langsung pakai `evidenceAddress` mentah, padahal `awaitEvidenceReady()`
+/// bisa mengembalikan lock genuine ATAU fallback lock paksa dari
+/// `PodGpsEngine._forceLock()` (setelah timeout) — dua kualitas yang
+/// jauh berbeda tapi sebelumnya tidak dibedakan sama sekali di data
+/// yang tersimpan/tercetak ke watermark. Helper ini menandai eksplisit
+/// kalau `locState.isFallbackLock == true`, konsisten dengan penandaan
+/// yang sama di in_app_camera_screen.dart & photo_scan_screen.dart.
+String? evidenceLocationName(PodLocationState? locState) {
+  if (locState == null || locState.evidenceAddress.isEmpty) return null;
+  return locState.isFallbackLock
+      ? '⚠ GPS cadangan · ${locState.evidenceAddress}'
+      : locState.evidenceAddress;
+}
+
 class VideoScanScreen extends StatefulWidget {
   final String? barcode;
   final String? entryId;
@@ -284,7 +299,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
           latitude: locState?.lat ?? existingEntry.latitude,
           longitude: locState?.lon ?? existingEntry.longitude,
           locationName: evidenceAddress.isNotEmpty
-              ? evidenceAddress
+              ? evidenceLocationName(locState)
               : existingEntry.locationName,
           clearAddress: locState != null && evidenceAddress.isEmpty,
         );
@@ -301,9 +316,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
           companyName: _wmSettings.companyName,
           latitude: locState?.lat,
           longitude: locState?.lon,
-          locationName: locState != null && locState.evidenceAddress.isNotEmpty
-              ? locState.evidenceAddress
-              : null,
+          locationName: evidenceLocationName(locState),
           videoDuration: duration,
           isManual: false,
         );
@@ -552,9 +565,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
             entryId,
             latitude: locState.lat!,
             longitude: locState.lon!,
-            locationName: locState.evidenceAddress.isNotEmpty
-                ? locState.evidenceAddress
-                : null,
+            locationName: evidenceLocationName(locState),
           );
           if (attempt > 1) {
             debugPrint('✅ Lokasi ter-attach di percobaan ke-$attempt untuk $entryId');
