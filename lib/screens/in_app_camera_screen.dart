@@ -244,10 +244,29 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
   // internal (lihat render()/renderOverlayPng()) — bukan logika baru,
   // hanya dipindah ke sini supaya tidak perlu membungkusnya lewat
   // ScanEntry + renderOverlayPng untuk sekadar pratinjau di layar.
+  // ✅ FIX EVIDENCE INTEGRITY: capture di layar ini TIDAK menunggu GPS
+  // lock (beda dari video/gallery-photo yang selalu lewat
+  // `awaitEvidenceReady()`, yang dijamin hanya mengembalikan state
+  // `isEvidenceReady == true` atau null). Demi latency, itu tetap
+  // dipertahankan — TAPI kalau operator menjepret saat lokasi belum
+  // lolos confidence gate (`isEvidenceReady == false`, mis. masih
+  // "acquiring"/akurasi rendah), alamat/koordinat yang tercetak di
+  // watermark ditandai eksplisit supaya tidak terlihat seolah-olah
+  // bukti lokasi final padahal belum terkunci. Tanda ini ikut terbawa
+  // ke `locationName` yang dikonsumsi ScanEntry → WatermarkRenderer,
+  // jadi otomatis muncul di watermark akhir tanpa perlu field baru.
+  static const String _unlockedSuffix = ' · GPS belum terkunci';
+
   WatermarkData _buildLiveData() {
     final locState = _wmSettings.gpsWatermarkEnabled
         ? PodLocationService.instance.currentState
         : null;
+    String? locationName;
+    if (locState != null && locState.address.isNotEmpty) {
+      locationName = locState.isEvidenceReady
+          ? locState.address
+          : '${locState.address}$_unlockedSuffix';
+    }
     return WatermarkData(
       timestamp: DateTime.now(),
       operatorName: _wmSettings.operatorName,
@@ -256,8 +275,7 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
       barcodeFormat: null,
       latitude: locState?.lat,
       longitude: locState?.lon,
-      locationName:
-          (locState != null && locState.address.isNotEmpty) ? locState.address : null,
+      locationName: locationName,
       logoPath: _wmSettings.logoPath,
       position: _wmSettings.position,
       fontSize: _wmSettings.fontSize,
@@ -436,6 +454,7 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
           ),
         ),
         if (!_overlaySupported) _buildUnsupportedBadge(),
+        if (_wmSettings.gpsWatermarkEnabled) _buildGpsConfidenceBadge(),
         SafeArea(
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -524,6 +543,69 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
       child: IconButton(
         icon: Icon(icon, color: Colors.white, size: 24),
         onPressed: onTap,
+      ),
+    );
+  }
+
+  // ─── Badge confidence GPS live (opsi 3) ─────────────────────
+  // Non-blocking: shutter tetap bisa ditekan kapan saja (latency
+  // scan-to-capture tidak boleh terganggu), badge ini murni sinyal
+  // visual supaya operator SENDIRI yang memutuskan tunggu sebentar
+  // atau langsung jepret. Kalau langsung jepret saat belum locked,
+  // watermark akhir tetap ditandai lewat `_unlockedSuffix` di atas.
+  Widget _buildGpsConfidenceBadge() {
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.only(top: 56),
+          child: Center(
+            child: StreamBuilder<PodLocationState>(
+              stream: PodLocationService.instance.stream,
+              initialData: PodLocationService.instance.currentState,
+              builder: (context, snapshot) {
+                final state = snapshot.data;
+                if (state == null) return const SizedBox.shrink();
+                final locked = state.isEvidenceReady;
+                final color = locked
+                    ? AppTheme.success
+                    : (state.confidence == PodConfidence.searching ||
+                            state.confidence == PodConfidence.poor)
+                        ? AppTheme.error
+                        : AppTheme.accentOrange;
+                return Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.55),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: color, width: 1.2),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        state.confidence.label,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
       ),
     );
   }
