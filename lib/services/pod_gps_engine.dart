@@ -20,8 +20,7 @@
 //   provider           : fused
 //   startup            : lastKnownPosition (OS cache + SharedPrefs)
 //   distanceFilter     : 0 saat acquiring, 5 setelah locked
-//   mock GPS           : ditolak (raw.isMocked) + heuristik akurasi=0
-//                         + deteksi spoofing lanjutan (teleport speed,
+//   mock GPS           : ditolak (raw.isMocked) + heuristik spoofing lanjutan (teleport speed,
 //                         timestamp mundur, 0 satelit tapi ada fix,
 //                         accuracy vs HDOP tidak konsisten, streak fix
 //                         identik persis) — lihat _evaluateSpoofHeuristics
@@ -759,6 +758,22 @@ class PodGpsEngine {
   // ─── Force Lock (timeout fallback) ──────────────────────────
   /// 🔥 FIX: Tidak mengubah urutan _window (FIFO tetap terjaga).
   ///        Sort dilakukan pada SALINAN (byAccuracy), bukan _window langsung.
+  ///
+  /// ✅ FIX CONFIDENCE INTEGRITY: sebelumnya tier selalu di-set "good"
+  /// dan confidenceScore selalu konstanta 0.6, TANPA PEDULI akurasi
+  /// cluster yang sebenarnya — fallback dari 8m accuracy (nyaris lock
+  /// asli) dan fallback dari 80m accuracy (indoor parah) dilaporkan
+  /// PERSIS SAMA ke konsumen (badge, watermark, log). Tier "good"
+  /// TETAP dipertahankan (bukan diturunkan) supaya operator tidak
+  /// terjebak tidak bisa capture sama sekali setelah timeout — itu
+  /// keputusan desain yang disengaja (lihat catatan GpsConfig di atas
+  /// soal kenapa gate admisi indoor dilonggarkan). Yang diperbaiki
+  /// hanya confidenceScore: sekarang dihitung dari _score() memakai
+  /// stats cluster hasil outlier-rejection yang sama seperti jalur
+  /// lock normal, supaya angkanya benar-benar mencerminkan kualitas
+  /// sample, bukan angka tetap. Konsumen bisa memakai kombinasi
+  /// `isFallbackLock` + `confidenceScore` untuk membedakan fallback
+  /// bagus vs fallback darurat (lihat PodLocationService/badge UI).
   void _forceLock() {
     // Buat salinan untuk sorting berdasarkan akurasi
     // _window tetap FIFO (tidak tersentuh)
@@ -772,14 +787,16 @@ class PodGpsEngine {
     _confidence = PodConfidence.good;
     _locked = true;
     _isFallbackLock = true;
+    final score = _score(cleaned, stats);
     _lockResult = _buildResult(
-      0.6,
+      score,
       stats,
       cleaned.length,
       _window.length - cleaned.length,
     );
     _log(
-      'force lock acc=${best.accuracy.toStringAsFixed(1)}m [FALLBACK]',
+      'force lock acc=${best.accuracy.toStringAsFixed(1)}m '
+      'avgAcc=${stats.avgAccuracy.toStringAsFixed(1)}m score=${score.toStringAsFixed(2)} [FALLBACK]',
       level: GpsLogLevel.info,
     );
   }
