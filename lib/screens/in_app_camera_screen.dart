@@ -601,6 +601,23 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
                 final label = isFallback
                     ? '${state.confidence.label} (cadangan)'
                     : state.confidence.label;
+
+                // ⭐ BARU: hint spesifik saat gate GNSS/velocity yang
+                // menahan lock (bukan sekadar accuracy) — lebih actionable
+                // daripada label confidence generik ("Stabilisasi…"),
+                // karena operator langsung tahu tindakan konkret yang
+                // perlu diambil. Velocity diprioritaskan di atas GNSS
+                // karena solusinya lebih pasti di tangan operator
+                // (berhenti jalan) dibanding menunggu sinyal GNSS membaik.
+                String? gateHint;
+                if (!locked) {
+                  if (state.velocityGateActive) {
+                    gateHint = '⏸️ Berhenti sebentar untuk mengunci lokasi';
+                  } else if (state.gnssGateActive) {
+                    gateHint = '📡 Sinyal GNSS lemah — dekati jendela/area terbuka';
+                  }
+                }
+
                 return Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
@@ -608,23 +625,36 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(color: color, width: 1.2),
                   ),
-                  child: Row(
+                  child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Container(
-                        width: 8,
-                        height: 8,
-                        decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            label,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 6),
-                      Text(
-                        label,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
+                      if (gateHint != null) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          gateHint,
+                          style: const TextStyle(color: Colors.white70, fontSize: 10),
+                          textAlign: TextAlign.center,
                         ),
-                      ),
+                      ],
                     ],
                   ),
                 );
