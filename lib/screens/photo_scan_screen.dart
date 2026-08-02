@@ -524,7 +524,9 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       locationName: liveSnapshot != null
           ? liveSnapshot.locationName
           : (locState != null && locState.evidenceAddress.isNotEmpty
-              ? locState.evidenceAddress
+              ? (locState.isFallbackLock
+                  ? '⚠ GPS cadangan · ${locState.evidenceAddress}'
+                  : locState.evidenceAddress)
               : null),
       isManual: false,
     );
