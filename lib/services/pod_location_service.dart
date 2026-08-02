@@ -49,6 +49,18 @@ class PodLocationState {
   static const Duration evidenceMaxAge = Duration(seconds: 30);
   static const double addressMatchRadiusMeters = 30.0;
 
+  // ── Evidence max age adaptif (BARU) ──────────────────────────
+  // Sample yang direkam saat device masih bergerak jadi basi (secara
+  // lokasi, bukan cuma waktu) lebih cepat daripada sample yang direkam
+  // saat diam — kurir yang terus jalan bisa sudah puluhan meter dari
+  // titik fix dalam 30 detik. [evidenceMaxAgeMoving] mempersempit
+  // jendela freshness untuk kasus itu. Ambang "bergerak" disamakan
+  // dengan GpsConfig.maxPlausibleStationarySpeedMps (3.0 m/s, ~10.8
+  // km/h — longgar utk jalan kaki bawa paket) supaya konsisten dengan
+  // velocity gate di PodGpsEngine.
+  static const Duration evidenceMaxAgeMoving = Duration(seconds: 10);
+  static const double movingSpeedThresholdMps = 3.0;
+
   final double? lat;
   final double? lon;
   final double? accuracy;
@@ -90,6 +102,12 @@ class PodLocationState {
   /// lokasi" — lihat Velocity Filter di GpsConfig.
   final bool velocityGateActive;
 
+  /// Kecepatan Doppler (raw.speed, m/s) dari sample GPS terakhir yang
+  /// dipakai untuk posisi ini — null kalau OS tidak melaporkan speed
+  /// yang cukup dipercaya (lihat [PodSample.hasReliableSpeed]). Dipakai
+  /// untuk membuat [evidenceMaxAge] adaptif — lihat [hasFreshPosition].
+  final double? speedMps;
+
   const PodLocationState({
     this.lat,
     this.lon,
@@ -112,6 +130,7 @@ class PodLocationState {
     this.addressLon,
     this.gnssGateActive = false,
     this.velocityGateActive = false,
+    this.speedMps,
   });
 
   PodLocationState copyWith({
@@ -136,6 +155,7 @@ class PodLocationState {
     double? addressLon,
     bool? gnssGateActive,
     bool? velocityGateActive,
+    double? speedMps,
     bool clearPosition = false,
     bool clearAddress = false,
     bool clearLockResult = false,
@@ -165,6 +185,7 @@ class PodLocationState {
     addressLon:     clearAddress ? null : addressLon ?? this.addressLon,
     gnssGateActive: gnssGateActive ?? this.gnssGateActive,
     velocityGateActive: velocityGateActive ?? this.velocityGateActive,
+    speedMps:       clearPosition ? null : speedMps ?? this.speedMps,
   );
 
   bool get hasPosition => lat != null && lon != null;
@@ -173,11 +194,24 @@ class PodLocationState {
   bool get canCapture  => confidence.canCapture && !mockDetected && !spoofSuspected;
   bool get isStale     => mode == PodGpsMode.stale;
 
+  /// ⭐ BARU: jendela freshness adaptif — dipersempit ke
+  /// [evidenceMaxAgeMoving] kalau sample terakhir menunjukkan device
+  /// masih bergerak di atas [movingSpeedThresholdMps]. `speedMps` null
+  /// (OS tidak melaporkan speed yang dipercaya) → fallback aman ke
+  /// [evidenceMaxAge] biasa, sama seperti pola gate lain di engine.
+  Duration get _effectiveEvidenceMaxAge {
+    final speed = speedMps;
+    if (speed != null && speed > movingSpeedThresholdMps) {
+      return evidenceMaxAgeMoving;
+    }
+    return evidenceMaxAge;
+  }
+
   bool get hasFreshPosition {
     final timestamp = positionTimestamp;
     if (!hasPosition || timestamp == null || positionFromCache) return false;
     final age = DateTime.now().difference(timestamp);
-    return age >= const Duration(seconds: -5) && age <= evidenceMaxAge;
+    return age >= const Duration(seconds: -5) && age <= _effectiveEvidenceMaxAge;
   }
 
   bool get isEvidenceReady =>
@@ -560,6 +594,7 @@ class PodLocationService {
         lockResult: lock,
         lockProgress: _gpsEngine.lockProgress,
         isFallbackLock: _gpsEngine.isFallbackLock,
+        speedMps: lock.bestRaw.speed,
       ));
     }
     _stopStream();
@@ -642,6 +677,11 @@ class PodLocationService {
     final lon = lock?.centroidLon ?? raw.longitude;
     final acc = lock?.accuracy    ?? raw.accuracy;
 
+    // speedAccuracy<=0 dianggap "provider tidak melaporkan speed
+    // Doppler" (bukan bacaan valid) → simpan null, sama pola dengan
+    // PodSample.hasReliableSpeed di PodGpsEngine.
+    final speed = raw.speedAccuracy > 0 ? raw.speed : null;
+
     _emit(currentState.copyWith(
       lat:            lat,
       lon:            lon,
@@ -657,6 +697,7 @@ class PodLocationService {
       spoofSuspected: false,
       gnssGateActive: _gpsEngine.gnssGateActive && !conf.canCapture,
       velocityGateActive: _gpsEngine.velocityGateActive && !conf.canCapture,
+      speedMps:       speed,
     ));
 
     // ✅ FIX ALAMAT TIDAK MUNCUL: dulu geocode hanya dipicu kalau
