@@ -22,19 +22,14 @@ import '../services/watermark/watermark_service.dart';
 import 'watermark_settings_sheet.dart';
 import 'preview_screen.dart';
 
-/// ✅ FIX EVIDENCE INTEGRITY: sebelumnya `locationName` di jalur video
-/// langsung pakai `evidenceAddress` mentah, padahal `awaitEvidenceReady()`
-/// bisa mengembalikan lock genuine ATAU fallback lock paksa dari
-/// `PodGpsEngine._forceLock()` (setelah timeout) — dua kualitas yang
-/// jauh berbeda tapi sebelumnya tidak dibedakan sama sekali di data
-/// yang tersimpan/tercetak ke watermark. Helper ini menandai eksplisit
-/// kalau `locState.isFallbackLock == true`, konsisten dengan penandaan
-/// yang sama di in_app_camera_screen.dart & photo_scan_screen.dart.
+/// ℹ️ Watermark HANYA menampilkan alamat/lokasi — status kualitas lock
+/// (genuine vs fallback dari `PodGpsEngine._forceLock()`) SENGAJA tidak
+/// dicetak ke watermark video (permintaan produk). `locState.isFallbackLock`
+/// tetap tersedia untuk keperluan lain (badge UI/audit internal) yang
+/// tidak melalui fungsi ini.
 String? evidenceLocationName(PodLocationState? locState) {
   if (locState == null || locState.evidenceAddress.isEmpty) return null;
-  return locState.isFallbackLock
-      ? '⚠ GPS cadangan · ${locState.evidenceAddress}'
-      : locState.evidenceAddress;
+  return locState.evidenceAddress;
 }
 
 class VideoScanScreen extends StatefulWidget {

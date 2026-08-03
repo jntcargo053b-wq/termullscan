@@ -521,12 +521,13 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       companyName: _wmSettings.companyName,
       latitude: liveSnapshot?.latitude ?? locState?.lat,
       longitude: liveSnapshot?.longitude ?? locState?.lon,
+      // ℹ️ Watermark HANYA menampilkan alamat/lokasi — status kualitas
+      // lock (fallback dari PodGpsEngine._forceLock(), dsb) SENGAJA
+      // tidak dicetak ke watermark foto (permintaan produk).
       locationName: liveSnapshot != null
           ? liveSnapshot.locationName
           : (locState != null && locState.evidenceAddress.isNotEmpty
-              ? (locState.isFallbackLock
-                  ? '⚠ GPS cadangan · ${locState.evidenceAddress}'
-                  : locState.evidenceAddress)
+              ? locState.evidenceAddress
               : null),
       isManual: false,
     );

@@ -247,48 +247,18 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
   // ✅ FIX EVIDENCE INTEGRITY: capture di layar ini TIDAK menunggu GPS
   // lock (beda dari video/gallery-photo yang selalu lewat
   // `awaitEvidenceReady()`, yang dijamin hanya mengembalikan state
-  // `isEvidenceReady == true` atau null). Demi latency, itu tetap
-  // dipertahankan — TAPI kalau operator menjepret saat lokasi belum
-  // lolos confidence gate (`isEvidenceReady == false`, mis. masih
-  // "acquiring"/akurasi rendah), alamat/koordinat yang tercetak di
-  // watermark ditandai eksplisit supaya tidak terlihat seolah-olah
-  // bukti lokasi final padahal belum terkunci. Tanda ini ikut terbawa
-  // ke `locationName` yang dikonsumsi ScanEntry → WatermarkRenderer,
-  // jadi otomatis muncul di watermark akhir tanpa perlu field baru.
-  static const String _unlockedPrefix = '⚠ GPS belum terkunci · ';
-
-  // ✅ FIX #2 (evidence integrity, lanjutan): sebelumnya isEvidenceReady
-  // == true diperlakukan seragam, padahal itu bisa berarti dua hal
-  // yang kualitasnya beda jauh: (a) lock genuine (confidence tembus
-  // gate accuracy/GNSS/velocity secara wajar), atau (b) fallback lock
-  // paksa dari PodGpsEngine._forceLock() setelah timeout — engine
-  // SUDAH melacak ini lewat `isFallbackLock`, tapi sebelumnya info itu
-  // mati di dalam service, tidak pernah sampai ke watermark/UI. Sekarang
-  // fallback lock juga ditandai eksplisit di locationName.
-  static const String _fallbackPrefix = '⚠ GPS cadangan · ';
-
-  // ✅ FIX AUDIT LINTAS FILE: penanda tadinya SUFFIX (di akhir string),
-  // tapi stamp_layout/minimal_layout/polaroid_layout merender lokasi
-  // dengan maxLines:1 + TextOverflow.ellipsis. Alamat Indonesia yang
-  // panjang bikin ellipsis motong dari BELAKANG — jadi suffix di ujung
-  // justru yang PERTAMA hilang, persis di layout yang paling butuh
-  // sinyal ini (watermark yang sudah dibakar ke file). Prefix jauh
-  // lebih aman: ellipsis motong ekor alamat, bukan kepala peringatan.
-
+  // ℹ️ Watermark HANYA menampilkan alamat/lokasi — status kualitas GPS
+  // (belum terkunci / fallback lock / dsb) SENGAJA tidak dicetak ke
+  // watermark foto/video (permintaan produk). Status kualitas lock
+  // tetap tersedia lewat `locState.isEvidenceReady` / `isFallbackLock`
+  // untuk badge UI di layar kamera saja — hanya representasi VISUAL
+  // di watermark yang dipangkas jadi alamat polos.
   WatermarkData _buildLiveData() {
     final locState = _wmSettings.gpsWatermarkEnabled
         ? PodLocationService.instance.currentState
         : null;
-    String? locationName;
-    if (locState != null && locState.address.isNotEmpty) {
-      if (!locState.isEvidenceReady) {
-        locationName = '$_unlockedPrefix${locState.address}';
-      } else if (locState.isFallbackLock) {
-        locationName = '$_fallbackPrefix${locState.address}';
-      } else {
-        locationName = locState.address;
-      }
-    }
+    final locationName =
+        (locState != null && locState.address.isNotEmpty) ? locState.address : null;
     return WatermarkData(
       timestamp: DateTime.now(),
       operatorName: _wmSettings.operatorName,
@@ -340,10 +310,8 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
       // Tunggu SEBENTAR (maks _gpsQualityWaitCeiling) kalau lock belum
       // mencapai tier "good" — lihat catatan di atas. Kalau ceiling
       // habis atau lokasi tetap tidak layak, tetap lanjut capture
-      // dengan fix terbaik yang ada; _buildLiveData() di bawah sudah
-      // menandai "⚠ GPS belum terkunci"/"⚠ GPS cadangan" bila
-      // kualitasnya di bawah standar, jadi tidak pernah menyamar
-      // sebagai bukti final yang sudah terkunci penuh.
+      // dengan fix terbaik yang ada apapun kualitasnya (watermark cuma
+      // mencetak alamat, tidak ada penanda kualitas GPS di dalamnya).
       if (_wmSettings.gpsWatermarkEnabled &&
           !PodLocationService.instance.currentState.confidence.canCapture) {
         try {
