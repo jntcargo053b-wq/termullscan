@@ -308,6 +308,15 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
 
   // ─── Capture ─────────────────────────────────────────────────
 
+  // ✅ FIX QUALITY-BEFORE-CAPTURE: seberapa lama shutter boleh menunggu
+  // lock GPS mencapai tier "good" (canCapture) sebelum tetap lanjut
+  // dengan fix terbaik yang ada. Sengaja pendek — dengan quick-lock
+  // engine sekarang (biasanya 2-4 detik outdoor untuk tier "good"),
+  // ceiling ini jarang benar-benar terpakai penuh; cuma jaring pengaman
+  // supaya shutter tidak menjepret dengan fix "poor"/"searching" yang
+  // kebetulan tersedia di milidetik tombol ditekan.
+  static const Duration _gpsQualityWaitCeiling = Duration(seconds: 4);
+
   Future<void> _capture() async {
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized || _isCapturing) {
@@ -328,6 +337,31 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
     }
     setState(() => _isCapturing = true);
     try {
+      // Tunggu SEBENTAR (maks _gpsQualityWaitCeiling) kalau lock belum
+      // mencapai tier "good" — lihat catatan di atas. Kalau ceiling
+      // habis atau lokasi tetap tidak layak, tetap lanjut capture
+      // dengan fix terbaik yang ada; _buildLiveData() di bawah sudah
+      // menandai "⚠ GPS belum terkunci"/"⚠ GPS cadangan" bila
+      // kualitasnya di bawah standar, jadi tidak pernah menyamar
+      // sebagai bukti final yang sudah terkunci penuh.
+      if (_wmSettings.gpsWatermarkEnabled &&
+          !PodLocationService.instance.currentState.confidence.canCapture) {
+        try {
+          await PodLocationService.instance.stream
+              .firstWhere(
+                (s) => s.confidence.canCapture || s.mockDetected,
+              )
+              .timeout(_gpsQualityWaitCeiling);
+        } catch (_) {
+          // Timeout/stream error — lanjut capture dengan fix terbaik
+          // yang ada saat ini.
+        }
+      }
+      if (!mounted || _controller == null || !_controller!.value.isInitialized) {
+        setState(() => _isCapturing = false);
+        return;
+      }
+
       HapticFeedback.mediumImpact();
       // ✅ Snapshot PERSIS apa yang sedang tampil di live preview SAAT
       // ini — dibangun lewat fungsi yang SAMA (_buildLiveData()) yang
@@ -335,7 +369,7 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
       // dengan yang dilihat operator. Hanya timestamp yang di-refresh
       // ke waktu jepret sebenarnya (bukan sisa tick jam terakhir).
       final capturedData = _buildLiveData().copyWith(timestamp: DateTime.now());
-      final xfile = await controller.takePicture();
+      final xfile = await _controller!.takePicture();
       if (mounted) {
         Navigator.pop(
           context,

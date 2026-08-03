@@ -498,7 +498,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     // dari fungsi yang sama dengan overlay live) — dipakai LANGSUNG,
     // tanpa query ulang apa pun, jadi WYSIWYG terjamin.
     //
-    // `awaitEvidenceReady()` (query ulang, timeout 15 detik — disamakan
+    // `awaitEvidenceReady()` (query ulang, timeout 12 detik — disamakan
     // dengan barcode_scan_screen & video_scan_screen) HANYA dipakai
     // sebagai fallback untuk sumber yang TIDAK punya live preview sama
     // sekali, yaitu foto dari galeri (`_pickFromGallery`), karena di
@@ -506,7 +506,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
     // untuk disinkronkan.
     final locState = liveSnapshot == null && _wmSettings.gpsWatermarkEnabled
         ? await PodLocationService.instance.awaitEvidenceReady(
-            timeout: const Duration(seconds: 15),
+            timeout: const Duration(seconds: 12),
           )
         : null;
 

@@ -404,8 +404,13 @@ class PodLocationService {
   /// Menunggu snapshot lokasi fresh yang aman dipakai sebagai bukti.
   /// Alamat ditunggu selama masih ada waktu, tetapi koordinat fresh tetap
   /// dikembalikan saat enrichment alamat melewati timeout.
+  /// ✅ Default diturunkan dari 15 → 12 detik: skenario terburuk GPS
+  /// engine sendiri sekarang cuma 10 detik (indoor force-lock timeout,
+  /// lihat GpsConfig.indoorTimeout), jadi 12 detik sudah termasuk buffer
+  /// untuk propagasi state — 15 detik dulu adalah sisa slack dari
+  /// sebelum engine dipercepat (dulu indoor timeout 15 detik).
   Future<PodLocationState?> awaitEvidenceReady({
-    Duration timeout = const Duration(seconds: 15),
+    Duration timeout = const Duration(seconds: 12),
     bool requireAddress = true,
   }) async {
     final deadline = DateTime.now().add(timeout);
@@ -542,23 +547,39 @@ class PodLocationService {
     // ── Platform‑specific location settings ──────────────────
     // Pastikan semua distanceFilter bertipe sesuai:
     // Android → int, iOS → double, fallback → int (konstan)
+    //
+    // ✅ FIX AKURASI: accuracy dinaikkan dari `.high` → `.bestForNavigation`.
+    // Di Android ini efeknya nol (baik `.high` maupun `.bestForNavigation`
+    // sama-sama dipetakan geolocator ke PRIORITY_HIGH_ACCURACY — Android
+    // cuma punya 4 tingkat prioritas, jadi `.high` sudah maksimal). Tapi
+    // di iOS `.high` dipetakan ke kCLLocationAccuracyNearestTenMeters —
+    // secara EKSPLISIT membatasi presisi ke sekitar 10m sebagai lantai,
+    // padahal excellentThreshold engine ini justru 10m. Akibatnya sample
+    // dari iOS nyaris mustahil pernah menembus tier "excellent", dan
+    // turut menyumbang selisih puluhan meter yang dilaporkan. Tidak ada
+    // dampak baterai berarti karena acquisition di sini selalu singkat
+    // (stream berhenti begitu lock, bukan tracking berkelanjutan).
+    // intervalDuration/timeLimit sengaja TIDAK diset (null) — nilai null
+    // berarti geolocator TIDAK menerapkan filter interval sama sekali,
+    // jadi update datang secepat chip GPS mengirim (umumnya 1Hz, standar
+    // hardware GPS konsumen) tanpa throttle tambahan dari kita.
     LocationSettings settings;
     if (Platform.isAndroid) {
       settings = AndroidSettings(
-        accuracy: LocationAccuracy.high,
+        accuracy: LocationAccuracy.bestForNavigation,
         distanceFilter: PodGpsEngine.distanceFilterAcquiring.toInt(), // ← int
         forceLocationManager: false,
       );
     } else if (Platform.isIOS) {
       settings = AppleSettings(
-        accuracy: LocationAccuracy.high,
+        accuracy: LocationAccuracy.bestForNavigation,
         distanceFilter: PodGpsEngine.distanceFilterAcquiring.toInt(), // ← int
         activityType: ActivityType.fitness,
       );
     } else {
       // Web / platform lain – gunakan int agar kompatibel dengan const
       settings = const LocationSettings(
-        accuracy: LocationAccuracy.high,
+        accuracy: LocationAccuracy.bestForNavigation,
         distanceFilter: 0, // int, bukan double
       );
     }

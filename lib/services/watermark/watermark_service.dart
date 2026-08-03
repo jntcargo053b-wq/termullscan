@@ -271,6 +271,8 @@ class VideoWatermarkService {
         overlayPath: overlayPath,
         offsetX: offsetX,
         offsetY: offsetY,
+        position: settings.position,
+        padding: (videoInfo.displayWidth * 0.015).round().clamp(10, 40),
         settings: settings,
         keepAudio: keepAudio,
         useHardwareEncoder: useHardwareEncoder && hwAvailable,
@@ -892,6 +894,8 @@ class VideoWatermarkService {
     required String overlayPath,
     required int offsetX,
     required int offsetY,
+    required WatermarkPosition position,
+    required int padding,
     required WatermarkSettings settings,
     required bool keepAudio,
     required bool useHardwareEncoder,
@@ -903,8 +907,40 @@ class VideoWatermarkService {
       throw Exception('Overlay file not found: $overlayPath');
     }
 
+    // ─── POSISI OVERLAY (EXPRESSION, BUKAN PIXEL STATIS) ─────────
+    // offsetX/offsetY di atas dihitung di Dart berdasarkan tebakan
+    // displayWidth/displayHeight kita sendiri (dari ffprobe + deteksi
+    // rotasi manual). Kalau tebakan itu meleset dari dimensi frame
+    // yang SUNGGUHAN didekode FFmpeg (mis. video dengan rotation
+    // metadata yang di-auto-rotate berbeda dari perkiraan kita),
+    // offset piksel statis jadi salah dan watermark muncul di
+    // tengah video, bukan di tepi yang diminta.
+    // Solusi: pakai expression main_w/main_h/overlay_w/overlay_h
+    // yang dievaluasi FFmpeg sendiri saat runtime terhadap frame
+    // [0:v] yang sesungguhnya — selalu konsisten berapa pun ukuran
+    // aslinya, sama seperti drawtext fallback yang sudah pakai w/h.
+    String overlayX, overlayY;
+    switch (position) {
+      case WatermarkPosition.bottomRight:
+        overlayX = 'main_w-overlay_w-$padding';
+        overlayY = 'main_h-overlay_h-$padding';
+        break;
+      case WatermarkPosition.bottomLeft:
+        overlayX = '$padding';
+        overlayY = 'main_h-overlay_h-$padding';
+        break;
+      case WatermarkPosition.topRight:
+        overlayX = 'main_w-overlay_w-$padding';
+        overlayY = '$padding';
+        break;
+      case WatermarkPosition.topLeft:
+        overlayX = '$padding';
+        overlayY = '$padding';
+        break;
+    }
+
     final filterComplex =
-        '[0:v][1:v]overlay=$offsetX:$offsetY:format=auto:eof_action=pass,format=yuv420p[outv]';
+        "[0:v][1:v]overlay=x='$overlayX':y='$overlayY':format=auto:eof_action=pass,format=yuv420p[outv]";
 
     final List<String> filterArgs = [
       '-filter_complex', filterComplex,

@@ -19,7 +19,8 @@
 //   avgAccuracy        : weighted (bobot 1/accuracy²)
 //   provider           : fused
 //   startup            : lastKnownPosition (OS cache + SharedPrefs)
-//   distanceFilter     : 0 saat acquiring, 5 setelah locked
+//   distanceFilter     : 0 (stream berhenti total begitu locked — tidak
+//                         ada fase post-lock yang perlu distanceFilter)
 //   mock GPS           : ditolak (raw.isMocked) + heuristik spoofing lanjutan (teleport speed,
 //                         timestamp mundur, 0 satelit tapi ada fix,
 //                         accuracy vs HDOP tidak konsisten, streak fix
@@ -75,6 +76,15 @@ class GpsConfig {
   final double excellentMaxStdDev;
   final double excellentMaxRadius;
   final int targetSamples;
+  // ── Quick-lock sample count (BARU) ───────────────────────────
+  // Sebelumnya tier "good" (siap foto) mensyaratkan jumlah sample
+  // yang SAMA dengan tier "excellent" (targetSamples=3) DAN gate
+  // GNSS/velocity yang sama ketatnya — padahal "good" cuma perlu
+  // cukup layak untuk dipakai sebagai bukti, bukan presisi maksimal.
+  // Dipisah supaya lock awal (status "Siap Foto") bisa lebih cepat
+  // seperti Google Maps/kamera timestamp, sementara "excellent" tetap
+  // butuh 3 sample + semua gate seperti sebelumnya.
+  final int quickLockSamples;
   final int maxWindow;
 
   // ── Timeout adaptif indoor/outdoor (BARU) ────────────────────
@@ -167,9 +177,10 @@ class GpsConfig {
     this.excellentMaxStdDev = 8.0,
     this.excellentMaxRadius = 12.0,
     this.targetSamples = 3,
+    this.quickLockSamples = 2,
     this.maxWindow = 10,
-    this.outdoorTimeout = const Duration(seconds: 8),
-    this.indoorTimeout = const Duration(seconds: 15),
+    this.outdoorTimeout = const Duration(seconds: 5),
+    this.indoorTimeout = const Duration(seconds: 10),
     this.indoorAccuracyHint = 20.0,
     this.moveThreshold = 20.0,
     this.resetThreshold = 50.0,
@@ -386,8 +397,14 @@ class _ClusterStats {
 // ═══════════════════════════════════════════════════════════════
 class PodGpsEngine {
   // ─── Distance Filter Constants ──────────────────────────────
+  // ✅ CLEANUP: `distanceFilterLocked` (dulu 5.0) dihapus — dead code,
+  // tidak pernah benar-benar dipakai. Begitu engine locked, PodLocationService
+  // langsung _stopStream() total (lihat _onPosition), jadi tidak pernah ada
+  // fase "streaming pasca-lock" untuk distanceFilter itu berlaku. Komentar
+  // lama di header file ("distanceFilter: 0 saat acquiring, 5 setelah
+  // locked") tidak akurat — sekarang cuma ada satu fase: acquiring, selalu
+  // distanceFilter 0 (setiap update GPS diterima, tidak ada throttle jarak).
   static const double distanceFilterAcquiring = 0.0;
-  static const double distanceFilterLocked = 5.0;
 
   final GpsConfig _config;
   GpsLogLevel _logLevel = kDebugMode ? GpsLogLevel.debug : GpsLogLevel.error;
@@ -473,7 +490,7 @@ class PodGpsEngine {
   bool get isLocked => _locked;
   bool get isFallbackLock => _isFallbackLock;
   int get sampleCount => _window.length;
-  int get samplesNeeded => _config.targetSamples;
+  int get samplesNeeded => _config.quickLockSamples;
 
   /// Finalisasi sample terbaik yang sudah ada saat deadline service habis.
   /// Window hanya berisi sample GPS live (OS lastKnownPosition tidak pernah
@@ -490,7 +507,7 @@ class PodGpsEngine {
 
   double get lockProgress {
     if (_window.isEmpty) return 0.0;
-    return (_window.length / _config.targetSamples).clamp(0.0, 1.0);
+    return (_window.length / _config.quickLockSamples).clamp(0.0, 1.0);
   }
 
   // ─── Logging ──────────────────────────────────────────────────
@@ -881,10 +898,20 @@ class PodGpsEngine {
         velocityOk) {
       newConf = PodConfidence.excellent;
       _locked = true;
-    } else if (n >= _config.targetSamples &&
-        avgAcc <= _config.captureThreshold &&
-        gnssOk &&
-        velocityOk) {
+    } else if (n >= _config.quickLockSamples &&
+        avgAcc <= _config.captureThreshold) {
+      // ⚡ QUICK LOCK (BARU): tier "good" sekarang HANYA mensyaratkan
+      // jumlah sample (quickLockSamples=2, bukan 3) + rata-rata akurasi
+      // di bawah captureThreshold — gate GNSS satelit/CN0/HDOP/PDOP dan
+      // motion/velocity TIDAK lagi ikut memblokir tier ini (tetap aktif
+      // penuh untuk "excellent" di atas). Rasionalnya: gate-gate itu
+      // dirancang untuk menyaring presisi maksimal/anti-spoof lanjutan,
+      // bukan syarat minimum "lokasi cukup layak dipakai" — menumpuknya
+      // di depan tier dasar cuma bikin lock kerasa lambat tanpa manfaat
+      // proporsional. Anti-spoof primer (raw.isMocked + 6 heuristik di
+      // _evaluateSpoofHeuristics) tetap jalan penuh di processSample()
+      // SEBELUM sample ini bahkan masuk window, jadi outlier/spoofing
+      // tetap tersaring lebih dulu.
       newConf = PodConfidence.good;
       _locked = true;
     } else if (n >= 1 && avgAcc <= _activeAccuracyThreshold) {
@@ -1149,7 +1176,7 @@ class PodGpsEngine {
       'gnssGateActive': _gnssGateActive,
       'velocityGateActive': _velocityGateActive,
       'sampleCount': _window.length,
-      'samplesNeeded': _config.targetSamples,
+      'samplesNeeded': _config.quickLockSamples,
       'progress': lockProgress,
       'environment': isIndoorDetected ? 'indoor' : 'outdoor',
       'environmentNow': isIndoorNow ? 'indoor' : 'outdoor',

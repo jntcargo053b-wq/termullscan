@@ -283,7 +283,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
       // menggunakan snapshot lokasi yang sama.
       final locState = _wmSettings.gpsWatermarkEnabled
           ? await PodLocationService.instance.awaitEvidenceReady(
-              timeout: const Duration(seconds: 15),
+              timeout: const Duration(seconds: 12),
             )
           : null;
 
@@ -558,7 +558,7 @@ class _VideoScanScreenState extends State<VideoScanScreen> {
     for (int attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         final locState = await PodLocationService.instance.awaitEvidenceReady(
-          timeout: const Duration(seconds: 15),
+          timeout: const Duration(seconds: 12),
         );
         if (locState != null) {
           await _storage.updateLocation(
