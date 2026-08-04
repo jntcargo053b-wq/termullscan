@@ -32,6 +32,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'pod_gps_engine.dart';
 import 'pod_address_resolver.dart';
 import 'gnss_quality_service.dart';
+import 'pod_native_location_service.dart';
 import '../models/resolved_location.dart';
 
 export 'pod_gps_engine.dart' show PodConfidence, PodConfidenceLabel, PodLockResult;
@@ -258,6 +259,13 @@ class PodLocationService {
   // Dependencies
   final PodGpsEngine _gpsEngine = PodGpsEngine();
   final GnssQualityService _gnssQuality = GnssQualityService.instance;
+  final PodNativeLocationService _nativeLocation =
+      PodNativeLocationService.instance;
+
+  // true selama acquisition berjalan lewat native FusedLocationProviderClient
+  // bridge (Android). Dipakai supaya _onAcquireTimeout/_stopStream tahu path
+  // mana yang aktif kalau nanti perlu logging/diagnostik terpisah.
+  bool _usingNativeStream = false;
 
   // Data GNSS dianggap terlalu basi untuk dipasangkan dengan sample
   // posisi jika lebih tua dari ini — mencegah quality lama (misal dari
@@ -486,9 +494,15 @@ class PodLocationService {
       clearAddress: !currentState.hasMatchingAddress,
     ));
 
-    // Inject OS cached position → instant preview
+    // Inject cached position → instant preview.
+    // ✅ NATIVE FIX: di Android, cache FusedLocationProviderClient
+    // (via getLastLocation() native) digabung dari SEMUA app yang minta
+    // lokasi di device, biasanya lebih segar dari
+    // Geolocator.getLastKnownPosition() yang cuma cache app ini sendiri.
+    // Fallback ke geolocator kalau native null (belum pernah ada fix
+    // sama sekali, atau device tanpa Play Services).
     try {
-      final osLast = await Geolocator.getLastKnownPosition();
+      final osLast = await _getCachedPreviewPosition();
       if (osLast != null && osLast.isMocked) {
         _emit(const PodLocationState(
           confidence: PodConfidence.poor,
@@ -585,16 +599,95 @@ class PodLocationService {
     }
 
     if (generation != _acquisitionGeneration) return;
-    _positionStream = Geolocator.getPositionStream(
-      locationSettings: settings,
-    ).listen((position) => _onPosition(position, generation), onError: (e) {
-      if (kDebugMode) debugPrint('PodLocationService: stream error $e');
-    });
+    _startPositionStream(generation, settings);
 
     _acquireTimeout =
         Timer(_acquireDeadline, () => _onAcquireTimeout(generation));
 
     if (kDebugMode) debugPrint('PodLocationService: acquiring started');
+  }
+
+  // ── Position stream: native FusedLocationProviderClient (Android)
+  //    dengan fallback ke geolocator ─────────────────────────────
+  //
+  // Kenapa native, bukan langsung geolocator, di Android: geolocator
+  // TIDAK mengekspos `setWaitForAccurateLocation(true)`, opsi yang
+  // mencegah FusedLocationProviderClient mengirim estimasi kasar
+  // (network/cell-based) sebagai callback pertama — sample seperti itu
+  // kalau lolos masuk _window bisa mengotori centroid awal. Lihat
+  // android/.../FusedLocationStreamHandler.kt.
+  //
+  // Fallback ke geolocator terjadi kalau: platform bukan Android, atau
+  // native stream melempar error (device tanpa Play Services / channel
+  // gagal) — supaya acquisition tidak macet total hanya karena bridge
+  // native bermasalah di device tertentu.
+  void _startPositionStream(int generation, LocationSettings settings) {
+    if (Platform.isAndroid && _nativeLocation.isSupported) {
+      _usingNativeStream = true;
+      _positionStream = _nativeLocation.positionStream
+          .map(_nativeToPosition)
+          .listen(
+        (position) => _onPosition(position, generation),
+        onError: (Object e) {
+          if (kDebugMode) {
+            debugPrint(
+              'PodLocationService: native fused stream error $e — '
+              'fallback ke geolocator',
+            );
+          }
+          if (generation != _acquisitionGeneration) return;
+          _positionStream?.cancel();
+          _usingNativeStream = false;
+          _startGeolocatorStream(generation, settings);
+        },
+      );
+    } else {
+      _startGeolocatorStream(generation, settings);
+    }
+  }
+
+  void _startGeolocatorStream(int generation, LocationSettings settings) {
+    _usingNativeStream = false;
+    _positionStream = Geolocator.getPositionStream(
+      locationSettings: settings,
+    ).listen((position) => _onPosition(position, generation), onError: (e) {
+      if (kDebugMode) debugPrint('PodLocationService: stream error $e');
+    });
+  }
+
+  Future<Position?> _getCachedPreviewPosition() async {
+    if (Platform.isAndroid && _nativeLocation.isSupported) {
+      final native = await _nativeLocation.getLastLocation();
+      if (native != null) return _nativeToPosition(native);
+    }
+    return Geolocator.getLastKnownPosition();
+  }
+
+  /// Adapter NativeFusedPosition → geolocator Position, supaya seluruh
+  /// pipeline hilir (PodGpsEngine.processSample, _onPosition, spoof
+  /// heuristics) TIDAK perlu tahu/berubah soal sumber sample-nya.
+  /// Hanya field yang benar-benar dipakai hilir (lat/lon/accuracy/
+  /// timestamp/isMocked/speed/speedAccuracy) yang punya makna asli;
+  /// altitude/heading/floor diisi placeholder karena tidak pernah
+  /// dibaca oleh PodGpsEngine atau PodLocationService.
+  Position _nativeToPosition(NativeFusedPosition native) {
+    return Position(
+      latitude: native.latitude,
+      longitude: native.longitude,
+      timestamp: native.timestamp,
+      accuracy: native.accuracy,
+      altitude: native.altitude ?? 0.0,
+      altitudeAccuracy: 0.0,
+      heading: native.bearing ?? 0.0,
+      headingAccuracy: 0.0,
+      speed: native.speed ?? 0.0,
+      // speedAccuracy<=0 sudah konsisten berarti "tidak dipercaya" di
+      // seluruh pipeline hilir (lihat NativeFusedPosition.hasReliableSpeed
+      // dan PodSample.hasReliableSpeed) — diteruskan apa adanya.
+      speedAccuracy: native.speedAccuracy,
+      floor: null,
+      isMocked: native.isMock,
+    );
   }
 
   void _onAcquireTimeout(int generation) {
@@ -1023,6 +1116,7 @@ class PodLocationService {
   void _stopStream() {
     _positionStream?.cancel();
     _positionStream = null;
+    _usingNativeStream = false;
     _gnssQuality.stop();
   }
 
