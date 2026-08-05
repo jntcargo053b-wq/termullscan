@@ -28,6 +28,8 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../models/scan_entry.dart';
 import '../services/storage_service.dart';
+import '../services/pod_location_service.dart';
+import '../watermark/watermark_settings.dart';
 import 'photo_scan_screen.dart';
 import 'video_scan_screen.dart';
 
@@ -48,6 +50,7 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     detectionSpeed: DetectionSpeed.noDuplicates,
   );
   final StorageService _storage = StorageService();
+  final WatermarkSettings _wmSettings = WatermarkSettings();
 
   // ─── STATUS (ValueNotifier, bukan setState) ──────────────────
   final ValueNotifier<String?> _statusVN = ValueNotifier(null);
@@ -63,11 +66,31 @@ class _BarcodeScanScreenState extends State<BarcodeScanScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _startScannerWithRetry();
+
+    // ⭐ BARU (Priority #1, saran performa GPS): mulai warm-up GPS
+    // SEDINI mungkin — begitu layar scan barcode dibuka, bukan
+    // menunggu sampai barcode berhasil dikenali & PhotoScanScreen/
+    // VideoScanScreen terbuka. Proses aim+scan barcode sendiri
+    // biasanya makan 1-4 detik yang sebelumnya terbuang percuma —
+    // sekarang GPS sudah mulai akuisisi di detik itu juga, gratis.
+    //
+    // Aman dipanggil dobel dengan acquireForCapture(owner: this) di
+    // PhotoScanScreen/VideoScanScreen nanti — acquireForCapture()
+    // sudah idempotent (early-return kalau evidence sudah locked/
+    // tracking), dan _captureOwners adalah Set jadi owner ganda tidak
+    // masalah. Layar ini TIDAK di-pop saat pindah ke PhotoScanScreen
+    // (pakai Navigator.push, tetap ter-mount di bawahnya) — owner ini
+    // baru lepas saat operator benar-benar kembali ke Home, jadi GPS
+    // tetap hangat lintas-batch selama sesi scan berlangsung.
+    if (_wmSettings.gpsWatermarkEnabled) {
+      unawaited(PodLocationService.instance.acquireForCapture(owner: this));
+    }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    PodLocationService.instance.releaseAfterCapture(owner: this);
     _scannerController.dispose();
     _statusVN.dispose();
     _busyVN.dispose();
