@@ -298,4 +298,158 @@ void main() {
       expect(engine.isFallbackLock, isFalse);
     });
   });
+
+  group('Convergence-based lock (BARU)', () {
+    test('excellent DIBLOKIR walau stdDev/radius snapshot lolos, kalau centroid masih '
+        'bergeser signifikan antar-evaluasi (belum konvergen)', () {
+      final engine = PodGpsEngine();
+      addTearDown(engine.dispose);
+
+      // 3 sample segaris (0m, 6m, 12m) — dievaluasi SATU-per-SATU
+      // seperti sample GPS asli mengalir, bukan dimasukkan sekaligus.
+      // Centroid bergeser 0 → 3m → 6m antar-evaluasi (weighted average,
+      // akurasi sama semua) — drift maksimum antar-titik histori = 6m,
+      // MELEBIHI convergenceMaxDriftMeters default (4.0m).
+      //
+      // Tapi snapshot TERAKHIR (n=3) sendiri lolos semua gate LAMA:
+      //   avgAcc=5.0m <= excellentThreshold(10), stdDev≈4.9m <= 8,
+      //   radius=6m <= excellentMaxRadius(12).
+      // Artinya SEBELUM convergence gate ditambahkan, tier ini akan
+      // salah lolos jadi "excellent" walau centroid nyatanya belum
+      // berhenti bergeser — inilah gap yang convergence gate tutup.
+      engine.processSample(_pos(lat: _latPlusMeters(0), accuracy: 5.0, offsetMs: 0));
+      engine.processSample(_pos(lat: _latPlusMeters(6), accuracy: 5.0, offsetMs: 5000));
+      engine.processSample(_pos(lat: _latPlusMeters(12), accuracy: 5.0, offsetMs: 10000));
+
+      expect(
+        engine.confidence,
+        PodConfidence.good,
+        reason: 'convergence gate mestinya menahan di "good" walau '
+            'stdDev/radius snapshot terakhir sudah memenuhi ambang excellent',
+      );
+      expect(engine.isConverged, isFalse);
+      expect(engine.convergenceDriftMeters, isNotNull);
+      expect(engine.convergenceDriftMeters!, greaterThan(4.0));
+      expect(engine.canCapture, isTrue, reason: 'tier "good" tetap tercapai, cukup layak dipakai');
+    });
+
+    test('excellent TERCAPAI begitu centroid berhenti bergeser (konvergen) di titik yang sama', () {
+      final engine = PodGpsEngine();
+      addTearDown(engine.dispose);
+
+      // 3 sample di titik yang PERSIS sama (akurasi sedikit bervariasi
+      // supaya tidak kena heuristik #5 streak-identik) — centroid tidak
+      // pernah bergeser antar-evaluasi, drift = 0m.
+      engine.processSample(_pos(accuracy: 5.0, offsetMs: 0));
+      engine.processSample(_pos(accuracy: 5.1, offsetMs: 5000));
+      engine.processSample(_pos(accuracy: 4.9, offsetMs: 10000));
+
+      expect(engine.confidence, PodConfidence.excellent);
+      expect(engine.isConverged, isTrue);
+      expect(engine.convergenceDriftMeters, isNotNull);
+      expect(engine.convergenceDriftMeters!, lessThanOrEqualTo(4.0));
+    });
+
+    test('histori convergence dibersihkan setelah hard reset (pindah lokasi jauh)', () {
+      final engine = PodGpsEngine();
+      addTearDown(engine.dispose);
+
+      engine.processSample(_pos(accuracy: 5.0, offsetMs: 0));
+      engine.processSample(_pos(accuracy: 5.1, offsetMs: 5000));
+      engine.processSample(_pos(accuracy: 4.9, offsetMs: 10000));
+      expect(engine.isConverged, isTrue);
+
+      // Lompat >resetThreshold (50m) — hard reset total.
+      engine.processSample(
+        _pos(lat: _latPlusMeters(200), accuracy: 5.0, offsetMs: 15000),
+      );
+
+      expect(engine.isConverged, isFalse);
+      expect(engine.convergenceDriftMeters, isNull);
+    });
+  });
+
+  group('Soft-unlock debounce (BARU, saran performa #4)', () {
+    test('1 sample menyimpang >= moveThreshold TIDAK memicu soft-unlock '
+        '(belum debounce, streak=1)', () {
+      final engine = PodGpsEngine();
+      addTearDown(engine.dispose);
+
+      // Lock excellent dulu di titik yang sama.
+      engine.processSample(_pos(accuracy: 5.0, offsetMs: 0));
+      engine.processSample(_pos(accuracy: 5.1, offsetMs: 5000));
+      engine.processSample(_pos(accuracy: 4.9, offsetMs: 10000));
+      expect(engine.confidence, PodConfidence.excellent);
+
+      // Geser 25m (>= moveThreshold 20, < resetThreshold 50) — SATU
+      // kali saja, lalu balik lagi ke titik semula di sample berikutnya.
+      engine.processSample(
+        _pos(lat: _latPlusMeters(25), accuracy: 5.0, offsetMs: 15000),
+      );
+
+      // Dengan debounce, 1 sample menyimpang belum cukup — confidence
+      // TIDAK boleh sempat turun ke "fair" (tidak ada flicker).
+      expect(
+        engine.confidence,
+        isNot(PodConfidence.fair),
+        reason: '1 sample menyimpang belum boleh memicu soft-unlock (debounce butuh 2 berturut)',
+      );
+    });
+
+    test('2 sample BERTURUT-TURUT menyimpang >= moveThreshold memicu soft-unlock', () {
+      final engine = PodGpsEngine();
+      addTearDown(engine.dispose);
+
+      engine.processSample(_pos(accuracy: 5.0, offsetMs: 0));
+      engine.processSample(_pos(accuracy: 5.1, offsetMs: 5000));
+      engine.processSample(_pos(accuracy: 4.9, offsetMs: 10000));
+      expect(engine.confidence, PodConfidence.excellent);
+
+      // Geser 25m DUA kali berturut-turut ke arah yang sama (device
+      // benar-benar bergerak menjauh, bukan noise sesaat).
+      engine.processSample(
+        _pos(lat: _latPlusMeters(25), accuracy: 5.0, offsetMs: 15000),
+      );
+      engine.processSample(
+        _pos(lat: _latPlusMeters(50 - 1), accuracy: 5.0, offsetMs: 20000),
+      );
+
+      expect(
+        engine.isLocked && engine.confidence == PodConfidence.excellent,
+        isFalse,
+        reason: 'pergerakan konsisten 2x berturut-turut mestinya tetap terdeteksi (soft-unlock jalan)',
+      );
+    });
+
+    test('streak putus kalau sample di antaranya "diam" lagi', () {
+      final engine = PodGpsEngine();
+      addTearDown(engine.dispose);
+
+      engine.processSample(_pos(accuracy: 5.0, offsetMs: 0));
+      engine.processSample(_pos(accuracy: 5.1, offsetMs: 5000));
+      engine.processSample(_pos(accuracy: 4.9, offsetMs: 10000));
+      expect(engine.confidence, PodConfidence.excellent);
+
+      // Menyimpang sekali...
+      engine.processSample(
+        _pos(lat: _latPlusMeters(25), accuracy: 5.0, offsetMs: 15000),
+      );
+      // ...lalu balik "diam" tepat di titik menyimpang itu (delta ke
+      // sample sebelumnya < moveThreshold) — streak mestinya putus.
+      engine.processSample(
+        _pos(lat: _latPlusMeters(25), accuracy: 5.1, offsetMs: 20000),
+      );
+      // Lalu menyimpang lagi — ini SATU streak baru, bukan lanjutan
+      // dari yang tadi, jadi belum boleh memicu soft-unlock.
+      engine.processSample(
+        _pos(lat: _latPlusMeters(50), accuracy: 5.0, offsetMs: 25000),
+      );
+
+      expect(
+        engine.confidence,
+        isNot(PodConfidence.fair),
+        reason: 'streak yang terputus tidak boleh diakumulasi lintas sample yang "diam"',
+      );
+    });
+  });
 }
