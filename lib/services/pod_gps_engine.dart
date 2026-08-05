@@ -49,6 +49,12 @@
 //                         terlihat trending menuju konvergen tepat saat
 //                         timeout jatuh, diberi satu kali grace
 //                         extension singkat sebelum force-lock.
+//   soft-unlock debounce: BARU — soft-unlock (gerak >= moveThreshold)
+//                         sekarang butuh softUnlockDebounceSamples
+//                         (default 2) sample BERTURUT-TURUT sebelum
+//                         benar-benar terpicu, supaya 1 sample yang
+//                         menyimpang sesaat (nanti dibuang outlier
+//                         rejection) tidak bikin confidence flicker.
 // ============================================================
 
 import 'dart:async';
@@ -115,6 +121,24 @@ class GpsConfig {
   final int outlierMinSamples;
   final double outlierMadFactor;
   final double outlierMinThreshold;
+
+  // ── Soft-unlock debounce (BARU, saran performa #4) ───────────
+  // Soft-unlock dulu terpicu dari SATU sample raw yang kebetulan
+  // bergeser >= moveThreshold — termasuk kalau sample itu sendiri
+  // nanti ternyata outlier sesaat (dibuang MAD-based rejection) yang
+  // tidak pernah benar-benar menggeser centroid robust. Convergence
+  // history sudah bikin lock ini "self-heal" cepat (lihat catatan di
+  // _softUnlock), tapi confidence tetap sempat flicker ke "fair" satu
+  // evaluasi sebelum re-lock — kelihatan di badge UI walau cuma
+  // sesaat. Debounce ini mensyaratkan [softUnlockDebounceSamples]
+  // sample BERTURUT-TURUT yang sama-sama >= moveThreshold sebelum
+  // benar-benar soft-unlock — noise/multipath sesaat (yang biasanya
+  // cuma 1 sample menyimpang lalu balik normal) tersaring di sini,
+  // pergerakan asli (yang konsisten menjauh beberapa sample berturut)
+  // tetap terdeteksi secepat sebelumnya + 1 sample. TIDAK berlaku
+  // untuk resetThreshold (hard reset) — lompatan sebesar itu cukup
+  // jelas untuk direspons segera tanpa debounce.
+  final int softUnlockDebounceSamples;
 
   // ── GNSS quality gate (BARU) ─────────────────────────────────
   // Hanya aktif di Android & hanya jika native side benar-benar
@@ -222,6 +246,7 @@ class GpsConfig {
     this.indoorAccuracyHint = 20.0,
     this.moveThreshold = 20.0,
     this.resetThreshold = 50.0,
+    this.softUnlockDebounceSamples = 2,
     this.outlierMinSamples = 4,
     this.outlierMadFactor = 3.0,
     this.outlierMinThreshold = 5.0,
@@ -507,6 +532,12 @@ class PodGpsEngine {
   bool _locked = false;
   bool _isFallbackLock = false;
 
+  /// Hitung sample BERTURUT-TURUT yang geser >= moveThreshold (tapi <
+  /// resetThreshold) — dipakai debounce soft-unlock (BARU, saran
+  /// performa #4). Reset ke 0 begitu sample "diam" lagi, atau begitu
+  /// soft-unlock benar-benar terpicu.
+  int _moveExceedStreak = 0;
+
   /// true jika native side pernah kirim data GNSS untuk window
   /// saat ini (dipakai UI untuk menampilkan info "menunggu sinyal
   /// GNSS lebih kuat" saat gate belum lolos).
@@ -704,11 +735,40 @@ class PodGpsEngine {
     if (_posInit) {
       final moved = _haversine(_lastLat, _lastLon, raw.latitude, raw.longitude);
       if (moved >= _config.resetThreshold) {
+        // Lompatan besar — cukup jelas untuk direspons segera, tidak
+        // perlu debounce (beda dengan soft-unlock di bawah).
+        _moveExceedStreak = 0;
         _hardReset();
         _log('hard reset, moved ${moved.toStringAsFixed(1)}m', level: GpsLogLevel.info);
       } else if (moved >= _config.moveThreshold && _locked) {
-        _softUnlock();
-        _log('soft unlock, moved ${moved.toStringAsFixed(1)}m', level: GpsLogLevel.info);
+        // ⭐ BARU (saran performa #4): debounce — butuh
+        // softUnlockDebounceSamples (default 2) sample BERTURUT-TURUT
+        // yang sama-sama melebihi moveThreshold sebelum benar-benar
+        // soft-unlock. Noise/multipath sesaat (1 sample menyimpang
+        // lalu balik normal) tersaring di sini tanpa bikin confidence
+        // flicker; pergerakan asli tetap terdeteksi, cuma mundur 1
+        // sample dari sebelumnya.
+        _moveExceedStreak++;
+        if (_moveExceedStreak >= _config.softUnlockDebounceSamples) {
+          _softUnlock();
+          _log(
+            'soft unlock (debounced, streak=$_moveExceedStreak), '
+            'moved ${moved.toStringAsFixed(1)}m',
+            level: GpsLogLevel.info,
+          );
+          _moveExceedStreak = 0;
+        } else {
+          _log(
+            'pergerakan ${moved.toStringAsFixed(1)}m terdeteksi, belum '
+            'debounce (streak=$_moveExceedStreak/${_config.softUnlockDebounceSamples})',
+            level: GpsLogLevel.debug,
+          );
+        }
+      } else {
+        // Sample ini "diam" lagi (atau belum locked) — putus streak
+        // supaya 2 penyimpangan yang TIDAK berturut-turut tidak
+        // dianggap debounce lolos.
+        _moveExceedStreak = 0;
       }
     }
 
@@ -1366,6 +1426,7 @@ class PodGpsEngine {
     _confidence = PodConfidence.searching;
     _posInit = false;
     _lastSampleTimeMs = null;
+    _moveExceedStreak = 0;
     _gnssGateActive = false;
     _velocityGateActive = false;
     _spoofSuspected = false;
