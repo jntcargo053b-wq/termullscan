@@ -654,7 +654,29 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
       if (!mounted) return;
       if (captureResult != null) {
         final xfile = captureResult.file;
-        pendingPath = await _saveToPending(xfile);
+
+        // ⭐ BARU (Priority 3): background refinement SEBELUM watermark
+        // difinalisasi. captureResult.watermarkData tetap dipakai sebagai
+        // snapshot beku (@immutable) — refineSnapshot() TIDAK memutasinya,
+        // hanya mengembalikan objek BARU kalau ada fix lebih baik yang
+        // sempat datang dari tracking stream latar belakang (lihat
+        // PodLocationService._enterTrackingMode) dalam batas waktu
+        // singkat. Kalau tidak ada perbaikan, `refinedSnapshot` akan
+        // menjadi referensi yang SAMA PERSIS dengan captureResult.
+        // watermarkData — jadi mekanisme rollback yang sudah ada
+        // (liveSnapshot dipakai langsung, tanpa query ulang) tidak
+        // terganggu sama sekali. Dijalankan KONKUREN dengan
+        // _saveToPending (I/O copy file) supaya jeda tunggunya menumpang
+        // latensi yang sudah ada di pipeline, bukan menambah waktu baru.
+        final refinedSnapshotFuture = _wmSettings.gpsWatermarkEnabled
+            ? PodLocationService.instance.refineSnapshot(captureResult.watermarkData)
+            : Future.value(captureResult.watermarkData);
+        final results = await Future.wait([
+          _saveToPending(xfile),
+          refinedSnapshotFuture,
+        ]);
+        pendingPath = results[0] as String;
+        final refinedSnapshot = results[1] as WatermarkData;
         try { await File(xfile.path).delete(); } catch (_) {}
 
         setState(() => _statusText = 'Menambahkan watermark...');
@@ -662,7 +684,7 @@ class _PhotoScanScreenState extends State<PhotoScanScreen> {
         watermarkedPath = await _prepareWatermarkedPhoto(
           pendingPath,
           previewIndex,
-          liveSnapshot: captureResult.watermarkData,
+          liveSnapshot: refinedSnapshot,
         );
         if (!mounted) return;
 
