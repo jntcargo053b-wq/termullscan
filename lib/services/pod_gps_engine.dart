@@ -1328,14 +1328,26 @@ class PodGpsEngine {
     //        (tidak pernah di-sort langsung)
     while (_window.length > 3) _window.removeAt(0);
 
-    // ⭐ BARU: histori convergence dari SEBELUM pergerakan ini sudah
-    // tidak relevan lagi (posisi sudah berubah) — reset supaya tier
-    // "excellent" berikutnya butuh konvergensi yang benar-benar baru,
-    // bukan numpang histori centroid dari lokasi lama. Grace timeout
-    // juga direset supaya sesi re-lock ini punya kesempatan grace lagi.
-    _centroidHistory.clear();
-    _isConverged = false;
-    _convergenceDriftMeters = null;
+    // ⭐ BARU: histori convergence SENGAJA TIDAK dibersihkan di sini.
+    // Soft-unlock dipicu oleh pergerakan RAW sample (moveThreshold),
+    // termasuk kalau sample itu sendiri nanti ternyata outlier yang
+    // dibuang oleh MAD-based rejection di _evaluate() — dalam kasus
+    // itu centroid ROBUST sebenarnya tidak pernah bergeser sama
+    // sekali, jadi memaksa histori kosong (butuh 3 evaluasi baru dari
+    // nol) cuma memperlambat re-lock tanpa alasan yang valid.
+    //
+    // Membiarkan histori apa adanya justru lebih tepat: kalau
+    // pergerakan ini SUNGGUHAN (bukan noise), evaluasi berikutnya akan
+    // menghasilkan centroid yang BEDA JAUH dari histori lama →
+    // convergenceMaxDriftMeters otomatis terlampaui → _isConverged
+    // tetap false sampai histori lama tergusur (ring buffer,
+    // convergenceHistorySize) oleh evaluasi-evaluasi baru yang stabil
+    // di posisi BARU. Kalau ternyata cuma noise/outlier sesaat,
+    // centroid robust tidak berubah → histori tetap konsisten → boleh
+    // langsung re-lock "excellent" tanpa jeda buatan.
+    //
+    // Grace timeout TETAP direset supaya sesi re-lock ini punya
+    // kesempatan grace baru.
     _graceExtensionUsed = false;
 
     // Pakai _activeTimeout (bukan re-deteksi) — soft unlock terjadi
