@@ -34,14 +34,20 @@ import 'pod_address_resolver.dart';
 import 'gnss_quality_service.dart';
 import 'pod_native_location_service.dart';
 import '../models/resolved_location.dart';
+import '../watermark/models/watermark_data.dart';
 
 export 'pod_gps_engine.dart' show PodConfidence, PodConfidenceLabel, PodLockResult;
 
 // ── Status mode service ───────────────────────────────────────
 enum PodGpsMode {
   idle,       // GPS off, tampilkan cache jika ada
-  acquiring,  // Stream aktif, sedang mengumpul sample
-  locked,     // Sudah lock, stream sudah berhenti
+  acquiring,  // Stream aktif rate penuh, sedang mengumpul sample awal
+  tracking,   // BARU — sudah lock, stream TETAP hidup di interval
+              // rendah (lihat _trackingMinInterval) untuk refinement &
+              // deteksi drift latar belakang. Evidence tetap dianggap
+              // "ready" sama seperti `locked` (lihat isEvidenceReady).
+  locked,     // Sudah lock, stream sudah berhenti (tidak ada capture
+              // owner aktif — lihat releaseAfterCapture)
   stale,      // Lock lama > _staleAfter, perlu re-acquire
 }
 
@@ -277,6 +283,12 @@ class PodLocationService {
   Timer? _acquireTimeout;
   final Set<Object> _captureOwners = <Object>{};
 
+  // ── Tracking mode (BARU) ─────────────────────────────────────
+  // Kapan sample terakhir DIPROSES (bukan diterima — lihat _onPosition)
+  // selama mode tracking. null berarti belum ada sample tracking yang
+  // diproses sejak masuk tracking (throttle lolos untuk sample pertama).
+  DateTime? _lastTrackingSampleAt;
+
   // ── Config ───────────────────────────────────────────────────
   static const Duration _staleAfter      = PodLocationState.evidenceMaxAge;
   static const Duration _acquireDeadline = Duration(seconds: 14);
@@ -287,6 +299,28 @@ class PodLocationService {
   static const Duration _cachedPreviewMaxAge = Duration(hours: 24);
   static const int      _gridRes         = 10000;   // ~10m grid
   static const double   _geocodeMoveM    = 30.0;
+
+  // ── Tracking mode config (BARU, Priority 1) ─────────────────
+  // Setelah lock pertama, stream TIDAK lagi dihentikan total begitu
+  // capture masih berlangsung (owner masih aktif) — sebelumnya
+  // _onPosition langsung _stopStream() begitu isLocked, artinya:
+  //   (a) tidak ada cara mendeteksi device bergerak menjauh dari titik
+  //       lock sampai capture BERIKUTNYA memanggil acquireForCapture()
+  //       dari nol lagi, dan
+  //   (b) tidak ada kesempatan sample yang lebih baik masuk untuk
+  //       me-refine lock sebelum watermark benar-benar dibakar
+  //       (lihat refineSnapshot, Priority 3).
+  // Sekarang begitu lock tercapai, service pindah ke mode `tracking`:
+  // stream tetap hidup tapi di-throttle ke interval rendah supaya
+  // tidak menyamai boros baterainya fase akuisisi awal. Throttle
+  // diterapkan di level Dart (_lastTrackingSampleAt, berlaku untuk
+  // SEMUA jalur termasuk native FusedLocationProviderClient yang rate
+  // request-nya tidak bisa diatur dari Dart) — pada jalur geolocator
+  // (iOS, atau Android tanpa native bridge) request rate SUMBER juga
+  // ikut dilonggarkan (lihat _buildTrackingSettings) untuk penghematan
+  // baterai yang lebih nyata, bukan cuma throttle di sisi Dart.
+  static const Duration _trackingMinInterval = Duration(seconds: 3);
+  static const double   _trackingDistanceFilterMeters = 8.0;
 
   // ── State ───────────────────────────────────────────────────
   final _stateCtrl = BehaviorSubject<PodLocationState>.seeded(
@@ -331,8 +365,15 @@ class PodLocationService {
     if (owner != null) _captureOwners.add(owner);
     final mode = currentState.mode;
 
-    if (mode == PodGpsMode.locked && currentState.isEvidenceReady) {
-      if (kDebugMode) debugPrint('PodLocationService: already locked, skip acquire');
+    // ⭐ BARU: mode `tracking` juga dianggap sudah punya evidence siap
+    // pakai — stream latar belakangnya sendiri yang terus menjaga
+    // kesegarannya (lihat _onPosition/_scheduleStale), jadi tidak perlu
+    // acquire dari nol.
+    if ((mode == PodGpsMode.locked || mode == PodGpsMode.tracking) &&
+        currentState.isEvidenceReady) {
+      if (kDebugMode) {
+        debugPrint('PodLocationService: already $mode, skip acquire');
+      }
       return;
     }
 
@@ -374,9 +415,17 @@ class PodLocationService {
     }
     _stopStream();
     _cancelTimers();
+    _lastTrackingSampleAt = null;
 
     final mode = currentState.mode;
-    if (mode == PodGpsMode.locked) {
+    if (mode == PodGpsMode.locked || mode == PodGpsMode.tracking) {
+      // ⭐ BARU: owner terakhir baru saja lepas — stream tracking latar
+      // belakang (kalau sedang aktif) sudah dihentikan di atas. Turunkan
+      // label mode ke `locked` (statis, tidak ada stream) supaya
+      // konsisten dengan kondisi sebenarnya sebelum stale timer jalan.
+      if (mode == PodGpsMode.tracking) {
+        _emit(currentState.copyWith(mode: PodGpsMode.locked));
+      }
       _scheduleStale();
     } else if (mode == PodGpsMode.acquiring) {
       final hasUsable = currentState.isEvidenceReady;
@@ -393,6 +442,7 @@ class PodLocationService {
     await init();
     _stopStream();
     _cancelTimers();
+    _lastTrackingSampleAt = null;
     _gpsEngine.reset();
     _acquisitionGeneration++;
     _latestGeocodeRequest++;
@@ -458,6 +508,98 @@ class PodLocationService {
       final latest = currentState;
       return latest.isEvidenceReady ? latest : null;
     }
+  }
+
+  // ── refineSnapshot (BARU, Priority 3) ─────────────────────────
+  /// Background refinement SEBELUM watermark difinalisasi.
+  ///
+  /// [original] adalah snapshot [WatermarkData] yang SUDAH DIBEKUKAN
+  /// (@immutable — lihat catatan di watermark_data.dart) tepat saat
+  /// shutter ditekan. Method ini TIDAK PERNAH memutasi [original] —
+  /// dan tidak perlu, karena [WatermarkData] memang immutable. Selama
+  /// [deadline] (default singkat, jauh lebih pendek dari
+  /// [awaitEvidenceReady]), method ini menunggu kemungkinan fix yang
+  /// LEBIH BAIK datang dari stream tracking latar belakang (lihat
+  /// _enterTrackingMode/Priority 1) — kalau ada & lolos sanity check,
+  /// dikembalikan sebagai OBJEK BARU lewat `original.copyWith(...)`.
+  /// Kalau tidak ada perbaikan yang layak dalam batas waktu, method ini
+  /// mengembalikan [original] APA ADANYA (referensi yang sama persis).
+  ///
+  /// Efeknya: mekanisme rollback yang sudah ada (CameraCaptureResult →
+  /// liveSnapshot dipakai langsung tanpa query ulang) TIDAK terganggu
+  /// sama sekali — pemanggil selalu punya nilai valid untuk dipakai;
+  /// "rollback" ke snapshot asli terjadi otomatis begitu saja (bukan
+  /// lewat try/catch atau flag terpisah) karena kegagalan refine =
+  /// method ini mengembalikan objek yang sama dengan yang diberikan.
+  ///
+  /// Sanity check terhadap [original]:
+  ///   - kandidat WAJIB confidence == excellent (tier tertinggi) —
+  ///     tidak ada gunanya mengganti snapshot yang sudah dipakai
+  ///     dengan sesuatu yang belum tentu lebih baik.
+  ///   - kandidat WAJIB dalam [maxDriftMeters] dari titik [original] —
+  ///     mencegah refinement diam-diam memakai fix dari lokasi BARU
+  ///     (mis. operator sudah mulai jalan ke barang berikutnya, tapi
+  ///     sample sisa capture sebelumnya baru sempat masuk sekarang).
+  ///   - kandidat WAJIB bukan mock/spoof.
+  Future<WatermarkData> refineSnapshot(
+    WatermarkData original, {
+    Duration deadline = const Duration(milliseconds: 1200),
+    double maxDriftMeters = 15.0,
+  }) async {
+    final baseLat = original.latitude;
+    final baseLon = original.longitude;
+    if (baseLat == null || baseLon == null) return original;
+
+    WatermarkData best = original;
+    var tookAny = false;
+
+    bool tryAccept(PodLocationState s) {
+      if (tookAny) return false; // sekali dapat excellent, cukup
+      if (!s.hasPosition || s.confidence != PodConfidence.excellent) {
+        return false;
+      }
+      if (s.mockDetected || s.spoofSuspected) return false;
+      final drift = PodGpsEngine.haversinePublic(baseLat, baseLon, s.lat!, s.lon!);
+      if (drift > maxDriftMeters) return false;
+
+      best = original.copyWith(
+        latitude: s.lat,
+        longitude: s.lon,
+        locationName:
+            s.hasMatchingAddress ? s.evidenceAddress : original.locationName,
+      );
+      tookAny = true;
+      if (kDebugMode) {
+        debugPrint(
+          'PodLocationService: refineSnapshot upgrade — drift=${drift.toStringAsFixed(1)}m, '
+          'acc=${s.accuracy?.toStringAsFixed(1) ?? "-"}m',
+        );
+      }
+      return true;
+    }
+
+    // Cek state SAAT INI dulu — barangkali refinement sudah kejadian
+    // sebelum fungsi ini sempat dipanggil (mis. selama jeda copy-to-
+    // pending/kompresi di pipeline pemanggil, yang berjalan konkuren
+    // dengan tracking stream).
+    if (tryAccept(currentState)) return best;
+
+    final deadlineAt = DateTime.now().add(deadline);
+    final remaining = deadlineAt.difference(DateTime.now());
+    if (remaining <= Duration.zero) return best;
+
+    final completer = Completer<void>();
+    late final StreamSubscription<PodLocationState> sub;
+    sub = stream.listen((s) {
+      if (tryAccept(s) && !completer.isCompleted) completer.complete();
+    });
+    final timer = Timer(remaining, () {
+      if (!completer.isCompleted) completer.complete();
+    });
+    await completer.future;
+    timer.cancel();
+    await sub.cancel();
+    return best;
   }
 
   // ── dispose ─────────────────────────────────────────────────
@@ -577,26 +719,7 @@ class PodLocationService {
     // berarti geolocator TIDAK menerapkan filter interval sama sekali,
     // jadi update datang secepat chip GPS mengirim (umumnya 1Hz, standar
     // hardware GPS konsumen) tanpa throttle tambahan dari kita.
-    LocationSettings settings;
-    if (Platform.isAndroid) {
-      settings = AndroidSettings(
-        accuracy: LocationAccuracy.bestForNavigation,
-        distanceFilter: PodGpsEngine.distanceFilterAcquiring.toInt(), // ← int
-        forceLocationManager: false,
-      );
-    } else if (Platform.isIOS) {
-      settings = AppleSettings(
-        accuracy: LocationAccuracy.bestForNavigation,
-        distanceFilter: PodGpsEngine.distanceFilterAcquiring.toInt(), // ← int
-        activityType: ActivityType.fitness,
-      );
-    } else {
-      // Web / platform lain – gunakan int agar kompatibel dengan const
-      settings = const LocationSettings(
-        accuracy: LocationAccuracy.bestForNavigation,
-        distanceFilter: 0, // int, bukan double
-      );
-    }
+    final settings = _buildAcquiringSettings();
 
     if (generation != _acquisitionGeneration) return;
     _startPositionStream(generation, settings);
@@ -605,6 +728,69 @@ class PodLocationService {
         Timer(_acquireDeadline, () => _onAcquireTimeout(generation));
 
     if (kDebugMode) debugPrint('PodLocationService: acquiring started');
+  }
+
+  // ── Location settings builders ──────────────────────────────
+  //
+  // ✅ FIX AKURASI: accuracy dinaikkan dari `.high` → `.bestForNavigation`
+  // untuk fase akuisisi. Di Android ini efeknya nol (baik `.high` maupun
+  // `.bestForNavigation` sama-sama dipetakan geolocator ke
+  // PRIORITY_HIGH_ACCURACY — Android cuma punya 4 tingkat prioritas,
+  // jadi `.high` sudah maksimal). Tapi di iOS `.high` dipetakan ke
+  // kCLLocationAccuracyNearestTenMeters — secara EKSPLISIT membatasi
+  // presisi ke sekitar 10m sebagai lantai, padahal excellentThreshold
+  // engine ini justru 10m. intervalDuration/timeLimit sengaja TIDAK
+  // diset (null) saat akuisisi — nilai null berarti geolocator TIDAK
+  // menerapkan filter interval sama sekali, update datang secepat chip
+  // GPS mengirim (umumnya 1Hz).
+  LocationSettings _buildAcquiringSettings() {
+    if (Platform.isAndroid) {
+      return AndroidSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: PodGpsEngine.distanceFilterAcquiring.toInt(), // ← int
+        forceLocationManager: false,
+      );
+    } else if (Platform.isIOS) {
+      return AppleSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: PodGpsEngine.distanceFilterAcquiring.toInt(), // ← int
+        activityType: ActivityType.fitness,
+      );
+    }
+    // Web / platform lain – gunakan int agar kompatibel dengan const
+    return const LocationSettings(
+      accuracy: LocationAccuracy.bestForNavigation,
+      distanceFilter: 0, // int, bukan double
+    );
+  }
+
+  // ── Tracking settings (BARU, Priority 1) ────────────────────
+  // Dipakai HANYA pada jalur geolocator (bukan native fused — lihat
+  // catatan _trackingMinInterval). accuracy diturunkan ke `.high`
+  // (masih jauh lebih dari cukup untuk mendeteksi drift beberapa
+  // meter) dan distanceFilter/intervalDuration dilonggarkan supaya
+  // request ke chip GPS sendiri lebih jarang — penghematan baterai
+  // yang nyata untuk sesi tracking latar belakang yang bisa berjalan
+  // lama (selama capture owner masih aktif).
+  LocationSettings _buildTrackingSettings() {
+    if (Platform.isAndroid) {
+      return AndroidSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: _trackingDistanceFilterMeters.toInt(),
+        intervalDuration: _trackingMinInterval,
+        forceLocationManager: false,
+      );
+    } else if (Platform.isIOS) {
+      return AppleSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: _trackingDistanceFilterMeters.toInt(),
+        activityType: ActivityType.fitness,
+      );
+    }
+    return LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: _trackingDistanceFilterMeters.toInt(),
+    );
   }
 
   // ── Position stream: native FusedLocationProviderClient (Android)
@@ -711,21 +897,112 @@ class PodLocationService {
         speedMps: lock.bestRaw.speed,
       ));
     }
-    _stopStream();
-    _emit(currentState.copyWith(
-      mode: currentState.isEvidenceReady
-          ? PodGpsMode.locked
-          : PodGpsMode.stale,
-    ));
-    if (currentState.isEvidenceReady) _scheduleStale();
+    // ⭐ BARU (Priority 1): kalau evidence sudah layak dipakai, jangan
+    // _stopStream() total — pindah ke mode tracking supaya masih ada
+    // kesempatan sample lebih baik masuk (refinement) & drift device
+    // masih terdeteksi selagi capture owner aktif. Kalau evidence TETAP
+    // tidak layak (window kosong sejak awal), tidak ada yang perlu
+    // di-track — stop seperti biasa.
+    if (currentState.isEvidenceReady) {
+      _enterTrackingMode(generation);
+    } else {
+      _stopStream();
+      _emit(currentState.copyWith(mode: PodGpsMode.stale));
+    }
+  }
+
+  // ── INTERNAL: tracking mode transitions (BARU, Priority 1) ────
+
+  /// Dipanggil begitu evidence pertama kali layak dipakai (lock normal
+  /// via [_onPosition] atau force-lock via [_onAcquireTimeout]). Stream
+  /// TIDAK dihentikan — dialihkan ke rate rendah (lihat
+  /// [_buildTrackingSettings]/[_trackingMinInterval]) supaya refinement
+  /// & deteksi drift latar belakang tetap berjalan selama capture owner
+  /// masih aktif (lihat releaseAfterCapture untuk kapan benar-benar
+  /// berhenti).
+  void _enterTrackingMode(int generation) {
+    if (generation != _acquisitionGeneration) {
+      _stopStream();
+      return;
+    }
+    _acquireTimeout?.cancel();
+    _acquireTimeout = null;
+    _lastTrackingSampleAt = DateTime.now();
+
+    // Native fused stream (Android): rate request dikontrol native side,
+    // tidak bisa dilonggarkan dari Dart — penghematan baterai di jalur
+    // ini sepenuhnya lewat throttle Dart (_lastTrackingSampleAt) di
+    // _onPosition. Jalur geolocator (iOS / Android tanpa native bridge):
+    // stream benar-benar di-restart dengan settings yang lebih longgar.
+    if (!_usingNativeStream) {
+      _restartStreamWithSettings(generation, _buildTrackingSettings());
+    }
+
+    _emit(currentState.copyWith(mode: PodGpsMode.tracking));
+    _scheduleStale();
+    if (kDebugMode) {
+      debugPrint('PodLocationService: entering tracking mode (background refinement)');
+    }
+  }
+
+  /// Dipanggil ketika sample yang diproses SELAGI tracking membuat
+  /// engine soft-unlock/hard-reset (device bergerak) — kembali ke mode
+  /// akuisisi rate penuh supaya re-lock secepat mungkin, bukan menunggu
+  /// cadence tracking yang rendah.
+  void _exitTrackingMode(int generation) {
+    if (generation != _acquisitionGeneration) {
+      _stopStream();
+      return;
+    }
+    _lastTrackingSampleAt = null;
+    _staleTimer?.cancel();
+    _staleTimer = null;
+
+    if (!_usingNativeStream) {
+      _restartStreamWithSettings(generation, _buildAcquiringSettings());
+    }
+
+    _emit(currentState.copyWith(mode: PodGpsMode.acquiring));
+    _acquireTimeout?.cancel();
+    _acquireTimeout = Timer(_acquireDeadline, () => _onAcquireTimeout(generation));
+    if (kDebugMode) {
+      debugPrint('PodLocationService: exiting tracking mode — device bergerak, re-acquiring');
+    }
+  }
+
+  /// Restart subscription geolocator dengan settings baru. HANYA dipakai
+  /// untuk jalur geolocator (bukan native fused, lihat _usingNativeStream)
+  /// — mengganti rate request di SUMBER, bukan cuma throttle Dart.
+  void _restartStreamWithSettings(int generation, LocationSettings settings) {
+    _positionStream?.cancel();
+    _startGeolocatorStream(generation, settings);
   }
 
   // ── INTERNAL: position handler ───────────────────────────────
 
   void _onPosition(Position raw, int generation) {
     if (generation != _acquisitionGeneration ||
-        currentState.mode != PodGpsMode.acquiring) {
+        (currentState.mode != PodGpsMode.acquiring &&
+            currentState.mode != PodGpsMode.tracking)) {
       return;
+    }
+
+    // ── Tracking-mode throttle (BARU, Priority 1) ────────────────
+    // Sample yang masuk selagi mode tracking di-throttle ke interval
+    // rendah SEBELUM menyentuh apa pun lain (mock check, engine,
+    // dst.) — sample yang di-skip tidak pernah diproses sama sekali,
+    // supaya window/timer engine juga tidak ikut sibuk memproses data
+    // yang tidak akan dipakai. Sample PERTAMA begitu masuk tracking
+    // (​_lastTrackingSampleAt baru saja di-set oleh _enterTrackingMode)
+    // otomatis di-throttle juga — wajar, karena evidence-nya sendiri
+    // baru saja segar dari lock/force-lock sebelumnya.
+    if (currentState.mode == PodGpsMode.tracking) {
+      final last = _lastTrackingSampleAt;
+      final now = DateTime.now();
+      if (last != null && now.difference(last) < _trackingMinInterval) {
+        return;
+      }
+      _lastTrackingSampleAt = now;
     }
 
     if (raw.isMocked) {
@@ -806,7 +1083,13 @@ class PodLocationService {
       lockResult:     lock,
       lockProgress:   progress,
       isFallbackLock: _gpsEngine.isFallbackLock,
-      mode:           PodGpsMode.acquiring,
+      // ⭐ FIX: dulu di-hardcode `PodGpsMode.acquiring` di sini — kalau
+      // sample ini diproses selagi mode SUDAH `tracking`, hardcode ini
+      // akan diam-diam menurunkan mode balik ke acquiring tiap sample
+      // (menghapus efek _enterTrackingMode). Sekarang mempertahankan
+      // mode SAAT INI; transisi mode eksplisit ditangani di blok
+      // isLocked/exit-tracking di bawah.
+      mode:           currentState.mode,
       mockDetected:   false,
       spoofSuspected: false,
       gnssGateActive: _gpsEngine.gnssGateActive && !conf.canCapture,
@@ -839,15 +1122,28 @@ class PodLocationService {
       _requestGeocode(lat, lon, generation, raw.timestamp);
     }
 
-    // Locked → stop stream
+    // ⭐ BARU (Priority 1): begitu locked, TIDAK lagi _stopStream() total
+    // — pindah/tetap di mode tracking (stream rate rendah, latar
+    // belakang) supaya refinement (Priority 3) & deteksi drift device
+    // tetap berjalan selama capture owner masih aktif.
     if (_gpsEngine.isLocked) {
-      _cancelTimers();
-      _stopStream();
-      _emit(currentState.copyWith(mode: PodGpsMode.locked));
-      _scheduleStale();
+      if (currentState.mode != PodGpsMode.tracking) {
+        _enterTrackingMode(generation);
+      } else {
+        // Sudah tracking — sample ini mengonfirmasi lock masih dalam
+        // ambang, refresh stale timer supaya evidence tetap "fresh"
+        // selama tracking terus mengonfirmasi (tidak perlu re-acquire
+        // dari nol di capture berikutnya).
+        _scheduleStale();
+      }
       if (kDebugMode) {
         debugPrint('PodLocationService: locked acc=${acc.toStringAsFixed(1)}m');
       }
+    } else if (currentState.mode == PodGpsMode.tracking) {
+      // Soft-unlock/hard-reset terjadi selagi tracking (device
+      // bergerak) — kembali ke mode akuisisi rate penuh supaya re-lock
+      // secepat mungkin, bukan menunggu cadence tracking yang rendah.
+      _exitTrackingMode(generation);
     }
   }
 
@@ -856,7 +1152,10 @@ class PodLocationService {
   void _scheduleStale() {
     _staleTimer?.cancel();
     _staleTimer = Timer(_staleAfter, () {
-      if (currentState.mode != PodGpsMode.locked) return;
+      if (currentState.mode != PodGpsMode.locked &&
+          currentState.mode != PodGpsMode.tracking) {
+        return;
+      }
 
       // 🟡 FIX BATCH GPS WAIT: dulu lock langsung digugurkan ke `stale`
       // begitu `_staleAfter` (30s) lewat, TANPA peduli apakah sesi

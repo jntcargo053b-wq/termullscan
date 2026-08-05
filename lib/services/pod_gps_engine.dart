@@ -39,6 +39,16 @@
 //                         selama device masih bergerak (kurir belum
 //                         berhenti); (b) heuristik spoofing #6: speed
 //                         Doppler vs kecepatan implisit posisi mismatch
+//   convergence lock   : BARU — tier "excellent" sekarang juga
+//                         mensyaratkan histori CENTROID (bukan cuma
+//                         sample mentah) stabil antar-evaluasi
+//                         (convergenceMaxDriftMeters, over
+//                         convergenceMinTimeSpanMs), bukan hanya
+//                         accuracy/stdDev/radius dari satu snapshot.
+//                         Timeout juga tidak lagi mutlak: kalau cluster
+//                         terlihat trending menuju konvergen tepat saat
+//                         timeout jatuh, diberi satu kali grace
+//                         extension singkat sebelum force-lock.
 // ============================================================
 
 import 'dart:async';
@@ -169,6 +179,34 @@ class GpsConfig {
   final double maxPlausibleStationarySpeedMps;
   final double maxSpeedAccuracyForGate;
 
+  // ── Convergence-based lock (BARU) ────────────────────────────
+  // Sebelumnya tier "excellent" HANYA menilai satu snapshot cluster
+  // (stdDev/radius dari window SAAT evaluasi) — cluster yang kebetulan
+  // rapat di SATU evaluasi tetap lolos gate walau sebenarnya masih
+  // trending/bergeser (mis. chip GPS baru mulai settle setelah
+  // warm-up). Convergence menambah dimensi WAKTU: melacak histori
+  // CENTROID (bukan histori sample mentah) dari beberapa evaluasi
+  // terakhir, dan baru dianggap "konvergen" kalau estimasi ITU SENDIRI
+  // sudah berhenti bergeser signifikan antar-evaluasi — sinyal jauh
+  // lebih kuat daripada sekadar "3 sample kebetulan berdekatan".
+  final int convergenceHistorySize;
+  final int convergenceMinSamples;
+  final double convergenceMaxDriftMeters;
+  final int convergenceMinTimeSpanMs;
+
+  // ── Timeout grace extension (BARU) ───────────────────────────
+  // Force-lock via timeout dulu murni "waktu habis, pakai apa adanya"
+  // — walau drift centroid kelihatan JELAS masih menyempit (tren makin
+  // presisi), timeout tetap memotong di detik yang sama. Sekarang:
+  // kalau timeout jatuh tepat saat cluster terlihat sedang mengarah ke
+  // konvergen (lihat _isTrendingTowardConvergence), diberi SATU kali
+  // perpanjangan singkat supaya sampel yang nyaris konvergen sempat
+  // benar-benar lock, bukan dipotong tepat di titik paling sayang.
+  // Kalau perpanjangan ini juga habis tanpa konvergen, force-lock
+  // berjalan seperti biasa (tidak ada perpanjangan kedua — mencegah
+  // sesi akuisisi molor tanpa batas).
+  final Duration timeoutGraceExtension;
+
   const GpsConfig({
     this.outdoorAccuracyThreshold = 25.0,
     this.indoorAccuracyThreshold = 40.0,
@@ -198,6 +236,11 @@ class GpsConfig {
     this.spoofVelocityMismatchMps = 15.0,
     this.maxPlausibleStationarySpeedMps = 3.0, // ~10.8 km/h, longgar utk jalan kaki bawa paket
     this.maxSpeedAccuracyForGate = 3.0,
+    this.convergenceHistorySize = 5,
+    this.convergenceMinSamples = 3,
+    this.convergenceMaxDriftMeters = 4.0,
+    this.convergenceMinTimeSpanMs = 900,
+    this.timeoutGraceExtension = const Duration(seconds: 2),
   });
 }
 
@@ -392,6 +435,17 @@ class _ClusterStats {
   });
 }
 
+// ── Centroid history point (internal, BARU) ───────────────────
+/// Titik histori CENTROID (hasil agregat), bukan sample mentah —
+/// dipakai untuk mengukur pergerakan ESTIMASI dari waktu ke waktu.
+/// Lihat catatan Convergence-based lock di [GpsConfig].
+class _CentroidPoint {
+  final double lat;
+  final double lon;
+  final int timeMs;
+  const _CentroidPoint(this.lat, this.lon, this.timeMs);
+}
+
 // ═══════════════════════════════════════════════════════════════
 // PodGpsEngine
 // ═══════════════════════════════════════════════════════════════
@@ -476,6 +530,30 @@ class PodGpsEngine {
   /// mencurigakan. Kosong kalau [spoofSuspected] false.
   final List<String> _spoofReasons = [];
   List<String> get spoofReasons => List.unmodifiable(_spoofReasons);
+
+  // ─── Convergence tracking (BARU) ───────────────────────────────
+  /// Histori centroid, dicatat tiap [_evaluate]/[_forceLock] — dipakai
+  /// oleh [_isConverged]/[_isTrendingTowardConvergence]. Beda dari
+  /// [_window] (sample mentah individual): ini histori hasil AGREGAT
+  /// (centroid) dari waktu ke waktu, mengukur pergerakan ESTIMASI,
+  /// bukan sebaran sample dalam satu snapshot.
+  final List<_CentroidPoint> _centroidHistory = [];
+
+  /// true jika histori centroid menunjukkan estimasi sudah berhenti
+  /// bergeser signifikan antar-evaluasi — lihat GpsConfig.
+  bool get isConverged => _isConverged;
+  bool _isConverged = false;
+
+  /// Jarak (meter) terjauh antar-pasangan centroid dalam histori
+  /// convergence saat ini — null kalau histori belum cukup panjang/
+  /// belum cukup rentang waktu untuk dinilai.
+  double? get convergenceDriftMeters => _convergenceDriftMeters;
+  double? _convergenceDriftMeters;
+
+  /// Latch — perpanjangan grace timeout (lihat
+  /// [GpsConfig.timeoutGraceExtension]) hanya diberikan SATU kali per
+  /// sesi akuisisi, tidak berulang.
+  bool _graceExtensionUsed = false;
 
   // ─── Constructor ──────────────────────────────────────────────
   PodGpsEngine({GpsConfig? config}) : _config = config ?? const GpsConfig() {
@@ -793,6 +871,21 @@ class PodGpsEngine {
     if (_locked) return;
 
     if (_window.isNotEmpty) {
+      // ⭐ BARU: kalau cluster masih terlihat TRENDING menuju konvergen
+      // tepat saat timeout jatuh, beri satu kali perpanjangan singkat
+      // alih-alih langsung memotong dengan force-lock — lihat
+      // GpsConfig.timeoutGraceExtension.
+      if (!_graceExtensionUsed && _isTrendingTowardConvergence()) {
+        _graceExtensionUsed = true;
+        _log(
+          'timeout tercapai tapi cluster masih trending konvergen '
+          '(drift=${_convergenceDriftMeters?.toStringAsFixed(1) ?? "-"}m) — '
+          'beri grace ${_config.timeoutGraceExtension.inSeconds}s',
+          level: GpsLogLevel.info,
+        );
+        _timeoutTimer = Timer(_config.timeoutGraceExtension, _onTimeout);
+        return;
+      }
       _log('timeout — force accept ${_window.length} samples', level: GpsLogLevel.info);
       _forceLock();
     } else {
@@ -829,6 +922,9 @@ class PodGpsEngine {
     final best = byAccuracy.first;
     final cleaned = _rejectOutliers(byAccuracy);
     final stats = _computeClusterStats(cleaned);
+    // ⭐ Pakai timestamp SAMPLE terbaru di window (bukan wall-clock
+    // DateTime.now()) — lihat catatan di _recordConvergence.
+    _recordConvergence(stats, _window.last.timestampMs);
 
     _confidence = PodConfidence.good;
     _locked = true;
@@ -863,6 +959,16 @@ class PodGpsEngine {
     final radius = stats.radiusMeters;
     final n = cleaned.length;
 
+    // ⭐ BARU: catat centroid ke histori convergence SEBELUM keputusan
+    // tier — supaya _isConverged yang dipakai di bawah selalu berbasis
+    // histori TERKINI (termasuk evaluasi ini). Timestamp dipakai dari
+    // SAMPLE terbaru di window (bukan wall-clock DateTime.now()) supaya
+    // rentang waktu histori mencerminkan jarak waktu ANTAR-FIX GPS yang
+    // sebenarnya — konsisten baik saat sample mengalir real-time (di
+    // mana keduanya kurang lebih sama) maupun saat diputar ulang/diuji
+    // dengan timestamp sintetis (offline test, replay log, dsb).
+    _recordConvergence(stats, _window.last.timestampMs);
+
     // ── GNSS gate (BARU) ──────────────────────────────────────
     // Hanya menyalakan syarat ini jika native side memang pernah
     // kirim data GNSS untuk window ini — kalau tidak (iOS, atau
@@ -895,7 +1001,10 @@ class PodGpsEngine {
         stdDev <= _config.excellentMaxStdDev &&
         radius <= _config.excellentMaxRadius &&
         gnssOk &&
-        velocityOk) {
+        velocityOk &&
+        // ⭐ BARU: cluster harus KONVERGEN (stabil antar-evaluasi, bukan
+        // cuma rapat di SATU snapshot) — lihat GpsConfig & _recordConvergence.
+        _isConverged) {
       newConf = PodConfidence.excellent;
       _locked = true;
     } else if (n >= _config.quickLockSamples &&
@@ -947,6 +1056,85 @@ class PodGpsEngine {
       'gnss=${gnssDataAvailable ? "$gnssGatedCount/$n lolos gate" : "tidak ada data (n/a)"}',
       level: GpsLogLevel.debug,
     );
+  }
+
+  // ─── Convergence (BARU) ────────────────────────────────────────
+  /// Catat centroid hasil evaluasi/force-lock TERKINI ke histori (FIFO,
+  /// dibatasi [GpsConfig.convergenceHistorySize]) lalu evaluasi ulang
+  /// [isConverged]/[convergenceDriftMeters].
+  ///
+  /// [sampleTimeMs] WAJIB berasal dari timestamp SAMPLE GPS terbaru
+  /// yang dipakai pada evaluasi ini (mis. `_window.last.timestampMs`),
+  /// BUKAN `DateTime.now()` — engine ini murni fungsi dari data yang
+  /// diberikan lewat [processSample], tidak boleh diam-diam bergantung
+  /// pada jam dinding proses yang menjalankannya. Kalau convergence
+  /// dinilai dari wall-clock, engine yang diberi makan sample dengan
+  /// timestamp historis/sintetis secara sinkron (unit test, replay log)
+  /// akan SELALU gagal syarat rentang waktu (evaluasi berjalan dalam
+  /// hitungan mikrodetik CPU, bukan detik GPS) walau sample-nya sendiri
+  /// merepresentasikan rentang waktu yang cukup panjang.
+  void _recordConvergence(_ClusterStats stats, int sampleTimeMs) {
+    _centroidHistory.add(
+      _CentroidPoint(stats.centroidLat, stats.centroidLon, sampleTimeMs),
+    );
+    if (_centroidHistory.length > _config.convergenceHistorySize) {
+      _centroidHistory.removeAt(0);
+    }
+
+    if (_centroidHistory.length < _config.convergenceMinSamples) {
+      _isConverged = false;
+      _convergenceDriftMeters = null;
+      return;
+    }
+
+    final oldest = _centroidHistory.first;
+    final newest = _centroidHistory.last;
+    final timeSpanMs = newest.timeMs - oldest.timeMs;
+
+    // Bentang waktu histori harus cukup panjang — mencegah beberapa
+    // sample yang datang beruntun dalam sepersekian detik (burst)
+    // dianggap "konvergen" secara trivial hanya karena belum sempat
+    // ada waktu untuk bergeser.
+    if (timeSpanMs < _config.convergenceMinTimeSpanMs) {
+      _isConverged = false;
+      _convergenceDriftMeters = null;
+      return;
+    }
+
+    // Drift = jarak maksimum ANTAR PASANGAN centroid dalam histori
+    // (bukan cuma tertua↔terbaru) — menangkap kasus centroid yang
+    // sempat menyimpang jauh di TENGAH histori lalu "kebetulan" balik
+    // dekat ke titik awal (masih dianggap belum stabil).
+    double maxDrift = 0;
+    for (var i = 0; i < _centroidHistory.length; i++) {
+      for (var j = i + 1; j < _centroidHistory.length; j++) {
+        final d = _haversine(
+          _centroidHistory[i].lat,
+          _centroidHistory[i].lon,
+          _centroidHistory[j].lat,
+          _centroidHistory[j].lon,
+        );
+        if (d > maxDrift) maxDrift = d;
+      }
+    }
+
+    _convergenceDriftMeters = maxDrift;
+    _isConverged = maxDrift <= _config.convergenceMaxDriftMeters;
+  }
+
+  /// true jika drift 2 langkah histori terakhir mengecil (atau sudah
+  /// cukup dekat) dibanding sebelumnya — dipakai [_onTimeout] untuk
+  /// menentukan kelayakan grace extension. Butuh minimal 3 titik
+  /// histori supaya menilai TREN, bukan cuma satu nilai sesaat.
+  bool _isTrendingTowardConvergence() {
+    if (_centroidHistory.length < 3) return false;
+    final n = _centroidHistory.length;
+    final a = _centroidHistory[n - 3];
+    final b = _centroidHistory[n - 2];
+    final c = _centroidHistory[n - 1];
+    final distAB = _haversine(a.lat, a.lon, b.lat, b.lon);
+    final distBC = _haversine(b.lat, b.lon, c.lat, c.lon);
+    return distBC <= distAB || distBC <= _config.convergenceMaxDriftMeters * 1.5;
   }
 
   // ─── Build result ─────────────────────────────────────────────
@@ -1116,7 +1304,17 @@ class PodGpsEngine {
         samples.length;
     final fFresh = (1.0 - (avgAgeSec / _activeTimeout.inSeconds)).clamp(0.0, 1.0);
 
-    return fAcc * 0.35 + fSpread * 0.25 + fSample * 0.20 + fFresh * 0.20;
+    // ── Convergence factor (BARU) ─────────────────────────────────
+    // Drift kecil (centroid stabil antar-evaluasi) → skor tinggi;
+    // histori belum cukup panjang/belum cukup rentang waktu → skor
+    // netral (0.5), bukan nol — supaya tidak menghukum lock yang sangat
+    // cepat (mis. quick-lock "good") padahal faktor lain sudah bagus.
+    final drift = _convergenceDriftMeters;
+    final fConverge = drift == null
+        ? 0.5
+        : (1.0 - (drift / (_config.convergenceMaxDriftMeters * 2))).clamp(0.0, 1.0);
+
+    return fAcc * 0.30 + fSpread * 0.20 + fSample * 0.15 + fFresh * 0.15 + fConverge * 0.20;
   }
 
   // ─── Soft unlock ─────────────────────────────────────────────
@@ -1129,6 +1327,16 @@ class PodGpsEngine {
     // 🔥 FIX: Sekarang aman karena _window tetap FIFO
     //        (tidak pernah di-sort langsung)
     while (_window.length > 3) _window.removeAt(0);
+
+    // ⭐ BARU: histori convergence dari SEBELUM pergerakan ini sudah
+    // tidak relevan lagi (posisi sudah berubah) — reset supaya tier
+    // "excellent" berikutnya butuh konvergensi yang benar-benar baru,
+    // bukan numpang histori centroid dari lokasi lama. Grace timeout
+    // juga direset supaya sesi re-lock ini punya kesempatan grace lagi.
+    _centroidHistory.clear();
+    _isConverged = false;
+    _convergenceDriftMeters = null;
+    _graceExtensionUsed = false;
 
     // Pakai _activeTimeout (bukan re-deteksi) — soft unlock terjadi
     // karena pergerakan kecil, bukan pindah lingkungan drastis.
@@ -1150,6 +1358,10 @@ class PodGpsEngine {
     _velocityGateActive = false;
     _spoofSuspected = false;
     _spoofReasons.clear();
+    _centroidHistory.clear();
+    _isConverged = false;
+    _convergenceDriftMeters = null;
+    _graceExtensionUsed = false;
     _timeoutTimer?.cancel();
     _timeoutTimer = null;
     _activeTimeout = _config.outdoorTimeout; // re-deteksi dari sample berikutnya
@@ -1184,6 +1396,8 @@ class PodGpsEngine {
       'accuracyThresholdMeters': _activeAccuracyThreshold,
       'spoofSuspected': _spoofSuspected,
       'spoofReasons': _spoofReasons,
+      'converged': _isConverged,
+      'convergenceDriftMeters': _convergenceDriftMeters,
       'lockResult': _lockResult != null
           ? {
               'accuracy': _lockResult!.accuracy,
