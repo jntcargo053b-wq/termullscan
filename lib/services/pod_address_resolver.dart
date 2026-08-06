@@ -210,7 +210,7 @@ class PodAddressResolver {
     // resolveDetailed() sering menembus 8-10+ detik dan watermark
     // foto/video jatuh ke koordinat saja. Dipangkas ke 3 level yang
     // tetap mewakili building → jalan/lingkungan → kota.
-    for (final zoom in [18, 15, 12]) {
+    for (final zoom in [18, 16, 12]) {
       try {
         final r = await _nominatim(latS, lonS, zoom: zoom);
         if (r.isNotEmpty) {

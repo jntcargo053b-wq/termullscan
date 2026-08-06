@@ -89,6 +89,16 @@ class GpsConfig {
 
   final double captureThreshold;
   final double excellentThreshold;
+
+  // ── Fast path (BARU) ──────────────────────────────────────────
+  // Jalan pintas ketika kondisi SUDAH sangat bagus di sample pertama
+  // — bukan pengganti algoritma normal (3 sample + convergence untuk
+  // excellent, dst), cuma shortcut: kalau satu sample sudah punya
+  // akurasi <= fastPathAccuracy, tidak perlu nunggu n>=targetSamples
+  // atau _isConverged untuk lock sebagai excellent. Gate anti-spoof
+  // (GNSS/velocity) TETAP wajib lolos — shortcut ini cuma melewati
+  // syarat jumlah-sample & convergence, bukan syarat keaslian fix.
+  final double fastPathAccuracy;
   final double excellentMaxStdDev;
   final double excellentMaxRadius;
   final int targetSamples;
@@ -235,7 +245,8 @@ class GpsConfig {
     this.outdoorAccuracyThreshold = 25.0,
     this.indoorAccuracyThreshold = 40.0,
     this.captureThreshold = 20.0,
-    this.excellentThreshold = 10.0,
+    this.excellentThreshold = 12.0,
+    this.fastPathAccuracy = 6.0,
     this.excellentMaxStdDev = 8.0,
     this.excellentMaxRadius = 12.0,
     this.targetSamples = 3,
@@ -1056,7 +1067,19 @@ class PodGpsEngine {
 
     PodConfidence newConf;
 
-    if (n >= _config.targetSamples &&
+    // ⚡ FAST PATH (BARU): shortcut, bukan pengganti algoritma normal.
+    // Kalau sample yang ada SUDAH sangat akurat (<= fastPathAccuracy),
+    // langsung lock sebagai excellent walau n masih di bawah
+    // targetSamples dan belum sempat convergen — gate anti-spoof
+    // (GNSS/velocity) tetap wajib lolos supaya shortcut ini tidak
+    // membuka celah untuk fix yang dipalsukan.
+    if (n >= 1 &&
+        avgAcc <= _config.fastPathAccuracy &&
+        gnssOk &&
+        velocityOk) {
+      newConf = PodConfidence.excellent;
+      _locked = true;
+    } else if (n >= _config.targetSamples &&
         avgAcc <= _config.excellentThreshold &&
         stdDev <= _config.excellentMaxStdDev &&
         radius <= _config.excellentMaxRadius &&

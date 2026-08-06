@@ -298,7 +298,7 @@ class PodLocationService {
   static const String   _prefTimestamp   = 'last_known_timestamp';
   static const Duration _cachedPreviewMaxAge = Duration(hours: 24);
   static const int      _gridRes         = 10000;   // ~10m grid
-  static const double   _geocodeMoveM    = 30.0;
+  static const double   _geocodeMoveM    = 80.0;
 
   // ── Tracking mode config (BARU, Priority 1) ─────────────────
   // Setelah lock pertama, stream TIDAK lagi dihentikan total begitu
