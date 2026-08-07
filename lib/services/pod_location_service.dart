@@ -115,6 +115,29 @@ class PodLocationState {
   /// untuk membuat [evidenceMaxAge] adaptif — lihat [hasFreshPosition].
   final double? speedMps;
 
+  /// 🔥 BARU (review GPS mendalam #1): true kalau user cuma memberi
+  /// izin "Perkiraan Lokasi" (Android 12+/iOS 14+), bukan "Persis".
+  /// UI bisa memakai ini untuk menampilkan tombol "Buka Pengaturan"
+  /// yang memanggil [PodLocationService.openLocationAccuracySettings].
+  final bool reducedAccuracyDetected;
+
+  /// 🔥 BARU (review GPS mendalam #3): true kalau beberapa sample fix
+  /// terakhir berturut-turut datang dari provider "network" (bukan
+  /// "gps"/"fused") — indikasi chip GPS device ini tidak benar-benar
+  /// aktif berkontribusi (mis. mode hemat baterai OEM tertentu yang
+  /// diam-diam mematikan GPS chip). UI bisa memakai ini untuk pesan
+  /// "coba di area terbuka / aktifkan Mode akurasi tinggi", berbeda
+  /// dari [gnssGateActive] (chip AKTIF tapi sinyalnya lemah).
+  final bool networkOnlyFixDetected;
+
+  /// 🔥 BARU (review GPS mendalam #4): true kalau sudah beberapa detik
+  /// sejak akuisisi mulai (di Android) tapi GnssStatus.Callback native
+  /// TIDAK PERNAH mengirim data sama sekali sepanjang sesi ini — beda
+  /// dari [gnssGateActive] (yang berarti data GNSS ADA tapi lemah).
+  /// Sinyal ini murah & independen: "chip GPS tidak merespons" adalah
+  /// diagnosis yang beda dari "sinyal GPS lemah".
+  final bool gnssNeverDetected;
+
   const PodLocationState({
     this.lat,
     this.lon,
@@ -138,6 +161,9 @@ class PodLocationState {
     this.gnssGateActive = false,
     this.velocityGateActive = false,
     this.speedMps,
+    this.reducedAccuracyDetected = false,
+    this.networkOnlyFixDetected = false,
+    this.gnssNeverDetected = false,
   });
 
   PodLocationState copyWith({
@@ -163,6 +189,9 @@ class PodLocationState {
     bool? gnssGateActive,
     bool? velocityGateActive,
     double? speedMps,
+    bool? reducedAccuracyDetected,
+    bool? networkOnlyFixDetected,
+    bool? gnssNeverDetected,
     bool clearPosition = false,
     bool clearAddress = false,
     bool clearLockResult = false,
@@ -193,6 +222,11 @@ class PodLocationState {
     gnssGateActive: gnssGateActive ?? this.gnssGateActive,
     velocityGateActive: velocityGateActive ?? this.velocityGateActive,
     speedMps:       clearPosition ? null : speedMps ?? this.speedMps,
+    reducedAccuracyDetected:
+        reducedAccuracyDetected ?? this.reducedAccuracyDetected,
+    networkOnlyFixDetected:
+        networkOnlyFixDetected ?? this.networkOnlyFixDetected,
+    gnssNeverDetected: gnssNeverDetected ?? this.gnssNeverDetected,
   );
 
   bool get hasPosition => lat != null && lon != null;
@@ -251,6 +285,16 @@ enum _LocationAccessStatus {
   serviceDisabled,
   denied,
   deniedForever,
+  // 🔥 BARU (review GPS mendalam #1): Android 12+ mengizinkan user
+  // memberi izin lokasi tapi HANYA "Perkiraan" (ACCESS_COARSE_LOCATION),
+  // bukan "Persis" (ACCESS_FINE_LOCATION). geolocator.checkPermission()
+  // TETAP melaporkan LocationPermission.whileInUse/.always untuk kasus
+  // ini — tidak membedakan presisi sama sekali. Tanpa cek terpisah ini,
+  // sesi akuisisi akan tetap jalan penuh sampai _acquireDeadline (chip
+  // GPS besar kemungkinan tidak pernah aktif, akurasi mentok ~100m–3km
+  // dari network/cell), baru gagal di akhir tanpa user pernah tahu akar
+  // masalahnya. Lihat _checkPermission (pakai Geolocator.getLocationAccuracy()).
+  reducedAccuracy,
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -282,6 +326,47 @@ class PodLocationService {
   Timer? _staleTimer;
   Timer? _acquireTimeout;
   final Set<Object> _captureOwners = <Object>{};
+
+  // ── Ekstra data native yang tidak muat di Position (BARU, review
+  //    GPS mendalam #2 & #3) ────────────────────────────────────
+  // `Position` (tipe dari package geolocator) TIDAK punya field untuk
+  // elapsedRealtimeNanos atau provider — dua data ini hanya ada di
+  // NativeFusedPosition (native Android bridge). Supaya tetap sampai
+  // ke PodGpsEngine.processSample()/heuristik spoofing TANPA mengubah
+  // signature _onPosition (yang juga dipanggil dari jalur geolocator
+  // biasa, yang tidak punya data ini sama sekali), disimpan di sini
+  // SESAAT SEBELUM _onPosition dipanggil untuk sample yang sama —
+  // read-once, ditulis ulang tiap sample native, dan SENGAJA di-null-kan
+  // di jalur geolocator supaya tidak ada nilai basi bocor lintas-jalur
+  // kalau native error lalu fallback ke geolocator di tengah sesi.
+  int? _lastNativeElapsedRealtimeNanos;
+  String? _lastNativeProvider;
+
+  // ── Deteksi fix "network-only" berturut-turut (BARU, review GPS
+  //    mendalam #3) ────────────────────────────────────────────
+  // Provider "network" (bukan "gps"/"fused") berarti chip GPS device
+  // ini TIDAK benar-benar berkontribusi ke fix ini — biasa terjadi di
+  // mode hemat baterai OEM tertentu yang diam-diam mematikan GPS chip.
+  // Butuh beberapa sample BERTURUT-TURUT (bukan cuma 1, yang bisa
+  // kebetulan sesaat saat baru mulai sebelum GPS chip warm) sebelum
+  // dianggap benar-benar "network-only", lalu di-reset begitu ada
+  // satu sample gps/fused asli.
+  static const int _networkOnlyStreakThreshold = 3;
+  int _networkProviderStreak = 0;
+
+  // ── Deteksi "GNSS chip tidak merespons sama sekali" (BARU, review
+  //    GPS mendalam #4) ───────────────────────────────────────
+  // Dicek SEKALI lewat timer beberapa detik setelah akuisisi mulai —
+  // bukan tiap sample — supaya tidak menghakimi terlalu dini (GnssStatus
+  // callback native memang lazim nyampe agak belakangan dari fix lokasi
+  // pertama). Kalau sampai deadline ini `_gnssQuality.isSupported` masih
+  // false (belum PERNAH terima satu payload GNSS pun) padahal kita di
+  // Android + native bridge aktif, itu sinyal murah & independen: chip
+  // GPS tidak merespons — beda diagnosis dari "sinyal GPS lemah"
+  // ([PodLocationState.gnssGateActive], yang berarti data GNSS ADA
+  // tapi di bawah ambang).
+  static const Duration _gnssNeverDetectedDelay = Duration(seconds: 4);
+  Timer? _gnssCheckTimer;
 
   // ── Tracking mode (BARU) ─────────────────────────────────────
   // Kapan sample terakhir DIPROSES (bukan diterima — lihat _onPosition)
@@ -389,12 +474,20 @@ class PodLocationService {
         _LocationAccessStatus.deniedForever =>
           'Izin lokasi ditolak permanen — buka pengaturan',
         _LocationAccessStatus.denied => 'Izin lokasi ditolak',
+        // 🔥 BARU (review GPS mendalam #1): pesan spesifik, beda dari
+        // "izin ditolak" biasa — user SUDAH kasih izin, cuma perlu
+        // upgrade dari "Perkiraan" ke "Persis" di halaman App info.
+        _LocationAccessStatus.reducedAccuracy =>
+          '📍 Lokasi "Perkiraan" aktif — aktifkan "Lokasi Persis" di '
+              'pengaturan aplikasi supaya GPS bisa presisi untuk bukti POD',
         _LocationAccessStatus.granted => '',
       };
       _emit(PodLocationState(
         confidence: PodConfidence.poor,
         address: message,
         mode: PodGpsMode.idle,
+        reducedAccuracyDetected:
+            access == _LocationAccessStatus.reducedAccuracy,
       ));
       return;
     }
@@ -603,6 +696,16 @@ class PodLocationService {
   }
 
   // ── dispose ─────────────────────────────────────────────────
+  // 🔥 BARU (review GPS mendalam #1): shortcut untuk UI — dipanggil dari
+  // tombol "Buka Pengaturan" saat [PodLocationState.reducedAccuracyDetected]
+  // true. Toggle "Lokasi Persis"/"Precise Location" ada di halaman App
+  // info > Permission (bukan halaman pengaturan lokasi device secara
+  // umum), jadi pakai openAppSettings() dari geolocator, bukan
+  // openLocationSettings().
+  Future<bool> openLocationAccuracySettings() {
+    return Geolocator.openAppSettings();
+  }
+
   void dispose() {
     _cancelTimers();
     _stopStream();
@@ -625,6 +728,16 @@ class PodLocationService {
     _lastGeocodeLon = null;
     _latestGeocodeRequest++;
 
+    // 🔥 BARU (review GPS mendalam #3 & #4): reset diagnostik sesi
+    // sebelumnya — tanpa ini, flag dari sesi acquire yang GAGAL
+    // sebelumnya (mis. gnssNeverDetected=true karena user waktu itu
+    // di dalam gedung beton) bisa nyangkut ke sesi baru yang
+    // sebenarnya sudah beres, sebelum timer/streak sesi baru ini
+    // sempat mengevaluasi ulang.
+    _networkProviderStreak = 0;
+    _lastNativeElapsedRealtimeNanos = null;
+    _lastNativeProvider = null;
+
     _emit(currentState.copyWith(
       confidence:   PodConfidence.searching,
       lockProgress: 0.0,
@@ -634,7 +747,21 @@ class PodLocationService {
       positionFromCache: currentState.hasPosition,
       clearLockResult: true,
       clearAddress: !currentState.hasMatchingAddress,
+      networkOnlyFixDetected: false,
+      gnssNeverDetected: false,
     ));
+
+    // 🔥 BARU (review GPS mendalam #4): jadwalkan cek "GNSS chip tidak
+    // merespons sama sekali" — lihat catatan di deklarasi
+    // _gnssNeverDetectedDelay. Hanya relevan di Android + native
+    // bridge aktif; platform lain (iOS) tidak punya sinyal ini sama
+    // sekali jadi tidak pernah dijadwalkan.
+    if (Platform.isAndroid && _nativeLocation.isSupported) {
+      _gnssCheckTimer = Timer(
+        _gnssNeverDetectedDelay,
+        () => _checkGnssNeverDetected(generation),
+      );
+    }
 
     // Inject cached position → instant preview.
     // ✅ NATIVE FIX: di Android, cache FusedLocationProviderClient
@@ -811,7 +938,20 @@ class PodLocationService {
     if (Platform.isAndroid && _nativeLocation.isSupported) {
       _usingNativeStream = true;
       _positionStream = _nativeLocation.positionStream
-          .map(_nativeToPosition)
+          // 🔥 BARU (review GPS mendalam #2 & #3): NativeFusedPosition
+          // punya elapsedRealtimeNanos & provider yang tidak muat di
+          // Position (tipe geolocator) — ditangkap di sini lewat side
+          // effect SEBELUM dikonversi, disimpan ke _lastNativeElapsed-
+          // RealtimeNanos/_lastNativeProvider supaya _onPosition (yang
+          // dipanggil tepat sesudah `.map()` ini utk sample yang SAMA)
+          // bisa membacanya. Tetap `.map()` (bukan listen langsung ke
+          // NativeFusedPosition) supaya tipe _positionStream tidak
+          // berubah dari StreamSubscription<Position>.
+          .map((native) {
+            _lastNativeElapsedRealtimeNanos = native.elapsedRealtimeNanos;
+            _lastNativeProvider = native.provider;
+            return _nativeToPosition(native);
+          })
           .listen(
         (position) => _onPosition(position, generation),
         onError: (Object e) {
@@ -834,6 +974,12 @@ class PodLocationService {
 
   void _startGeolocatorStream(int generation, LocationSettings settings) {
     _usingNativeStream = false;
+    // Jalur geolocator TIDAK punya elapsedRealtimeNanos/provider sama
+    // sekali — bersihkan sisa dari jalur native (kalau ini dipanggil
+    // sebagai fallback pasca-error di tengah sesi) supaya tidak ada
+    // nilai basi kebawa ke sample geolocator berikutnya.
+    _lastNativeElapsedRealtimeNanos = null;
+    _lastNativeProvider = null;
     _positionStream = Geolocator.getPositionStream(
       locationSettings: settings,
     ).listen((position) => _onPosition(position, generation), onError: (e) {
@@ -927,6 +1073,11 @@ class PodLocationService {
     }
     _acquireTimeout?.cancel();
     _acquireTimeout = null;
+    // Sudah locked — cek "GNSS tidak merespons" (#4) tidak relevan lagi
+    // (lihat guard mode==acquiring di _checkGnssNeverDetected; ini
+    // cuma percepat cleanup, bukan syarat korektnya).
+    _gnssCheckTimer?.cancel();
+    _gnssCheckTimer = null;
     _lastTrackingSampleAt = DateTime.now();
 
     // Native fused stream (Android): rate request dikontrol native side,
@@ -1035,7 +1186,26 @@ class PodLocationService {
       gnssAvgCn0DbHz: gnssFresh ? gnss.avgCn0DbHz : null,
       hdop: gnssFresh ? gnss.hdop : null,
       pdop: gnssFresh ? gnss.pdop : null,
+      // 🔥 BARU (review GPS mendalam #2): jam monotonic native (kalau
+      // sample ini dari jalur native Android — null di geolocator/iOS,
+      // lihat catatan _lastNativeElapsedRealtimeNanos di atas).
+      elapsedRealtimeNanos: _lastNativeElapsedRealtimeNanos,
     );
+
+    // 🔥 BARU (review GPS mendalam #3): streak provider "network"
+    // berturut-turut. Hanya relevan kalau kita benar-benar di jalur
+    // native (provider non-null) — jalur geolocator/iOS selalu null
+    // di sini, jadi tidak pernah ikut menghitung streak (tidak ada
+    // sinyal utk dibedakan di platform itu).
+    final provider = _lastNativeProvider?.toLowerCase();
+    if (provider != null) {
+      if (provider.contains('network')) {
+        _networkProviderStreak++;
+      } else {
+        _networkProviderStreak = 0;
+      }
+    }
+    final networkOnly = _networkProviderStreak >= _networkOnlyStreakThreshold;
 
     // ⭐ Spoofing lanjutan terdeteksi (bukan isMocked, tapi heuristik
     // lain — lihat PodGpsEngine._evaluateSpoofHeuristics): blokir
@@ -1095,6 +1265,13 @@ class PodLocationService {
       gnssGateActive: _gpsEngine.gnssGateActive && !conf.canCapture,
       velocityGateActive: _gpsEngine.velocityGateActive && !conf.canCapture,
       speedMps:       speed,
+      networkOnlyFixDetected: networkOnly,
+      // Sample sungguhan sudah masuk (apa pun provider-nya) — sinyal
+      // "chip GNSS tidak merespons" jadi tidak relevan lagi mulai dari
+      // sini, terlepas dari apakah GnssStatus.Callback sendiri pernah
+      // terima payload atau tidak (device tertentu bisa dapat fix
+      // valid dari fused/network walau GnssStatus tidak pernah ngirim).
+      gnssNeverDetected: false,
     ));
 
     // ✅ FIX ALAMAT TIDAK MUNCUL: dulu geocode hanya dipicu kalau
@@ -1404,6 +1581,29 @@ class PodLocationService {
         perm == LocationPermission.unableToDetermine) {
       return _LocationAccessStatus.denied;
     }
+
+    // 🔥 BARU (review GPS mendalam #1): permission "granted" di atas
+    // TIDAK berarti presisi penuh — cek terpisah status akurasi lokasi
+    // (Android 12+/iOS 14+). `.reduced` berarti user cuma kasih izin
+    // "Perkiraan Lokasi" — untuk bukti POD ini setara dengan tidak
+    // punya GPS sama sekali (akurasi ~100m–3km, jauh di atas bahkan
+    // indoorAccuracyThreshold 40m PodGpsEngine), jadi diperlakukan
+    // sebagai kegagalan akses yang WAJIB diberitahu ke user secara
+    // spesifik, bukan dibiarkan gagal diam-diam setelah timeout penuh.
+    try {
+      final accuracyStatus = await Geolocator.getLocationAccuracy();
+      if (accuracyStatus == LocationAccuracyStatus.reduced) {
+        return _LocationAccessStatus.reducedAccuracy;
+      }
+    } catch (e) {
+      // Platform lama/tidak mendukung API ini (mis. Android < 12,
+      // web) — abaikan, anggap presisi penuh (fallback aman, sama
+      // seperti pola gate lain di codebase ini).
+      if (kDebugMode) {
+        debugPrint('PodLocationService: getLocationAccuracy tidak didukung, $e');
+      }
+    }
+
     return _LocationAccessStatus.granted;
   }
 
@@ -1424,6 +1624,27 @@ class PodLocationService {
     _staleTimer = null;
     _acquireTimeout?.cancel();
     _acquireTimeout = null;
+    _gnssCheckTimer?.cancel();
+    _gnssCheckTimer = null;
+  }
+
+  // 🔥 BARU (review GPS mendalam #4): dipanggil sekali, beberapa detik
+  // setelah akuisisi mulai — lihat _gnssNeverDetectedDelay. Kalau
+  // sesi ini sudah pindah generation (dibatalkan/diganti sesi baru)
+  // atau sudah tidak lagi acquiring (locked/idle), abaikan — sinyal
+  // ini cuma relevan selagi masih menunggu fix pertama.
+  void _checkGnssNeverDetected(int generation) {
+    if (generation != _acquisitionGeneration) return;
+    if (currentState.mode != PodGpsMode.acquiring) return;
+    if (_gnssQuality.isSupported) return; // sudah pernah terima data, aman
+    _emit(currentState.copyWith(gnssNeverDetected: true));
+    if (kDebugMode) {
+      debugPrint(
+        'PodLocationService: GNSS chip tidak merespons setelah '
+        '${_gnssNeverDetectedDelay.inSeconds}s — kemungkinan chip GPS '
+        'nonaktif (mode hemat baterai OEM?)',
+      );
+    }
   }
 
   String _gridKey(double lat, double lon) {
