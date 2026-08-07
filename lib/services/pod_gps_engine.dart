@@ -10,7 +10,7 @@
 //   excellent max radius (cluster)     : 12m
 //   outlier rejection (MAD-based)      : BARU
 //   confidence score (0–1)             : BARU
-//   timeout            : adaptif — 8 detik outdoor, 15 detik indoor
+//   timeout            : adaptif — 5 detik outdoor, 10 detik indoor
 //                         (dideteksi dari sample pertama: GNSS sat/CN0
 //                         kalau ada, fallback ke accuracy OS)
 //   target samples     : 3 (fast lock), max 10 untuk refine
@@ -181,11 +181,28 @@ class GpsConfig {
   //   6. Kecepatan Doppler (raw.speed, dari chip GPS) tidak cocok
   //      dengan kecepatan implisit dari delta posisi → lihat catatan
   //      Velocity Filter di bawah
+  //   7. (BARU) Delta wall-clock vs delta jam monotonic
+  //      (elapsedRealtimeNanos, Android native) antar-sample tidak
+  //      sinkron → indikasi jam device diubah manual (lihat
+  //      spoofClockDriftTolerance)
   final double maxPlausibleSpeedMps;
   final double spoofDopMismatchHdop;
   final double spoofDopMismatchMaxAccuracy;
   final int spoofIdenticalStreak;
   final double spoofVelocityMismatchMps;
+
+  // ── Clock drift check (BARU, review GPS mendalam #2) ─────────
+  // Membandingkan delta WALL-CLOCK (timestampMs, bisa diubah manual
+  // lewat Setting > Tanggal & Waktu) vs delta MONOTONIC
+  // (elapsedRealtimeNanos, dari SystemClock, tidak bisa diubah user)
+  // antara dua sample berturut-turut. Hanya aktif kalau KEDUA sample
+  // punya elapsedRealtimeNanos (Android native path saja — di iOS/
+  // fallback geolocator otomatis nonaktif, sama pola gate lain).
+  // Toleransi diberi cukup longgar untuk menyerap jitter NTP kecil
+  // dari OS (resync latar belakang beberapa ratus ms itu wajar);
+  // drift dalam orde detik+ pada sesi akuisisi yang cuma berlangsung
+  // beberapa detik adalah indikasi kuat jam device diubah manual.
+  final Duration spoofClockDriftTolerance;
 
   // ── Velocity Filter (BARU) ───────────────────────────────────
   // `raw.speed`/`raw.speedAccuracy` (Position dari geolocator) SEBELUM
@@ -270,6 +287,7 @@ class GpsConfig {
     this.spoofDopMismatchMaxAccuracy = 5.0,
     this.spoofIdenticalStreak = 3,
     this.spoofVelocityMismatchMps = 15.0,
+    this.spoofClockDriftTolerance = const Duration(seconds: 2),
     this.maxPlausibleStationarySpeedMps = 3.0, // ~10.8 km/h, longgar utk jalan kaki bawa paket
     this.maxSpeedAccuracyForGate = 3.0,
     this.convergenceHistorySize = 5,
@@ -333,6 +351,16 @@ class PodSample {
   final double? speed;
   final double? speedAccuracy;
 
+  // ── Jam monotonic (BARU, review GPS mendalam #2, opsional) ──────
+  // Dari SystemClock.elapsedRealtimeNanos() native (Android saja, via
+  // FusedLocationStreamHandler.kt) — TIDAK BISA diubah user lewat
+  // Setting > Tanggal & Waktu, beda dari [timestampMs] (wall-clock)
+  // yang bisa. null di iOS / getLastLocation() cache / geolocator
+  // fallback path — heuristik terkait otomatis fallback ke wall-clock
+  // (perilaku lama, tidak ada regresi untuk platform yang tidak
+  // mendukungnya).
+  final int? elapsedRealtimeNanos;
+
   const PodSample({
     required this.lat,
     required this.lon,
@@ -344,6 +372,7 @@ class PodSample {
     this.pdop,
     this.speed,
     this.speedAccuracy,
+    this.elapsedRealtimeNanos,
   });
 
   DateTime get time => DateTime.fromMillisecondsSinceEpoch(timestampMs);
@@ -539,6 +568,7 @@ class PodGpsEngine {
 
   double _lastLat = 0, _lastLon = 0;
   int? _lastSampleTimeMs;
+  int? _lastElapsedRealtimeNanos;
   bool _posInit = false;
   bool _locked = false;
   bool _isFallbackLock = false;
@@ -666,6 +696,13 @@ class PodGpsEngine {
     double? gnssAvgCn0DbHz,
     double? hdop,
     double? pdop,
+    // 🔥 BARU (review GPS mendalam #2): jam monotonic dari native
+    // Android bridge (SystemClock.elapsedRealtimeNanos) — lihat
+    // NativeFusedPosition.elapsedRealtimeNanos & PodSample untuk
+    // kenapa ini penting untuk integritas timestamp. null di jalur
+    // geolocator/iOS — heuristik terkait fallback otomatis ke
+    // wall-clock (perilaku lama).
+    int? elapsedRealtimeNanos,
   }) {
     // Mock GPS (flag eksplisit dari OS) → tolak
     if (raw.isMocked) {
@@ -695,6 +732,7 @@ class PodGpsEngine {
       // supaya hasReliableSpeed()/gate otomatis skip (fallback aman).
       speed: raw.speedAccuracy > 0 ? raw.speed : null,
       speedAccuracy: raw.speedAccuracy > 0 ? raw.speedAccuracy : null,
+      elapsedRealtimeNanos: elapsedRealtimeNanos,
     );
 
     // ── Deteksi spoofing lanjutan (BARU) ────────────────────────
@@ -802,6 +840,7 @@ class PodGpsEngine {
     _lastLat = raw.latitude;
     _lastLon = raw.longitude;
     _lastSampleTimeMs = raw.timestamp.millisecondsSinceEpoch;
+    _lastElapsedRealtimeNanos = elapsedRealtimeNanos;
     _posInit = true;
 
     // Tambah ke window (FIFO: selalu tambah di akhir) — pakai `sample`
@@ -857,15 +896,44 @@ class PodGpsEngine {
 
     // (1) & (2): butuh sample sebelumnya sebagai baseline. impliedSpeed
     // (dari delta posisi) juga dipakai ulang di (6) di bawah.
+    //
+    // 🔥 BARU (review GPS mendalam #2): elapsedSec untuk kecepatan
+    // implisit SEKARANG diutamakan dari delta jam MONOTONIC
+    // (elapsedRealtimeNanos, native Android, tidak bisa diubah user)
+    // kalau kedua sample (sebelumnya & sekarang) punya data itu — baru
+    // fallback ke delta wall-clock (timestampMs) kalau tidak tersedia
+    // (iOS, jalur geolocator, atau sample cache). Wall-clock TETAP
+    // dipakai murni untuk cek "timestamp mundur" di bawah (itu justru
+    // sinyal manipulasi jam yang valid), tapi tidak lagi jadi dasar
+    // perhitungan kecepatan/waktu — supaya resync NTP kecil atau ganti
+    // zona waktu tidak salah men-trigger heuristik #1/#6, dan supaya
+    // user yang sengaja mengubah jam device tidak bisa menyamarkan
+    // kecepatan implisit dengan memanipulasi delta waktu yang dipakai
+    // untuk menghitungnya.
     double? impliedSpeed;
     final lastMs = _lastSampleTimeMs;
+    final lastNanos = _lastElapsedRealtimeNanos;
+    final curNanos = sample.elapsedRealtimeNanos;
     if (_posInit && lastMs != null) {
       final deltaMs = sample.timestampMs - lastMs;
 
       if (deltaMs < 0) {
         reasons.add('timestamp mundur ${-deltaMs}ms dari sample terakhir');
-      } else if (deltaMs > 0) {
-        final elapsedSec = deltaMs / 1000.0;
+      }
+
+      final monotonicAvailable = lastNanos != null && curNanos != null;
+      final deltaMonotonicMs =
+          monotonicAvailable ? (curNanos - lastNanos) / 1e6 : null;
+
+      // Pakai monotonic kalau ada & positif (delta monotonic negatif
+      // praktis mustahil kecuali reboot device di tengah sesi — di
+      // luar cakupan heuristik ini, biarkan fallback wall-clock).
+      final effectiveDeltaMs = (deltaMonotonicMs != null && deltaMonotonicMs > 0)
+          ? deltaMonotonicMs
+          : (deltaMs > 0 ? deltaMs.toDouble() : null);
+
+      if (effectiveDeltaMs != null) {
+        final elapsedSec = effectiveDeltaMs / 1000.0;
         final distance = _haversine(_lastLat, _lastLon, sample.lat, sample.lon);
         impliedSpeed = distance / elapsedSec;
         if (impliedSpeed > _config.maxPlausibleSpeedMps) {
@@ -873,6 +941,24 @@ class PodGpsEngine {
             'kecepatan implisit ${impliedSpeed.toStringAsFixed(1)}m/s '
             '(${distance.toStringAsFixed(0)}m dalam ${elapsedSec.toStringAsFixed(1)}s) '
             'melebihi batas wajar ${_config.maxPlausibleSpeedMps}m/s',
+          );
+        }
+      }
+
+      // (7) BARU: Clock drift — wall-clock vs monotonic tidak sinkron.
+      // Kalau device baru saja di-reboot di tengah sesi, delta
+      // monotonic bisa negatif/tidak masuk akal — kasus itu SENGAJA
+      // tidak dievaluasi di sini (di luar cakupan; sesi akuisisi POD
+      // berlangsung singkat, reboot di tengahnya sudah anomali
+      // tersendiri yang lebih baik ditangani lewat hard-reset sesi,
+      // bukan flag spoofing).
+      if (deltaMonotonicMs != null && deltaMonotonicMs > 0 && deltaMs > 0) {
+        final driftMs = (deltaMs - deltaMonotonicMs).abs();
+        if (driftMs > _config.spoofClockDriftTolerance.inMilliseconds) {
+          reasons.add(
+            'jam sistem bergeser ${(driftMs / 1000).toStringAsFixed(1)}s '
+            'dibanding jam monotonic device antar-sample — indikasi jam '
+            'diubah manual',
           );
         }
       }
@@ -1498,6 +1584,7 @@ class PodGpsEngine {
     _confidence = PodConfidence.searching;
     _posInit = false;
     _lastSampleTimeMs = null;
+    _lastElapsedRealtimeNanos = null;
     _moveExceedStreak = 0;
     _gnssGateActive = false;
     _velocityGateActive = false;
