@@ -39,6 +39,18 @@ class NativeFusedPosition {
   final bool isMock;
   final String provider;
 
+  /// 🔥 BARU (review GPS mendalam #2): jam MONOTONIC (nanodetik sejak
+  /// boot device, dari `SystemClock.elapsedRealtimeNanos()` — lihat
+  /// FusedLocationStreamHandler.kt) — TIDAK BISA diubah user lewat
+  /// Setting > Tanggal & Waktu, beda dari [timestamp] (wall-clock, dari
+  /// `Location.getTime()`) yang bisa. Dipakai PodGpsEngine sebagai
+  /// sumber waktu utama untuk heuristik spoofing #1/#2 dan heuristik
+  /// baru "clock drift" — lihat PodGpsEngine._evaluateSpoofHeuristics.
+  /// null di getLastLocation() (snapshot cache, cuma untuk preview UI,
+  /// tidak pernah masuk _window) — tidak masalah karena tidak dipakai
+  /// untuk perhitungan spoofing di jalur itu.
+  final int? elapsedRealtimeNanos;
+
   const NativeFusedPosition({
     required this.latitude,
     required this.longitude,
@@ -50,6 +62,7 @@ class NativeFusedPosition {
     required this.timestamp,
     required this.isMock,
     required this.provider,
+    this.elapsedRealtimeNanos,
   });
 
   factory NativeFusedPosition.fromMap(Map<dynamic, dynamic> map) {
@@ -66,6 +79,7 @@ class NativeFusedPosition {
       ),
       isMock: map['isMock'] as bool? ?? false,
       provider: map['provider'] as String? ?? 'fused',
+      elapsedRealtimeNanos: (map['elapsedRealtimeNanos'] as num?)?.toInt(),
     );
   }
 
