@@ -1073,7 +1073,16 @@ class PodGpsEngine {
     // targetSamples dan belum sempat convergen — gate anti-spoof
     // (GNSS/velocity) tetap wajib lolos supaya shortcut ini tidak
     // membuka celah untuk fix yang dipalsukan.
-    if (n >= 1 &&
+    //
+    // PENTING: hanya berlaku untuk LOCK PERTAMA (_locked masih false
+    // sebelum evaluasi ini). Setelah locked, evaluasi berikutnya WAJIB
+    // lewat jalur normal di bawah — supaya convergence gate (excellent)
+    // dan soft-unlock debounce tetap berfungsi apa adanya dan tidak
+    // di-override ulang tiap kali ada sample baru yang kebetulan akurat.
+    final wasLockedBeforeThisEval = _locked;
+
+    if (!wasLockedBeforeThisEval &&
+        n >= 1 &&
         avgAcc <= _config.fastPathAccuracy &&
         gnssOk &&
         velocityOk) {
