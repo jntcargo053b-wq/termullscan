@@ -543,6 +543,22 @@ class PodGpsEngine {
   bool _locked = false;
   bool _isFallbackLock = false;
 
+  /// 🔥 FIX: Fast-path (lihat _evaluate) mestinya cuma berlaku untuk
+  /// LOCK PERTAMA DALAM SATU SESI, bukan "setiap kali _locked sedang
+  /// false". Sebelum fix ini, fast-path dicek pakai `!_locked`
+  /// LANGSUNG SETELAH `_softUnlock()` men-set `_locked = false` di
+  /// pemanggilan `processSample` YANG SAMA (lihat blok "Cek pergerakan"
+  /// di atas _window.add) — akibatnya sample penyebab soft-unlock itu
+  /// sendiri (kalau kebetulan akurasinya <= fastPathAccuracy) langsung
+  /// me-relock jadi "excellent" lagi PADA EVALUASI YANG SAMA, membuat
+  /// debounce soft-unlock terasa jalan tapi confidence tidak pernah
+  /// benar-benar sempat turun (test "2 sample berturut-turut menyimpang
+  /// ... memicu soft-unlock" gagal karena isLocked tetap true & confidence
+  /// tetap excellent). Flag ini HANYA di-set true saat lock pertama kali
+  /// terjadi (fast-path atau jalur normal/quick-lock), dan HANYA
+  /// direset oleh hard reset / reset penuh sesi — TIDAK oleh soft-unlock.
+  bool _hasLockedThisSession = false;
+
   /// Hitung sample BERTURUT-TURUT yang geser >= moveThreshold (tapi <
   /// resetThreshold) — dipakai debounce soft-unlock (BARU, saran
   /// performa #4). Reset ke 0 begitu sample "diam" lagi, atau begitu
@@ -797,9 +813,21 @@ class PodGpsEngine {
     _updateBestSamples(sample);
 
     // Evaluasi
-    final prev = _confidence;
     _evaluate();
-    return _confidence.index > prev.index;
+
+    // 🔥 FIX: Return value merepresentasikan "sample ini DITERIMA masuk
+    // window" (tidak ditolak oleh gate accuracy/spoofing di atas) — BUKAN
+    // "confidence tier naik dibanding sebelumnya". Semantik lama
+    // (`_confidence.index > prev.index`) salah: begitu tier sudah di
+    // puncak (excellent) atau ketika fast-path (lock sample pertama)
+    // membuat tier normal berikutnya sempat turun (mis. excellent → good
+    // sebelum n cukup untuk tier normal), sample yang sebenarnya sah
+    // masuk window malah dilaporkan `false` — padahal semua pemanggil lain
+    // (lihat kode di atas: return false untuk isMocked/accuracy=0/spoof/
+    // accuracyThreshold) sudah konsisten memakai `false` HANYA untuk
+    // sample yang ditolak. Sample yang sampai baris ini sudah lolos semua
+    // gate itu dan sudah ditambahkan ke _window — jadi selalu `true`.
+    return true;
   }
 
   void _flagSpoof(List<String> reasons) {
@@ -999,6 +1027,7 @@ class PodGpsEngine {
 
     _confidence = PodConfidence.good;
     _locked = true;
+    _hasLockedThisSession = true;
     _isFallbackLock = true;
     final score = _score(cleaned, stats);
     _lockResult = _buildResult(
@@ -1074,20 +1103,28 @@ class PodGpsEngine {
     // (GNSS/velocity) tetap wajib lolos supaya shortcut ini tidak
     // membuka celah untuk fix yang dipalsukan.
     //
-    // PENTING: hanya berlaku untuk LOCK PERTAMA (_locked masih false
-    // sebelum evaluasi ini). Setelah locked, evaluasi berikutnya WAJIB
-    // lewat jalur normal di bawah — supaya convergence gate (excellent)
-    // dan soft-unlock debounce tetap berfungsi apa adanya dan tidak
-    // di-override ulang tiap kali ada sample baru yang kebetulan akurat.
-    final wasLockedBeforeThisEval = _locked;
-
-    if (!wasLockedBeforeThisEval &&
+    // PENTING: hanya berlaku untuk LOCK PERTAMA DALAM SATU SESI (lihat
+    // _hasLockedThisSession) — BUKAN sekadar "_locked sedang false saat
+    // ini". Kalau dicek dari `_locked` mentah, sample yang BARU SAJA
+    // memicu soft-unlock (yang men-set _locked=false sesaat sebelum
+    // _evaluate() ini dipanggil, di pemanggilan processSample yang sama)
+    // bisa langsung lolos fast-path dan me-relock "excellent" lagi kalau
+    // akurasinya kebetulan bagus — padahal maksudnya soft-unlock harus
+    // benar-benar melepas lock dulu, bukan cuma flicker sesaat. Dengan
+    // flag sesi ini, fast-path betul-betul cuma jalan SEKALI (saat lock
+    // pertama sebelum pernah locked sama sekali); setelah itu (termasuk
+    // setelah soft-unlock) WAJIB lewat jalur normal di bawah — supaya
+    // convergence gate (excellent) dan soft-unlock debounce tetap
+    // berfungsi apa adanya dan tidak di-override ulang tiap kali ada
+    // sample baru yang kebetulan akurat.
+    if (!_hasLockedThisSession &&
         n >= 1 &&
         avgAcc <= _config.fastPathAccuracy &&
         gnssOk &&
         velocityOk) {
       newConf = PodConfidence.excellent;
       _locked = true;
+      _hasLockedThisSession = true;
     } else if (n >= _config.targetSamples &&
         avgAcc <= _config.excellentThreshold &&
         stdDev <= _config.excellentMaxStdDev &&
@@ -1099,6 +1136,7 @@ class PodGpsEngine {
         _isConverged) {
       newConf = PodConfidence.excellent;
       _locked = true;
+      _hasLockedThisSession = true;
     } else if (n >= _config.quickLockSamples &&
         avgAcc <= _config.captureThreshold) {
       // ⚡ QUICK LOCK (BARU): tier "good" sekarang HANYA mensyaratkan
@@ -1115,6 +1153,7 @@ class PodGpsEngine {
       // tetap tersaring lebih dulu.
       newConf = PodConfidence.good;
       _locked = true;
+      _hasLockedThisSession = true;
     } else if (n >= 1 && avgAcc <= _activeAccuracyThreshold) {
       // Tetap "fair" walau GNSS/velocity gate belum lolos — UI bisa
       // menampilkan status stabilisasi tanpa memblokir selamanya;
@@ -1454,6 +1493,7 @@ class PodGpsEngine {
     _bestSamples.clear();
     _lockResult = null;
     _locked = false;
+    _hasLockedThisSession = false;
     _isFallbackLock = false;
     _confidence = PodConfidence.searching;
     _posInit = false;
