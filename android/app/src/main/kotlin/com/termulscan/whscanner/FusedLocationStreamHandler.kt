@@ -5,13 +5,24 @@ package com.termulscan.whscanner
 // ============================================================
 // Menjembatani FusedLocationProviderClient langsung (bukan lewat
 // package geolocator) karena geolocator TIDAK mengekspos
-// `setWaitForAccurateLocation(true)`. Opsi ini penting untuk POD:
-// tanpa itu, FusedLocationProviderClient bisa langsung mengirim
-// estimasi kasar (network/cell-based) sebagai callback pertama,
-// yang lolos masuk ke window PodGpsEngine dan mengotori centroid
-// awal. Dengan `waitForAccurateLocation(true)`, provider menahan
-// callback sampai dapat fix yang lebih layak dipercaya (biasanya
-// GNSS), walau makan waktu tunggu sedikit lebih lama di awal.
+// `setWaitForAccurateLocation`, opsi yang dulu dipakai di sini
+// (true) untuk menahan callback pertama sampai FLP anggap fix-nya
+// cukup akurat.
+//
+// ⚡ BARU: diubah ke `false`. `waitForAccurateLocation(true)` justru
+// KONTRAPRODUKTIF terhadap tujuan lock cepat — di kondisi yang paling
+// butuh cepat (indoor/gudang), FLP bisa menahan callback pertama
+// berdetik-detik sebelum anggap fix "cukup akurat", padahal
+// PodGpsEngine di sisi Dart SUDAH punya mekanisme lengkap untuk
+// menyaring fix kasar sendiri: gate admisi accuracy adaptif
+// (outdoorAccuracyThreshold=25m/indoorAccuracyThreshold=40m — fix
+// network/cell-based yang biasanya >100m otomatis tertolak di sana),
+// MAD-based outlier rejection, dan convergence lock untuk tier
+// "excellent". Menahan di level native cuma menambah latency tanpa
+// manfaat presisi tambahan, karena penyaringan sudah terjadi di
+// hilir. Pola Google Maps/blue-dot juga selalu tampilkan estimasi
+// awal secepatnya lalu refine belakangan — bukan menunda tampilan
+// sampai "akurat".
 //
 // EVENT_CHANNEL  : stream posisi kontinu. Listen = mulai
 //                  requestLocationUpdates (GPS chip aktif = warm-up).
@@ -71,7 +82,11 @@ class FusedLocationStreamHandler(
 
         val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, INTERVAL_MS)
             .setMinUpdateIntervalMillis(MIN_UPDATE_INTERVAL_MS)
-            .setWaitForAccurateLocation(true)
+            // ⚡ BARU: false — jangan tahan callback pertama. Fix kasar
+            // (kalau memang terjadi) sudah tersaring di PodGpsEngine
+            // (gate accuracy adaptif + outlier rejection + convergence).
+            // Lihat catatan panjang di header file.
+            .setWaitForAccurateLocation(false)
             .build()
 
         val cb = object : LocationCallback() {

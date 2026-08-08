@@ -15,8 +15,10 @@ class MainActivity : FlutterActivity() {
     //  1. GNSS quality (satellite count + C/N0) — tidak diekspos geolocator,
     //     diambil langsung dari LocationManager via GnssStatus.Callback.
     //  2. Fused location bridge — dipakai menggantikan geolocator utk stream
-    //     posisi di Android karena geolocator tidak mengekspos
-    //     `setWaitForAccurateLocation(true)`. Lihat FusedLocationStreamHandler.
+    //     posisi di Android karena geolocator tidak mengekspos kontrol
+    //     `setWaitForAccurateLocation`. Lihat FusedLocationStreamHandler
+    //     (sekarang di-set false demi lock cepat — penyaringan fix kasar
+    //     dilakukan di PodGpsEngine sisi Dart).
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 

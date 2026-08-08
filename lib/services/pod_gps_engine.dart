@@ -651,6 +651,23 @@ class PodGpsEngine {
     double? hdop,
     double? pdop,
   }) {
+    // 🐛 FIX: status _locked WAJIB ditangkap di sini, di awal call —
+    // BUKAN dibaca ulang tepat sebelum _evaluate() di bawah. Kalau
+    // sample ini memicu soft-unlock (lihat blok cek pergerakan di
+    // bawah), _locked sudah berubah jadi false SEBELUM _evaluate()
+    // sempat jalan di call yang SAMA. _evaluate() memakai nilai ini
+    // untuk syarat "fast-path (BARU) hanya untuk LOCK PERTAMA" — kalau
+    // yang dibaca adalah _locked PASCA-soft-unlock (selalu false),
+    // syarat itu jadi selalu lolos lagi tepat setelah soft-unlock,
+    // sehingga cluster yang baru saja di-soft-unlock langsung
+    // ter-relock "excellent" di evaluasi berikutnya PADA SAMPLE YANG
+    // SAMA — soft-unlock debounce jadi tidak pernah kerasa efeknya di
+    // confidence/isLocked walau streak-nya sudah terpenuhi secara
+    // internal. Dengan menangkap di awal, fast-path cuma berlaku untuk
+    // sample yang genuinely pertama kali mengunci (belum locked sama
+    // sekali sebelum processSample ini dipanggil).
+    final wasLockedAtCallStart = _locked;
+
     // Mock GPS (flag eksplisit dari OS) → tolak
     if (raw.isMocked) {
       _flagSpoof(['OS melaporkan isMocked=true']);
@@ -798,7 +815,7 @@ class PodGpsEngine {
 
     // Evaluasi
     final prev = _confidence;
-    _evaluate();
+    _evaluate(wasLockedAtCallStart);
     return _confidence.index > prev.index;
   }
 
@@ -1015,7 +1032,7 @@ class PodGpsEngine {
   }
 
   // ─── Evaluasi confidence ─────────────────────────────────────
-  void _evaluate() {
+  void _evaluate(bool wasLockedBeforeThisSample) {
     if (_window.isEmpty) {
       _confidence = PodConfidence.searching;
       return;
@@ -1074,14 +1091,18 @@ class PodGpsEngine {
     // (GNSS/velocity) tetap wajib lolos supaya shortcut ini tidak
     // membuka celah untuk fix yang dipalsukan.
     //
-    // PENTING: hanya berlaku untuk LOCK PERTAMA (_locked masih false
-    // sebelum evaluasi ini). Setelah locked, evaluasi berikutnya WAJIB
-    // lewat jalur normal di bawah — supaya convergence gate (excellent)
-    // dan soft-unlock debounce tetap berfungsi apa adanya dan tidak
-    // di-override ulang tiap kali ada sample baru yang kebetulan akurat.
-    final wasLockedBeforeThisEval = _locked;
-
-    if (!wasLockedBeforeThisEval &&
+    // PENTING: hanya berlaku untuk LOCK PERTAMA. [wasLockedBeforeThisSample]
+    // WAJIB berasal dari status _locked yang ditangkap di AWAL
+    // processSample() (lihat pemanggil) — BUKAN dibaca ulang di sini,
+    // karena kalau sample ini sendiri memicu soft-unlock (blok cek
+    // pergerakan di processSample, sebelum _evaluate() ini dipanggil),
+    // _locked SUDAH keburu jadi false di call yang sama. Membaca
+    // _locked langsung di sini akan membuat syarat "hanya lock
+    // pertama" itu keliru lolos lagi tepat setelah soft-unlock,
+    // sehingga cluster yang baru saja di-soft-unlock langsung
+    // ter-relock "excellent" seketika — soft-unlock debounce jadi
+    // tidak pernah kerasa efeknya di confidence/isLocked.
+    if (!wasLockedBeforeThisSample &&
         n >= 1 &&
         avgAcc <= _config.fastPathAccuracy &&
         gnssOk &&
