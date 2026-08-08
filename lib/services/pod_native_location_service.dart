@@ -5,9 +5,12 @@
 // Wrapper tipis di atas FusedLocationProviderClient native — lihat
 // android/.../FusedLocationStreamHandler.kt untuk alasan kenapa ini
 // perlu ada di luar package `geolocator`: geolocator tidak mengekspos
-// `setWaitForAccurateLocation(true)`, yang mencegah callback pertama
-// berupa estimasi kasar (network/cell-based) ikut mengotori window
-// PodGpsEngine.
+// kontrol parameter LocationRequest.Builder (interval/minUpdateInterval/
+// waitForAccurateLocation) secara langsung. `waitForAccurateLocation`
+// di-set false (⚡ demi lock cepat) — fix kasar (network/cell-based)
+// yang mungkin lolos sebagai callback pertama tetap tersaring aman di
+// PodGpsEngine lewat gate accuracy adaptif + outlier rejection, bukan
+// dicegah di level native.
 //
 // iOS TIDAK dijembatani — [isSupported] akan false, dan
 // PodLocationService WAJIB fallback ke geolocator untuk platform itu
@@ -39,18 +42,6 @@ class NativeFusedPosition {
   final bool isMock;
   final String provider;
 
-  /// 🔥 BARU (review GPS mendalam #2): jam MONOTONIC (nanodetik sejak
-  /// boot device, dari `SystemClock.elapsedRealtimeNanos()` — lihat
-  /// FusedLocationStreamHandler.kt) — TIDAK BISA diubah user lewat
-  /// Setting > Tanggal & Waktu, beda dari [timestamp] (wall-clock, dari
-  /// `Location.getTime()`) yang bisa. Dipakai PodGpsEngine sebagai
-  /// sumber waktu utama untuk heuristik spoofing #1/#2 dan heuristik
-  /// baru "clock drift" — lihat PodGpsEngine._evaluateSpoofHeuristics.
-  /// null di getLastLocation() (snapshot cache, cuma untuk preview UI,
-  /// tidak pernah masuk _window) — tidak masalah karena tidak dipakai
-  /// untuk perhitungan spoofing di jalur itu.
-  final int? elapsedRealtimeNanos;
-
   const NativeFusedPosition({
     required this.latitude,
     required this.longitude,
@@ -62,7 +53,6 @@ class NativeFusedPosition {
     required this.timestamp,
     required this.isMock,
     required this.provider,
-    this.elapsedRealtimeNanos,
   });
 
   factory NativeFusedPosition.fromMap(Map<dynamic, dynamic> map) {
@@ -79,7 +69,6 @@ class NativeFusedPosition {
       ),
       isMock: map['isMock'] as bool? ?? false,
       provider: map['provider'] as String? ?? 'fused',
-      elapsedRealtimeNanos: (map['elapsedRealtimeNanos'] as num?)?.toInt(),
     );
   }
 

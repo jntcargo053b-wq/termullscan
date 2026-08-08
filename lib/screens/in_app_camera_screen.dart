@@ -611,42 +611,16 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
                 // perlu diambil. Velocity diprioritaskan di atas GNSS
                 // karena solusinya lebih pasti di tangan operator
                 // (berhenti jalan) dibanding menunggu sinyal GNSS membaik.
-                //
-                // 🔥 BARU (review GPS mendalam #1/#3/#4): tiga diagnosis
-                // baru diprioritaskan DI ATAS velocity/GNSS gate biasa —
-                // ketiganya berarti akar masalahnya bukan "tunggu
-                // sebentar", tapi kondisi yang operator/device perlu
-                // benar-benar diubah (izin lokasi, mode hemat baterai
-                // OEM, atau chip GPS yang tidak merespons). Urutan
-                // prioritas dari yang paling fundamental/pasti dulu:
-                //   1. reducedAccuracyDetected — GPS mungkin tidak
-                //      pernah aktif sama sekali (izin cuma "Perkiraan")
-                //   2. networkOnlyFixDetected — chip GPS tidak
-                //      berkontribusi ke fix (mode hemat baterai OEM?)
-                //   3. gnssNeverDetected — chip GPS tidak merespons
-                //      sama sekali (beda dari sinyal lemah)
-                //   4. velocityGateActive / gnssGateActive — gate
-                //      normal, solusinya memang "tunggu sebentar"
                 String? gateHint;
-                final canOpenAccuracySettings = state.reducedAccuracyDetected;
                 if (!locked) {
-                  if (state.reducedAccuracyDetected) {
-                    gateHint = '📍 Lokasi "Perkiraan" aktif — ketuk untuk '
-                        'aktifkan "Lokasi Persis"';
-                  } else if (state.networkOnlyFixDetected) {
-                    gateHint = '⚠️ Fix dari jaringan, bukan GPS — cek mode '
-                        'hemat baterai / aktifkan GPS';
-                  } else if (state.gnssNeverDetected) {
-                    gateHint = '🛰️ Chip GPS tidak merespons — coba di area '
-                        'terbuka atau restart lokasi';
-                  } else if (state.velocityGateActive) {
+                  if (state.velocityGateActive) {
                     gateHint = '⏸️ Berhenti sebentar untuk mengunci lokasi';
                   } else if (state.gnssGateActive) {
                     gateHint = '📡 Sinyal GNSS lemah — dekati jendela/area terbuka';
                   }
                 }
 
-                final badge = Container(
+                return Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
                     color: Colors.black.withValues(alpha: 0.55),
@@ -685,22 +659,6 @@ class _InAppCameraScreenState extends State<InAppCameraScreen>
                       ],
                     ],
                   ),
-                );
-
-                // 🔥 BARU (review GPS mendalam #1): saat reducedAccuracy
-                // terdeteksi, badge ini adalah satu-satunya UI yang tahu
-                // akar masalahnya — jadikan tappable supaya operator bisa
-                // langsung ke halaman izin app tanpa keluar dari alur
-                // kamera untuk cari sendiri di Settings umum device.
-                if (!canOpenAccuracySettings) return badge;
-                return GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () {
-                    unawaited(
-                      PodLocationService.instance.openLocationAccuracySettings(),
-                    );
-                  },
-                  child: badge,
                 );
               },
             ),
