@@ -184,8 +184,17 @@ void main() {
       // window sebelum sample ke-3 yang identik memicu flag.
       const lat = -6.200000, lon = 106.800000, accuracy = 5.0;
 
+      // 🐛 FIX TEST: sample1 (accuracy 5m <= fastPathAccuracy 6m) lock
+      // "excellent" instan lewat fast-path (n=1). Fast-path CUMA boleh
+      // sekali (lihat catatan _evaluate) — sample2 wajib lewat jalur
+      // normal (butuh targetSamples=3 + convergence untuk excellent),
+      // jadi confidence TURUN ke "good" (quickLock). Itu penurunan sah,
+      // BUKAN penolakan — processSample() return `confidence NAIK`,
+      // bukan `sample diterima`, jadi tidak boleh diasumsikan `isTrue`
+      // di sini. Acceptance dicek lewat sampleCount, bukan return value.
       expect(engine.processSample(_pos(lat: lat, lon: lon, accuracy: accuracy, offsetMs: 0)), isTrue);
-      expect(engine.processSample(_pos(lat: lat, lon: lon, accuracy: accuracy, offsetMs: 5000)), isTrue);
+      engine.processSample(_pos(lat: lat, lon: lon, accuracy: accuracy, offsetMs: 5000));
+      expect(engine.sampleCount, 2, reason: 'sample ke-2 identik tetap diterima masuk window walau confidence turun tier');
       expect(engine.spoofSuspected, isFalse, reason: '2 sample identik saja belum cukup untuk flag');
 
       final thirdAccepted = engine.processSample(
